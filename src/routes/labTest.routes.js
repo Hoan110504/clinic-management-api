@@ -15,22 +15,22 @@ router.use(authenticate);
 /**
  * @route GET /api/lab-tests/pending
  * @desc Get pending lab tests
- * @access Admin, Doctor, Lab Tech
+ * @access Admin, Doctor, Receptionist
  */
 router.get(
   '/pending',
-  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.LAB_TECH),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST),
   labTestController.getPendingLabTests
 );
 
 /**
  * @route GET /api/lab-tests
  * @desc Get all lab tests with pagination
- * @access Admin, Doctor, Lab Tech
+ * @access Admin, Doctor, Receptionist, Patient
  */
 router.get(
   '/',
-  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.LAB_TECH, ROLES.PATIENT),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT),
   validate(labTestValidator.getList),
   labTestController.getAllLabTests
 );
@@ -38,11 +38,11 @@ router.get(
 /**
  * @route GET /api/lab-tests/:id
  * @desc Get lab test by ID
- * @access Admin, Doctor, Lab Tech
+ * @access Admin, Doctor, Receptionist, Patient
  */
 router.get(
   '/:id',
-  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.LAB_TECH, ROLES.PATIENT),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT),
   validate(labTestValidator.getById),
   labTestController.getLabTestById
 );
@@ -62,11 +62,11 @@ router.post(
 /**
  * @route PUT /api/lab-tests/:id
  * @desc Update lab test
- * @access Admin, Doctor, Lab Tech
+ * @access Admin, Doctor
  */
 router.put(
   '/:id',
-  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.LAB_TECH),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR),
   validate(labTestValidator.update),
   labTestController.updateLabTest
 );
@@ -86,22 +86,22 @@ router.delete(
 /**
  * @route POST /api/lab-tests/:id/start
  * @desc Start lab test
- * @access Lab Tech
+ * @access Doctor
  */
 router.post(
   '/:id/start',
-  authorize(ROLES.LAB_TECH),
+  authorize(ROLES.DOCTOR),
   labTestController.startLabTest
 );
 
 /**
  * @route POST /api/lab-tests/:id/complete
  * @desc Complete lab test with results
- * @access Lab Tech
+ * @access Doctor
  */
 router.post(
   '/:id/complete',
-  authorize(ROLES.LAB_TECH),
+  authorize(ROLES.DOCTOR),
   labTestController.completeLabTest
 );
 

@@ -13,11 +13,11 @@ router.use(authenticate);
 /**
  * @route GET /api/lab-services
  * @desc Get all lab services
- * @access Admin, Doctor, Lab Tech, Receptionist
+ * @access Admin, Doctor, Receptionist
  */
 router.get(
   '/',
-  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.LAB_TECH, ROLES.RECEPTIONIST),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST),
   labTestController.getLabServices
 );
 

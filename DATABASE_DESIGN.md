@@ -39,7 +39,7 @@ Lưu trữ thông tin tài khoản của tất cả người dùng trong hệ th
 | email | VARCHAR(100) | UNIQUE, NOT NULL | Email |
 | password | VARCHAR(255) | NOT NULL | Mật khẩu (đã hash) |
 | fullName | NVARCHAR(100) | NOT NULL | Họ tên đầy đủ |
-| role | ENUM | NOT NULL | Vai trò (admin/doctor/receptionist/pharmacist/lab_tech/patient) |
+| role | ENUM | NOT NULL | Vai trò (admin/doctor/receptionist/pharmacist/patient) |
 | phone | VARCHAR(15) | | Số điện thoại |
 | dateOfBirth | DATE | | Ngày sinh |
 | gender | ENUM | | Giới tính (male/female/other) |

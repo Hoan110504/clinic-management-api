@@ -67,15 +67,6 @@ const users = [
     phone: '0901234571',
     gender: GENDERS.MALE,
   },
-  {
-    username: 'labtech',
-    email: 'xetnghiem@noikhoa.com',
-    password: 'labtech123',
-    fullName: 'Hoàng Thị Lan',
-    role: ROLES.LAB_TECH,
-    phone: '0901234572',
-    gender: GENDERS.FEMALE,
-  },
 ];
 
 const medicines = [
