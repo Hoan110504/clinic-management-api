@@ -8,7 +8,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const config = require('./config');
 const routes = require('./routes');
-const { errorHandler, notFound } = require('./middleware/errorHandler');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const logger = require('./utils/logger');
 
@@ -23,7 +23,7 @@ app.use(helmet());
 
 // CORS configuration
 app.use(cors({
-  origin: config.cors.origins,
+  origin: config.cors.origin,
   credentials: config.cors.credentials,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -34,7 +34,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // HTTP request logging
-if (config.nodeEnv !== 'test') {
+if (config.env !== 'test') {
   app.use(morgan('combined', {
     stream: {
       write: (message) => logger.http(message.trim()),
@@ -44,6 +44,15 @@ if (config.nodeEnv !== 'test') {
 
 // Rate limiting
 app.use('/api', apiLimiter);
+
+// Simple API root (so GET /api doesn't return 404)
+app.get('/api', (req, res) => {
+  return res.json({
+    success: true,
+    message: 'Clinic Management API root',
+    docs: '/api/health',
+  });
+});
 
 // API routes
 app.use('/api', routes);
@@ -59,7 +68,7 @@ app.get('/', (req, res) => {
 });
 
 // 404 handler
-app.use(notFound);
+app.use(notFoundHandler);
 
 // Global error handler
 app.use(errorHandler);

@@ -18,15 +18,28 @@ const config = {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT, 10) || 1433,
     name: process.env.DB_NAME || 'clinic_management',
-    username: process.env.DB_USER || 'sa',
-    password: process.env.DB_PASSWORD || '',
+    username: process.env.DB_TRUSTED_CONNECTION === 'true' ? undefined : (process.env.DB_USER || 'sa'),
+    password: process.env.DB_TRUSTED_CONNECTION === 'true' ? undefined : (process.env.DB_PASSWORD || ''),
     dialect: 'mssql',
     dialectOptions: {
       options: {
-        encrypt: false,
-        trustServerCertificate: true,
+        encrypt: process.env.DB_ENCRYPT === 'true',
+        trustServerCertificate: process.env.DB_TRUST_SERVER_CERT === 'true',
         enableArithAbort: true,
+        // Support Multiple Active Result Sets (MARS)
+        multipleActiveResultSets: process.env.DB_MARS === 'true' || false,
+        // Support named instance via instanceName (optional)
+        instanceName: process.env.DB_INSTANCE || undefined,
       },
+      // Windows Authentication (Trusted Connection)
+      authentication: process.env.DB_TRUSTED_CONNECTION === 'true' ? {
+        type: 'ntlm',
+        options: {
+          domain: process.env.DB_DOMAIN || '',
+          userName: process.env.DB_NTLM_USER || '',
+          password: process.env.DB_NTLM_PASSWORD || '',
+        },
+      } : undefined,
     },
     pool: {
       max: 10,
@@ -57,7 +70,7 @@ const config = {
 
   // CORS
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
   },
 

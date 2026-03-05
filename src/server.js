@@ -11,16 +11,16 @@ const logger = require('./utils/logger');
 
 // Graceful shutdown handlers
 const gracefulShutdown = async (signal) => {
-  logger.info(`${signal} received. Starting graceful shutdown...`);
+  logger.info(`${signal} received. Bắt đầu tắt máy chủ...`);
   
   try {
     // Close database connection
     await sequelize.close();
-    logger.info('Database connection closed');
+    logger.info('✅ Đã đóng kết nối tới cơ sở dữ liệu');
     
     process.exit(0);
   } catch (error) {
-    logger.error('Error during graceful shutdown:', error);
+    logger.error('❌ Lỗi khi tắt máy chủ:', error);
     process.exit(1);
   }
 };
@@ -31,13 +31,13 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
+  logger.error('❌ Ngoại lệ chưa được bắt:', error);
   process.exit(1);
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('❌ Promise bị từ chối chưa xử lý tại:', promise, 'lý do:', reason);
 });
 
 // Start server
@@ -45,34 +45,30 @@ const startServer = async () => {
   try {
     // Test database connection
     await sequelize.authenticate();
-    logger.info('Database connection established successfully');
+    logger.info('✅ Kết nối tới cơ sở dữ liệu thành công');
 
-    // Sync database (in development mode)
-    if (config.nodeEnv === 'development') {
-      // Use { alter: true } to update tables without dropping
-      // Use { force: true } to drop and recreate (WARNING: this deletes data)
-      await sequelize.sync({ alter: true });
-      logger.info('Database synchronized');
-    }
-
+    // NOTE: Tắt sync tự động - sử dụng SQL script hoặc migrations để tạo bảng
+    // Các bảng đã được tạo sẵn trong database bằng file database/schema.sql
+    // Nếu muốn tạo bảng mới từ models, chạy: npm run seed:vn
+    
     // Start Express server
     const server = app.listen(config.port, () => {
-      logger.info(`Server running on port ${config.port} in ${config.nodeEnv} mode`);
-      logger.info(`API available at http://localhost:${config.port}/api`);
+      logger.info(`Máy chủ đang chạy trên cổng ${config.port} (chế độ ${config.env})`);
+      logger.info(`API truy cập tại http://localhost:${config.port}/api`);
     });
 
     // Handle server errors
     server.on('error', (error) => {
       if (error.code === 'EADDRINUSE') {
-        logger.error(`Port ${config.port} is already in use`);
+        logger.error(`❌ Cổng ${config.port} đang được sử dụng`);
       } else {
-        logger.error('Server error:', error);
+        logger.error('❌ Lỗi máy chủ:', error);
       }
       process.exit(1);
     });
 
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    logger.error('❌ Không thể khởi động máy chủ:', error);
     process.exit(1);
   }
 };

@@ -29,10 +29,10 @@ const sequelize = new Sequelize(
 const connectDatabase = async () => {
   try {
     await sequelize.authenticate();
-    logger.info('✅ Database connection established successfully');
+    logger.info('✅ Kết nối đến cơ sở dữ liệu thành công');
     return true;
   } catch (error) {
-    logger.error('❌ Unable to connect to the database:', error);
+    logger.error('❌ Không thể kết nối tới cơ sở dữ liệu:', error);
     throw error;
   }
 };
@@ -42,11 +42,11 @@ const syncDatabase = async (force = false) => {
   try {
     if (config.isDevelopment) {
       await sequelize.sync({ force, alter: !force });
-      logger.info('✅ Database synchronized successfully');
+      logger.info('✅ Đồng bộ hóa cơ sở dữ liệu thành công');
     }
     return true;
   } catch (error) {
-    logger.error('❌ Database sync failed:', error);
+    logger.error('❌ Đồng bộ cơ sở dữ liệu thất bại:', error);
     throw error;
   }
 };

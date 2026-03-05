@@ -14,7 +14,7 @@ const {
 } = require('../models');
 const {
   ROLES,
-  GENDERS,
+  GENDER,
 } = require('../config/constants');
 const logger = require('../utils/logger');
 
@@ -27,7 +27,7 @@ const users = [
     fullName: 'Quản Trị Viên',
     role: ROLES.ADMIN,
     phone: '0901234567',
-    gender: GENDERS.MALE,
+    gender: GENDER.MALE,
   },
   {
     username: 'doctor1',
@@ -36,7 +36,7 @@ const users = [
     fullName: 'BS. Nguyễn Văn Hùng',
     role: ROLES.DOCTOR,
     phone: '0901234568',
-    gender: GENDERS.MALE,
+    gender: GENDER.MALE,
     signature: 'BS. Nguyễn Văn Hùng',
   },
   {
@@ -46,7 +46,7 @@ const users = [
     fullName: 'BS. Trần Thị Mai',
     role: ROLES.DOCTOR,
     phone: '0901234569',
-    gender: GENDERS.FEMALE,
+    gender: GENDER.FEMALE,
     signature: 'BS. Trần Thị Mai',
   },
   {
@@ -56,7 +56,7 @@ const users = [
     fullName: 'Lê Thị Hương',
     role: ROLES.RECEPTIONIST,
     phone: '0901234570',
-    gender: GENDERS.FEMALE,
+    gender: GENDER.FEMALE,
   },
   {
     username: 'pharmacist',
@@ -65,7 +65,7 @@ const users = [
     fullName: 'Phạm Văn Dược',
     role: ROLES.PHARMACIST,
     phone: '0901234571',
-    gender: GENDERS.MALE,
+    gender: GENDER.MALE,
   },
 ];
 
@@ -239,7 +239,7 @@ const patients = [
   {
     fullName: 'Nguyễn Văn An',
     dateOfBirth: new Date('1985-03-15'),
-    gender: GENDERS.MALE,
+    gender: GENDER.MALE,
     phone: '0912345678',
     email: 'nguyenvanan@email.com',
     address: '123 Đường Lê Lợi, Quận 1, TP.HCM',
@@ -248,7 +248,7 @@ const patients = [
   {
     fullName: 'Trần Thị Bích',
     dateOfBirth: new Date('1990-07-22'),
-    gender: GENDERS.FEMALE,
+    gender: GENDER.FEMALE,
     phone: '0923456789',
     email: 'tranthibich@email.com',
     address: '456 Đường Nguyễn Huệ, Quận 1, TP.HCM',
@@ -258,7 +258,7 @@ const patients = [
   {
     fullName: 'Lê Minh Cường',
     dateOfBirth: new Date('1978-11-08'),
-    gender: GENDERS.MALE,
+    gender: GENDER.MALE,
     phone: '0934567890',
     email: 'leminhcuong@email.com',
     address: '789 Đường Hai Bà Trưng, Quận 3, TP.HCM',
@@ -268,7 +268,7 @@ const patients = [
   {
     fullName: 'Phạm Thị Dung',
     dateOfBirth: new Date('1995-01-30'),
-    gender: GENDERS.FEMALE,
+    gender: GENDER.FEMALE,
     phone: '0945678901',
     email: 'phamthidung@email.com',
     address: '321 Đường Pasteur, Quận 3, TP.HCM',
@@ -277,7 +277,7 @@ const patients = [
   {
     fullName: 'Hoàng Văn Em',
     dateOfBirth: new Date('1960-06-12'),
-    gender: GENDERS.MALE,
+    gender: GENDER.MALE,
     phone: '0956789012',
     email: 'hoangvanem@email.com',
     address: '654 Đường Cách Mạng Tháng 8, Quận 10, TP.HCM',

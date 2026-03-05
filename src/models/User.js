@@ -70,7 +70,7 @@ module.exports = (sequelize) => {
       idNumber: {
         type: DataTypes.STRING(20),
         allowNull: true,
-        unique: true,
+        // unique: true - removed because SQL Server doesn't allow multiple NULLs in unique columns
         field: 'id_number',
       },
       signature: {

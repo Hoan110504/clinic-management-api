@@ -183,7 +183,7 @@ Server sẽ chạy tại: `http://localhost:5000/api`
 | Kê đơn thuốc | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Phát thuốc | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Xét nghiệm | ❌ | ✅ (yêu cầu) | ❌ | ❌ | ✅ | ❌ |
-| Thanh toán | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Thanh toán | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 ## 📝 Response Format
 

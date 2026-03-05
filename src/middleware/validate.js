@@ -6,23 +6,39 @@ const { validationResult } = require('express-validator');
 const { ValidationError } = require('../utils/errors');
 
 /**
- * Validate request middleware
- * Checks validation results and throws error if validation fails
+ * validate(validations)
+ * Accepts an array of express-validator validation chains and returns
+ * an express middleware that runs them and checks validation results.
  */
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  
-  if (!errors.isEmpty()) {
-    const errorDetails = errors.array().map((err) => ({
-      field: err.path || err.param,
-      message: err.msg,
-      value: err.value,
-    }));
+const validate = (validations) => async (req, res, next) => {
+  if (!validations) return next();
 
-    throw new ValidationError('Dữ liệu không hợp lệ', errorDetails);
+  try {
+    // run each validation chain
+    await Promise.all(
+      validations.map((validation) => {
+        if (typeof validation.run === 'function') {
+          return validation.run(req);
+        }
+        return Promise.resolve();
+      })
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      const errorDetails = errors.array().map((err) => ({
+        field: err.path || err.param,
+        message: err.msg,
+        value: err.value,
+      }));
+
+      throw new ValidationError('Dữ liệu không hợp lệ', errorDetails);
+    }
+
+    return next();
+  } catch (err) {
+    return next(err);
   }
-
-  next();
 };
 
 /**
