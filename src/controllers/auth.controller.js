@@ -110,6 +110,9 @@ const register = asyncHandler(async (req, res) => {
     allergies,
   } = req.body;
 
+  // Normalize email: convert empty string or whitespace-only to empty string
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
+
   // Kiểm tra username/email/phone đã tồn tại (bao gồm soft-deleted)
   const existingUser = await User.findOne({ where: { username }, paranoid: false });
   if (existingUser) {
@@ -122,14 +125,17 @@ const register = asyncHandler(async (req, res) => {
     }
   }
 
-  const existingEmail = await User.findOne({ where: { email }, paranoid: false });
-  if (existingEmail) {
-    if (existingEmail.deletedAt) {
-      await existingEmail.destroy({ force: true });
-    } else {
-      throw new ValidationError('Dữ liệu không hợp lệ', [
-        { field: 'email', message: 'Email đã được sử dụng' },
-      ]);
+  // Kiểm tra email chỉ khi người dùng cung cấp email (non-empty)
+  if (normalizedEmail) {
+    const existingEmail = await User.findOne({ where: { email: normalizedEmail }, paranoid: false });
+    if (existingEmail) {
+      if (existingEmail.deletedAt) {
+        await existingEmail.destroy({ force: true });
+      } else {
+        throw new ValidationError('Dữ liệu không hợp lệ', [
+          { field: 'email', message: 'Email đã được sử dụng' },
+        ]);
+      }
     }
   }
 
@@ -149,7 +155,7 @@ const register = asyncHandler(async (req, res) => {
   // Tạo user với role mặc định là patient
   const user = await User.create({
     username,
-    email,
+    email: normalizedEmail,
     password,
     fullName,
     phone,
@@ -183,7 +189,7 @@ const register = asyncHandler(async (req, res) => {
       dateOfBirth,
       gender,
       phone,
-      email,
+      email: normalizedEmail,
       address,
       idNumber,
       medicalHistory,
@@ -314,11 +320,13 @@ const changePassword = asyncHandler(async (req, res) => {
  */
 const updateProfile = asyncHandler(async (req, res) => {
   const { fullName, phone, email, address, signature } = req.body;
+  // Normalize email: convert empty string or whitespace-only to empty string
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
   const user = req.user;
 
   // Check email uniqueness if changed
-  if (email && email !== user.email) {
-    const existingEmail = await User.findOne({ where: { email } });
+  if (normalizedEmail !== '' && normalizedEmail !== user.email) {
+    const existingEmail = await User.findOne({ where: { email: normalizedEmail } });
     if (existingEmail) {
       throw new ConflictError('Email đã được sử dụng');
     }
@@ -328,7 +336,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   await user.update({
     fullName: fullName || user.fullName,
     phone: phone || user.phone,
-    email: email || user.email,
+    email: normalizedEmail ?? user.email,
     address: address || user.address,
     signature: signature || user.signature,
   });
@@ -336,7 +344,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   // Update patient record if exists
   if (user.role === ROLES.PATIENT) {
     await Patient.update(
-      { fullName, phone, email, address },
+      { fullName, phone, email: normalizedEmail ?? user.email, address },
       { where: { userId: user.id } }
     );
   }

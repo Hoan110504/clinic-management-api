@@ -22,7 +22,7 @@ BEGIN
     CREATE TABLE [dbo].[NguoiDung] (
         [Id] UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         [TenDangNhap] NVARCHAR(50) NOT NULL UNIQUE,
-        [Email] VARCHAR(100) UNIQUE,
+        [Email] VARCHAR(100) NULL UNIQUE,
         [MatKhau] VARCHAR(255) NOT NULL,
         [HoTen] NVARCHAR(100) NOT NULL,
         [VaiTro] TINYINT NOT NULL, -- 1:Admin, 2:Bác sĩ, 3:Lễ tân, 4:Dược sĩ, 5:Bệnh nhân

@@ -14,8 +14,7 @@ const createUserValidator = [
     .isAlphanumeric()
     .withMessage('Tên đăng nhập chỉ được chứa chữ cái và số'),
   body('email')
-    .notEmpty()
-    .withMessage('Email không được để trống')
+    .optional({ nullable: true, checkFalsy: true })
     .isEmail()
     .withMessage('Email không hợp lệ'),
   body('password')
@@ -54,7 +53,7 @@ const updateUserValidator = [
     .isUUID()
     .withMessage('ID không hợp lệ'),
   body('email')
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isEmail()
     .withMessage('Email không hợp lệ'),
   body('fullName')
@@ -112,3 +111,9 @@ export {
   getUserValidator,
   listUsersValidator,
 };
+
+// Backwards-compatible aliases used by routes
+export const create = createUserValidator;
+export const update = updateUserValidator;
+export const getById = getUserValidator;
+export const getList = listUsersValidator;

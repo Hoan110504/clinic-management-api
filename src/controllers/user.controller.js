@@ -106,6 +106,9 @@ const createUser = asyncHandler(async (req, res) => {
     signature,
   } = req.body;
 
+  // Normalize email: treat empty string as empty string (avoid inserting NULL)
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
+
   // Check existing username
   // Check existing username/email including soft-deleted records so we can
   // either fail fast or clean up soft-deleted duplicates before creating.
@@ -122,15 +125,17 @@ const createUser = asyncHandler(async (req, res) => {
     }
   }
 
-  // Check existing email
-  const existingEmail = await User.findOne({ where: { email }, paranoid: false });
-  if (existingEmail) {
-    if (existingEmail.deletedAt) {
-      await existingEmail.destroy({ force: true });
-    } else {
-      throw new ValidationError('Dữ liệu không hợp lệ', [
-        { field: 'email', message: 'Email đã được sử dụng' },
-      ]);
+  // Check existing email only when provided
+  if (normalizedEmail) {
+    const existingEmail = await User.findOne({ where: { email: normalizedEmail }, paranoid: false });
+    if (existingEmail) {
+      if (existingEmail.deletedAt) {
+        await existingEmail.destroy({ force: true });
+      } else {
+        throw new ValidationError('Dữ liệu không hợp lệ', [
+          { field: 'email', message: 'Email đã được sử dụng' },
+        ]);
+      }
     }
   }
 
@@ -156,7 +161,7 @@ const createUser = asyncHandler(async (req, res) => {
     try {
       user = await User.create({
         username,
-        email,
+        email: normalizedEmail,
         password,
         fullName,
         role,
@@ -186,7 +191,7 @@ const createUser = asyncHandler(async (req, res) => {
           // Retry create once within same transaction
           user = await User.create({
             username,
-            email,
+            email: normalizedEmail,
             password,
             fullName,
             role,
@@ -228,7 +233,7 @@ const createUser = asyncHandler(async (req, res) => {
         dateOfBirth,
         gender,
         phone,
-        email,
+        email: normalizedEmail,
         address,
         idNumber,
       }, { transaction: t });
@@ -275,7 +280,7 @@ const createUser = asyncHandler(async (req, res) => {
                 // Recreate user
                 user = await User.create({
                   username,
-                  email,
+                  email: normalizedEmail,
                   password,
                   fullName,
                   role,
@@ -317,31 +322,51 @@ const createUser = asyncHandler(async (req, res) => {
         }
       }
 
-      const fields = err.fields && Object.keys(err.fields).length ? Object.keys(err.fields) : (Array.isArray(err.errors) ? err.errors.map(e => e.path).filter(Boolean) : []);
-      const details = [];
-      for (const f of fields) {
-        // try to map to request body fields
-        let key = f;
-        try {
-          if (req && req.body && typeof req.body === 'object') {
-            const bodyKeys = Object.keys(req.body);
-            const matchKey = bodyKeys.find((k) => String(req.body[k]) === String(err.fields?.[f] ?? err.errors?.find(e => e.path === f)?.value));
-            if (matchKey) key = matchKey;
-          }
-        } catch (inner) {}
-
-        // normalize common patient fields
-        if (/email/i.test(key)) {
-          details.push({ field: 'email', message: 'Email đã được sử dụng' });
-        } else if (/phone/i.test(key)) {
-          details.push({ field: 'phone', message: 'Số điện thoại đã được sử dụng' });
-        } else if (/id_number|idnumber|cccd|cmnd/i.test(key) || /^UQ__patients__/i.test(String(f))) {
-          details.push({ field: 'idNumber', message: 'Số CCCD/CMND đã được sử dụng' });
-        } else {
-          details.push({ field: key, message: `${key} đã tồn tại` });
-        }
+      // Log raw error for diagnostics
+      try {
+        logger.warn('Sequelize unique constraint error while creating user', {
+          errMessage: err.message,
+          errFields: err.fields,
+          errErrors: Array.isArray(err.errors) ? err.errors.map(e => ({ path: e.path, message: e.message, value: e.value })) : undefined,
+          parent: err.parent && err.parent.message ? String(err.parent.message) : undefined,
+          requestBodySample: { username: req.body.username, email: req.body.email, phone: req.body.phone },
+        });
+      } catch (logErr) {
+        // ignore logging failures
       }
 
+      // Try to map the unique constraint to request fields using several heuristics.
+      const details = [];
+
+      // 1) Use explicit fields when provided by Sequelize
+      const explicitFields = err.fields && Object.keys(err.fields).length
+        ? Object.keys(err.fields)
+        : (Array.isArray(err.errors) ? err.errors.map(e => e.path).filter(Boolean) : []);
+
+      if (explicitFields.length > 0) {
+        for (const f of explicitFields) {
+          if (/email/i.test(f)) details.push({ field: 'email', message: 'Email đã được sử dụng' });
+          else if (/phone/i.test(f)) details.push({ field: 'phone', message: 'Số điện thoại đã được sử dụng' });
+          else if (/id_number|idnumber|cccd|cmnd/i.test(f)) details.push({ field: 'idNumber', message: 'Số CCCD/CMND đã được sử dụng' });
+          else details.push({ field: f, message: `${f} đã tồn tại` });
+        }
+        throw new ValidationError('Dữ liệu không hợp lệ', details);
+      }
+
+      // 2) Parse parent message (MSSQL / dialect error text) for keywords
+      const parentMsg = err.parent && err.parent.message ? String(err.parent.message).toLowerCase() : '';
+      if (parentMsg) {
+        if (parentMsg.includes('username')) details.push({ field: 'username', message: 'Tên đăng nhập đã tồn tại' });
+        if (parentMsg.includes('email')) details.push({ field: 'email', message: 'Email đã được sử dụng' });
+        if (parentMsg.includes('phone')) details.push({ field: 'phone', message: 'Số điện thoại đã được sử dụng' });
+        if (parentMsg.includes('patients') || parentMsg.includes('cccd') || parentMsg.includes('cmnd') || parentMsg.includes('id_number')) {
+          details.push({ field: 'idNumber', message: 'Số CCCD/CMND đã được sử dụng' });
+        }
+        if (details.length > 0) throw new ValidationError('Dữ liệu không hợp lệ', details);
+      }
+
+      // 3) Fall back to generic message
+      details.push({ field: 'unknown', message: 'Ràng buộc duy nhất bị vi phạm hoặc dữ liệu trùng lặp' });
       throw new ValidationError('Dữ liệu không hợp lệ', details);
     }
 
@@ -367,7 +392,13 @@ const updateUser = asyncHandler(async (req, res) => {
   }
 
   // Check email uniqueness if changed
-  if (updateData.email && updateData.email !== user.email) {
+  // Normalize update email: empty -> null
+  if (Object.prototype.hasOwnProperty.call(updateData, 'email')) {
+    updateData.email = updateData.email && String(updateData.email).trim() !== '' ? String(updateData.email).trim() : '';
+  }
+
+  // Check email uniqueness if changed and a non-empty email provided
+  if (updateData.email !== undefined && updateData.email !== '' && updateData.email !== user.email) {
     const existingEmail = await User.findOne({ where: { email: updateData.email, id: { [Op.ne]: id } }, paranoid: false });
     if (existingEmail) {
       if (existingEmail.deletedAt) {

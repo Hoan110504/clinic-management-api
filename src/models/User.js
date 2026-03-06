@@ -4,6 +4,7 @@
  */
 import { DataTypes } from 'sequelize';
 import bcrypt from 'bcryptjs';
+import validator from 'validator';
 import config from '../config/index.js';
 import { ROLES, GENDER } from '../config/constants.js';
 
@@ -27,10 +28,16 @@ export default (sequelize) => {
       },
       email: {
         type: DataTypes.STRING(100),
-        allowNull: false,
-        unique: true,
+        allowNull: true,
+        // Remove DB-level unique constraint so email can be null for many users on SQL Server
         validate: {
-          isEmail: true,
+          isEmailOrEmpty(value) {
+            // allow null or empty string
+            if (value === null || value === '') return;
+            if (!validator.isEmail(String(value))) {
+              throw new Error('Email không hợp lệ');
+            }
+          },
         },
       },
       password: {
@@ -119,6 +126,12 @@ export default (sequelize) => {
         { fields: ['is_active'] },
       ],
       hooks: {
+        beforeValidate: (user) => {
+          // ensure we do not save NULL to DB for email; convert explicit null -> empty string
+          if (user && Object.prototype.hasOwnProperty.call(user, 'email')) {
+            if (user.email === null) user.email = '';
+          }
+        },
         beforeCreate: async (user) => {
           if (user.password) {
             user.password = await bcrypt.hash(

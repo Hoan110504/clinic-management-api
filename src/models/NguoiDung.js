@@ -18,9 +18,13 @@ module.exports = (sequelize, DataTypes) => {
     },
     Email: {
       type: DataTypes.STRING(100),
-      unique: true,
+      allowNull: true,
+      // removed unique constraint to allow NULL emails
       validate: {
-        isEmail: true
+        isEmail: {
+          args: true,
+          msg: 'Email không hợp lệ'
+        }
       },
       field: 'Email'
     },

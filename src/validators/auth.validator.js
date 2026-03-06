@@ -27,10 +27,10 @@ const registerValidator = [
     .isAlphanumeric()
     .withMessage('Tên đăng nhập chỉ được chứa chữ cái và số'),
   body('email')
-    .notEmpty()
-    .withMessage('Email không được để trống')
+    .optional({ nullable: true, checkFalsy: true })
     .isEmail()
     .withMessage('Email không hợp lệ')
+    .bail()
     .normalizeEmail(),
   body('password')
     .notEmpty()
