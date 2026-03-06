@@ -2,8 +2,8 @@
  * Medical Record Validators
  * Input validation for medical record endpoints
  */
-const { body, param, query } = require('express-validator');
-const { MEDICAL_RECORD_STATUS, GENDER } = require('../config/constants');
+import { body, param, query } from 'express-validator';
+import { MEDICAL_RECORD_STATUS, GENDER } from '../config/constants.js';
 
 const createMedicalRecordValidator = [
   body('patientId')
@@ -85,7 +85,7 @@ const listMedicalRecordsValidator = [
     .withMessage('Trạng thái không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createMedicalRecordValidator,
   updateMedicalRecordValidator,
   getMedicalRecordValidator,

@@ -2,13 +2,13 @@
  * Appointment Validators
  * Input validation for appointment endpoints
  */
-const { body, param, query } = require('express-validator');
-const {
+import { body, param, query } from 'express-validator';
+import {
   APPOINTMENT_STATUS,
   APPOINTMENT_SOURCE,
   GENDER,
   TIME_SLOTS,
-} = require('../config/constants');
+} from '../config/constants.js';
 
 const createAppointmentValidator = [
   body('patientName')
@@ -131,7 +131,7 @@ const cancelAppointmentValidator = [
     .withMessage('Lý do hủy không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createAppointmentValidator,
   updateAppointmentValidator,
   getAppointmentValidator,

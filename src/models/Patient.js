@@ -2,10 +2,10 @@
  * Patient Model
  * Extended patient information separate from user
  */
-const { DataTypes } = require('sequelize');
-const { GENDER } = require('../config/constants');
+import { DataTypes } from 'sequelize';
+import { GENDER } from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const Patient = sequelize.define(
     'Patient',
     {
@@ -30,16 +30,16 @@ module.exports = (sequelize) => {
       },
       dateOfBirth: {
         type: DataTypes.DATEONLY,
-        allowNull: false,
+        allowNull: true,
         field: 'date_of_birth',
       },
       gender: {
         type: DataTypes.ENUM(...Object.values(GENDER)),
-        allowNull: false,
+        allowNull: true,
       },
       phone: {
         type: DataTypes.STRING(15),
-        allowNull: false,
+        allowNull: true,
       },
       email: {
         type: DataTypes.STRING(100),
@@ -95,7 +95,7 @@ module.exports = (sequelize) => {
         { fields: ['user_id'] },
       ],
       hooks: {
-        beforeCreate: async (patient, options) => {
+        beforeValidate: async (patient, options) => {
           if (!patient.id) {
             // Generate patient ID: BN + sequence
             const lastPatient = await Patient.findOne({

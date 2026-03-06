@@ -1,13 +1,14 @@
 /**
  * Medicine Routes
  */
-const express = require('express');
+import express from 'express';
+import { medicineController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { medicineValidator } from '../validators/index.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { medicineController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { medicineValidator } = require('../validators');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -128,4 +129,4 @@ router.get(
   medicineController.getInventoryTransactions
 );
 
-module.exports = router;
+export default router;

@@ -2,12 +2,12 @@
  * Server Entry Point
  * Starts the Express server and database connection
  */
-require('dotenv').config();
+import 'dotenv/config';
 
-const app = require('./app');
-const config = require('./config');
-const { sequelize } = require('./models/database');
-const logger = require('./utils/logger');
+import app from './app.js';
+import config from './config/index.js';
+import { sequelize } from './models/database.js';
+import logger from './utils/logger.js';
 
 // Graceful shutdown handlers
 const gracefulShutdown = async (signal) => {

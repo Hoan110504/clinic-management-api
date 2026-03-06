@@ -2,9 +2,9 @@
  * Lab Service Model
  * Catalog of available lab test services
  */
-const { DataTypes } = require('sequelize');
+import { DataTypes } from 'sequelize';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const LabService = sequelize.define(
     'LabService',
     {

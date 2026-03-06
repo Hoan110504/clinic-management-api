@@ -2,7 +2,7 @@
  * Prescription Validators
  * Input validation for prescription endpoints
  */
-const { body, param, query } = require('express-validator');
+import { body, param, query } from 'express-validator';
 
 const createPrescriptionValidator = [
   body('medicalRecordId')
@@ -92,7 +92,7 @@ const dispensePrescriptionValidator = [
     .withMessage('ID đơn thuốc không được để trống'),
 ];
 
-module.exports = {
+export {
   createPrescriptionValidator,
   updatePrescriptionValidator,
   getPrescriptionValidator,

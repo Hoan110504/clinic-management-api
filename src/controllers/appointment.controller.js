@@ -1,28 +1,30 @@
 /**
- * Appointment Controller
- * Handles appointment management operations
+ * Controller Lịch Hẹn
+ * Quản lý đặt lịch, xác nhận, check-in, hủy hẹn
  */
-const { Op } = require('sequelize');
-const { Appointment, Patient, User, MedicalRecord } = require('../models');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+import { Op } from 'sequelize';
+import { Appointment, Patient, User, MedicalRecord } from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, BadRequestError, ConflictError } = require('../utils/errors');
-const { APPOINTMENT_STATUS, ROLES } = require('../config/constants');
+} from '../utils/response.js';
+import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
+import { APPOINTMENT_STATUS, ROLES, TIME_SLOTS } from '../config/constants.js';
 
 /**
- * Get all appointments (with pagination and filters)
+ * Lấy tất cả lịch hẹn (có phân trang và lọc)
+ * Hỗ trợ lọc theo: status, date, doctorId, patientId, source, search, fromDate-toDate
+ * Bác sĩ chỉ thấy lịch hẹn của mình (tự động filter theo assignedDoctorId)
  * GET /api/appointments
  */
 const getAllAppointments = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const { status, date, doctorId, patientId, source, search, fromDate, toDate, sort } = req.query;
 
-  // Build where clause
+  // Xây dựng điều kiện lọc động (dynamic WHERE clause)
   const where = {};
 
   if (status) {
@@ -33,6 +35,7 @@ const getAllAppointments = asyncHandler(async (req, res) => {
     where.appointmentDate = date;
   }
 
+  // Lọc theo khoảng ngày (hỗ trợ 3 kiểu: cả 2, chỉ fromDate, chỉ toDate)
   if (fromDate && toDate) {
     where.appointmentDate = {
       [Op.between]: [fromDate, toDate],
@@ -55,6 +58,7 @@ const getAllAppointments = asyncHandler(async (req, res) => {
     where.source = source;
   }
 
+  // Tìm kiếm theo tên, sđt, hoặc mã lịch hẹn (LIKE pattern)
   if (search) {
     where[Op.or] = [
       { patientName: { [Op.like]: `%${search}%` } },
@@ -142,7 +146,8 @@ const getAppointmentById = asyncHandler(async (req, res) => {
 });
 
 /**
- * Create new appointment
+ * Tạo lịch hẹn mới
+ * Kiểm tra trùng khung giờ: cùng doctor + cùng ngày + cùng slot + chưa hủy/xong
  * POST /api/appointments
  */
 const createAppointment = asyncHandler(async (req, res) => {
@@ -167,7 +172,8 @@ const createAppointment = asyncHandler(async (req, res) => {
     internalNotes,
   } = req.body;
 
-  // Check for conflicting appointments
+  // Kiểm tra trùng lịch: cùng bác sĩ, cùng ngày, cùng khung giờ
+  // Chỉ đếm các lịch hẹn chưa hủy và chưa hoàn thành
   const existingAppointment = await Appointment.findOne({
     where: {
       appointmentDate,
@@ -183,7 +189,7 @@ const createAppointment = asyncHandler(async (req, res) => {
     throw new ConflictError('Khung giờ này đã có lịch hẹn khác');
   }
 
-  // Get doctor info if not provided
+  // Lấy tên bác sĩ từ DB nếu chỉ có ID
   let doctorName = assignedDoctorName;
   if (assignedDoctorId && !doctorName) {
     const doctor = await User.findByPk(assignedDoctorId);
@@ -218,7 +224,9 @@ const createAppointment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Update appointment
+ * Cập nhật lịch hẹn
+ * Không cho cập nhật lịch đã hủy/hoàn thành
+ * Kiểm tra trùng lịch nếu thay đổi ngày/giờ/bác sĩ
  * PUT /api/appointments/:id
  */
 const updateAppointment = asyncHandler(async (req, res) => {
@@ -230,12 +238,13 @@ const updateAppointment = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
   }
 
-  // Check if trying to update cancelled/completed appointment
+  // Kiểm tra không cho sửa lịch đã hủy hoặc hoàn thành
   if ([APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED].includes(appointment.status)) {
     throw new BadRequestError('Không thể cập nhật lịch hẹn đã hủy hoặc hoàn thành');
   }
 
-  // Check for conflicting appointments if changing date/time/doctor
+  // Kiểm tra trùng lịch nếu thay đổi ngày/giờ/bác sĩ
+  // Dùng giá trị mới nếu có, không thì lấy giá trị cũ (fallback)
   if (
     updateData.appointmentDate ||
     updateData.timeSlot ||
@@ -257,7 +266,7 @@ const updateAppointment = asyncHandler(async (req, res) => {
     }
   }
 
-  // Update doctor name if doctor ID changed
+  // Tự động cập nhật tên bác sĩ khi đổi bác sĩ
   if (updateData.assignedDoctorId && !updateData.assignedDoctorName) {
     const doctor = await User.findByPk(updateData.assignedDoctorId);
     if (doctor) {
@@ -271,7 +280,7 @@ const updateAppointment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Cancel appointment
+ * Hủy lịch hẹn - cập nhật trạng thái + lý do hủy
  * POST /api/appointments/:id/cancel
  */
 const cancelAppointment = asyncHandler(async (req, res) => {
@@ -301,7 +310,7 @@ const cancelAppointment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Confirm appointment
+ * Xác nhận lịch hẹn (scheduled → confirmed)
  * POST /api/appointments/:id/confirm
  */
 const confirmAppointment = asyncHandler(async (req, res) => {
@@ -325,7 +334,8 @@ const confirmAppointment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Check-in appointment (set to waiting)
+ * Check-in bệnh nhân đến khám (scheduled/confirmed → waiting)
+ * Là bước cuối của quy trình tiếp nhận trước khi vào phòng khám
  * POST /api/appointments/:id/check-in
  */
 const checkInAppointment = asyncHandler(async (req, res) => {
@@ -414,9 +424,7 @@ const getAvailableSlots = asyncHandler(async (req, res) => {
     throw new BadRequestError('Ngày không được để trống');
   }
 
-  const { TIME_SLOTS } = require('../config/constants');
-
-  // Get booked slots
+  // Get booked slots (TIME_SLOTS imported at top)
   const bookedAppointments = await Appointment.findAll({
     where: {
       appointmentDate: date,
@@ -438,7 +446,7 @@ const getAvailableSlots = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = {
+export {
   getAllAppointments,
   getAppointmentById,
   createAppointment,

@@ -2,10 +2,10 @@
  * Inventory Transaction Model
  * Handles medicine inventory in/out transactions
  */
-const { DataTypes } = require('sequelize');
-const { INVENTORY_TRANSACTION_TYPES } = require('../config/constants');
+import { DataTypes } from 'sequelize';
+import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const InventoryTransaction = sequelize.define(
     'InventoryTransaction',
     {

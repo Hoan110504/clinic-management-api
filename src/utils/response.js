@@ -103,7 +103,7 @@ const errorResponse = (
   return res.status(statusCode).json(response);
 };
 
-module.exports = {
+export {
   successResponse,
   createdResponse,
   noContentResponse,

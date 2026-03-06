@@ -2,12 +2,12 @@
  * User Model
  * Handles all user types: admin, doctor, receptionist, pharmacist, patient
  */
-const { DataTypes } = require('sequelize');
-const bcrypt = require('bcryptjs');
-const config = require('../config');
-const { ROLES, GENDER } = require('../config/constants');
+import { DataTypes } from 'sequelize';
+import bcrypt from 'bcryptjs';
+import config from '../config/index.js';
+import { ROLES, GENDER } from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const User = sequelize.define(
     'User',
     {

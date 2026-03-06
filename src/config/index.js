@@ -2,7 +2,7 @@
  * Application Configuration
  * Centralized configuration management with environment validation
  */
-require('dotenv').config();
+import 'dotenv/config';
 
 const config = {
   // Environment
@@ -99,4 +99,4 @@ if (missingEnvVars.length > 0) {
   );
 }
 
-module.exports = config;
+export default config;

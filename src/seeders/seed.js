@@ -2,21 +2,21 @@
  * Database Seeder
  * Seeds initial data into the database
  */
-require('dotenv').config();
+import 'dotenv/config';
 
-const bcrypt = require('bcryptjs');
-const { sequelize } = require('../models/database');
-const {
+import bcrypt from 'bcryptjs';
+import { sequelize } from '../models/database.js';
+import {
   User,
   Patient,
   Medicine,
   LabService,
-} = require('../models');
-const {
+} from '../models/index.js';
+import {
   ROLES,
   GENDER,
-} = require('../config/constants');
-const logger = require('../utils/logger');
+} from '../config/constants.js';
+import logger from '../utils/logger.js';
 
 // Seed data
 const users = [

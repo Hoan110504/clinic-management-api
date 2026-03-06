@@ -1,63 +1,42 @@
 /**
  * Models Index - Tải và thiết lập quan hệ cho tất cả models
  */
-const fs = require('fs');
-const path = require('path');
-const db = require('./database');
+import { sequelize, Sequelize, connectDatabase, syncDatabase } from './database.js';
 
-const sequelize = db.sequelize;
-const Sequelize = db.Sequelize;
+// Import tất cả English model factories
+import UserFactory from './User.js';
+import PatientFactory from './Patient.js';
+import AppointmentFactory from './Appointment.js';
+import MedicalRecordFactory from './MedicalRecord.js';
+import MedicineFactory from './Medicine.js';
+import LabServiceFactory from './LabService.js';
+import LabTestFactory from './LabTest.js';
+import PrescriptionFactory from './Prescription.js';
+import PaymentFactory from './Payment.js';
+import ServiceOrderFactory from './ServiceOrder.js';
+import InventoryTransactionFactory from './InventoryTransaction.js';
 
+// Khởi tạo models từ factories
 const models = {};
 
-// Danh sách các file model Vietnamese mới
-const modelFilesVietnamese = [
-  'NguoiDung.js',
-  'BenhNhan.js',
-  'LichHen.js',
-  'HoSoKham.js',
-  'ChiSoSinhTon.js',
-  'Thuoc.js',
-  'QuanLyLoThuoc.js',
-  'DonThuoc.js',
-  'ChiTietDonThuoc.js',
-  'DichVuCanLamSang.js',
-  'YeuCauDichVu.js',
-  'ChiTietYeuCauDichVu.js',
-  'CanLamSang.js',
-  'HoaDon.js',
-  'ChiTietHoaDon.js',
-  'GiaoDichKho.js'
+const factories = [
+  UserFactory,
+  PatientFactory,
+  AppointmentFactory,
+  MedicalRecordFactory,
+  MedicineFactory,
+  LabServiceFactory,
+  LabTestFactory,
+  PrescriptionFactory,
+  PaymentFactory,
+  ServiceOrderFactory,
+  InventoryTransactionFactory,
 ];
 
-// Danh sách các file model English (cũ) - để hỗ trợ controllers hiện tại
-const modelFilesEnglish = [
-  'User.js',
-  'Patient.js',
-  'Appointment.js',
-  'MedicalRecord.js',
-  'Medicine.js',
-  'LabService.js',
-  'LabTest.js',
-  'Prescription.js',
-  'Payment.js',
-  'ServiceOrder.js',
-  'InventoryTransaction.js'
-];
-
-// Load tất cả models (chỉ English models - Vietnamese models tạm tắt để tránh lỗi FK)
-// Để kích hoạt Vietnamese models, bỏ comment dòng dưới:
-// const allModelFiles = [...modelFilesEnglish, ...modelFilesVietnamese];
-const allModelFiles = [...modelFilesEnglish];
-
-allModelFiles.forEach((file) => {
-  const modelPath = path.join(__dirname, file);
-  if (fs.existsSync(modelPath)) {
-    const modelFactory = require(modelPath);
-    if (typeof modelFactory === 'function') {
-      const model = modelFactory(sequelize, Sequelize.DataTypes);
-      models[model.name] = model;
-    }
+factories.forEach((factory) => {
+  if (typeof factory === 'function') {
+    const model = factory(sequelize, Sequelize.DataTypes);
+    models[model.name] = model;
   }
 });
 
@@ -68,10 +47,20 @@ Object.keys(models).forEach((modelName) => {
   }
 });
 
-module.exports = {
-  ...models,
-  sequelize,
-  Sequelize,
-  connectDatabase: db.connectDatabase,
-  syncDatabase: db.syncDatabase,
-};
+export const {
+  User,
+  Patient,
+  Appointment,
+  MedicalRecord,
+  Medicine,
+  LabService,
+  LabTest,
+  Prescription,
+  Payment,
+  ServiceOrder,
+  InventoryTransaction,
+} = models;
+
+export { sequelize, Sequelize, connectDatabase, syncDatabase };
+export default models;
+

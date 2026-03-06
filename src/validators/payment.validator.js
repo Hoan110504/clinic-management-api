@@ -2,12 +2,12 @@
  * Payment Validators
  * Input validation for payment endpoints
  */
-const { body, param, query } = require('express-validator');
-const {
+import { body, param, query } from 'express-validator';
+import {
   PAYMENT_STATUS,
   PAYMENT_TYPES,
   PAYMENT_METHODS,
-} = require('../config/constants');
+} from '../config/constants.js';
 
 const createPaymentValidator = [
   body('type')
@@ -101,7 +101,7 @@ const listPaymentsValidator = [
     .withMessage('Ngày kết thúc không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createPaymentValidator,
   processPaymentValidator,
   getPaymentValidator,

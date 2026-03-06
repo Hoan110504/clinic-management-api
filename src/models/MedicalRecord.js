@@ -2,10 +2,10 @@
  * Medical Record Model
  * Handles patient examination records
  */
-const { DataTypes } = require('sequelize');
-const { MEDICAL_RECORD_STATUS, GENDER } = require('../config/constants');
+import { DataTypes } from 'sequelize';
+import { MEDICAL_RECORD_STATUS, GENDER } from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const MedicalRecord = sequelize.define(
     'MedicalRecord',
     {

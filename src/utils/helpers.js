@@ -2,7 +2,8 @@
  * Utility Helpers
  * Common helper functions
  */
-const config = require('../config');
+import config from '../config/index.js';
+import { Op } from 'sequelize';
 
 /**
  * Parse pagination parameters with defaults
@@ -48,7 +49,6 @@ const parseSort = (sortParam, allowedFields = [], defaultSort = 'createdAt:desc'
  * @returns {Object} Sequelize where clause
  */
 const buildWhereClause = (filters, fieldMap = {}) => {
-  const { Op } = require('sequelize');
   const where = {};
 
   Object.entries(filters).forEach(([key, value]) => {
@@ -141,7 +141,7 @@ const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-module.exports = {
+export {
   parsePagination,
   parseSort,
   buildWhereClause,

@@ -2,8 +2,8 @@
  * Lab Test Validators
  * Input validation for lab test endpoints
  */
-const { body, param, query } = require('express-validator');
-const { LAB_STATUS } = require('../config/constants');
+import { body, param, query } from 'express-validator';
+import { LAB_STATUS } from '../config/constants.js';
 
 const createLabTestValidator = [
   body('patientId')
@@ -71,7 +71,7 @@ const listLabTestsValidator = [
     .withMessage('ID bệnh nhân không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createLabTestValidator,
   updateLabTestValidator,
   getLabTestValidator,

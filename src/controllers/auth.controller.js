@@ -1,24 +1,29 @@
 /**
- * Authentication Controller
- * Handles user authentication operations
+ * Controller Xác Thực Người Dùng
+ * Xử lý đăng nhập, đăng ký, refresh token, quên mật khẩu
  */
-const jwt = require('jsonwebtoken');
-const config = require('../config');
-const { User, Patient } = require('../models');
-const { asyncHandler } = require('../utils/helpers');
-const {
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import { Op } from 'sequelize';
+import config from '../config/index.js';
+import { User, Patient } from '../models/index.js';
+import { asyncHandler } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
-} = require('../utils/response');
-const {
+} from '../utils/response.js';
+import {
   UnauthorizedError,
   BadRequestError,
   ConflictError,
-} = require('../utils/errors');
-const { ROLES } = require('../config/constants');
+  ValidationError,
+} from '../utils/errors.js';
+import { ROLES } from '../config/constants.js';
 
 /**
- * Generate JWT tokens
+ * Tạo cặp token (access + refresh)
+ * Access token: chứa id + role, dùng để xác thực mỗi request
+ * Refresh token: chứa id + type, dùng để lấy access token mới khi hết hạn
  */
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
@@ -37,13 +42,15 @@ const generateTokens = (user) => {
 };
 
 /**
- * Login
+ * Đăng nhập
+ * Luồng: Tìm user theo username → So sánh password (bcrypt) → Tạo tokens
+ *   → Lưu refresh token vào DB → Lấy thông tin bệnh nhân (nếu có) → Trả về
  * POST /api/auth/login
  */
 const login = asyncHandler(async (req, res) => {
   const { username, password } = req.body;
 
-  // Find user
+  // Tìm user theo username và trạng thái hoạt động
   const user = await User.findOne({
     where: { username, isActive: true },
   });
@@ -52,21 +59,21 @@ const login = asyncHandler(async (req, res) => {
     throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
   }
 
-  // Verify password
+  // So sánh mật khẩu với hash trong DB (bcrypt)
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
     throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
   }
 
-  // Generate tokens
+  // Tạo cặp access + refresh token
   const { accessToken, refreshToken } = generateTokens(user);
 
-  // Save refresh token
+  // Lưu refresh token vào DB để kiểm tra khi refresh
   user.refreshToken = refreshToken;
   user.lastLoginAt = new Date();
   await user.save();
 
-  // Get patient info if user is a patient
+  // Nếu là bệnh nhân, lấy thêm patientId để FE định danh
   let patientInfo = null;
   if (user.role === ROLES.PATIENT) {
     patientInfo = await Patient.findOne({ where: { userId: user.id } });
@@ -83,7 +90,9 @@ const login = asyncHandler(async (req, res) => {
 });
 
 /**
- * Register
+ * Đăng ký tài khoản bệnh nhân mới
+ * Luồng: Kiểm tra trùng username/email → Tạo User (role=patient)
+ *   → Tạo Patient record liên kết → Tạo tokens → Trả về
  * POST /api/auth/register
  */
 const register = asyncHandler(async (req, res) => {
@@ -101,24 +110,43 @@ const register = asyncHandler(async (req, res) => {
     allergies,
   } = req.body;
 
-  // Check existing user
-  const existingUser = await User.findOne({
-    where: { username },
-  });
-
+  // Kiểm tra username/email/phone đã tồn tại (bao gồm soft-deleted)
+  const existingUser = await User.findOne({ where: { username }, paranoid: false });
   if (existingUser) {
-    throw new ConflictError('Tên đăng nhập đã tồn tại');
+    if (existingUser.deletedAt) {
+      await existingUser.destroy({ force: true });
+    } else {
+      throw new ValidationError('Dữ liệu không hợp lệ', [
+        { field: 'username', message: 'Tên đăng nhập đã tồn tại' },
+      ]);
+    }
   }
 
-  const existingEmail = await User.findOne({
-    where: { email },
-  });
-
+  const existingEmail = await User.findOne({ where: { email }, paranoid: false });
   if (existingEmail) {
-    throw new ConflictError('Email đã được sử dụng');
+    if (existingEmail.deletedAt) {
+      await existingEmail.destroy({ force: true });
+    } else {
+      throw new ValidationError('Dữ liệu không hợp lệ', [
+        { field: 'email', message: 'Email đã được sử dụng' },
+      ]);
+    }
   }
 
-  // Create user (default role: patient)
+  if (phone) {
+    const existingPhone = await User.findOne({ where: { phone }, paranoid: false });
+    if (existingPhone) {
+      if (existingPhone.deletedAt) {
+        await existingPhone.destroy({ force: true });
+      } else {
+        throw new ValidationError('Dữ liệu không hợp lệ', [
+          { field: 'phone', message: 'Số điện thoại đã được sử dụng' },
+        ]);
+      }
+    }
+  }
+
+  // Tạo user với role mặc định là patient
   const user = await User.create({
     username,
     email,
@@ -134,7 +162,7 @@ const register = asyncHandler(async (req, res) => {
     role: ROLES.PATIENT,
   });
 
-  // Create patient record
+  // Tạo bản ghi bệnh nhân liên kết với user (quan hệ 1-1)
   const patient = await Patient.create({
     userId: user.id,
     fullName,
@@ -166,7 +194,10 @@ const register = asyncHandler(async (req, res) => {
 });
 
 /**
- * Refresh token
+ * Làm mới access token bằng refresh token
+ * Luồng: Giải mã refresh token → Kiểm tra type=refresh
+ *   → So sánh với token trong DB (chống token bị thu hồi)
+ *   → Tạo cặp token mới → Cập nhật DB → Trả về
  * POST /api/auth/refresh
  */
 const refreshAccessToken = asyncHandler(async (req, res) => {
@@ -177,24 +208,26 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Verify refresh token
+    // Giải mã và kiểm tra token
     const decoded = jwt.verify(refreshToken, config.jwt.secret);
 
+    // Đảm bảo đúng loại token (không dùng access token để refresh)
     if (decoded.type !== 'refresh') {
       throw new UnauthorizedError('Token không hợp lệ');
     }
 
-    // Find user
+    // Tìm user và đối chiếu refresh token trong DB
+    // Nếu không khớp → token đã bị thu hồi (sau logout hoặc đổi password)
     const user = await User.findByPk(decoded.id);
 
     if (!user || user.refreshToken !== refreshToken) {
       throw new UnauthorizedError('Token không hợp lệ hoặc đã hết hạn');
     }
 
-    // Generate new tokens
+    // Tạo cặp token mới (token rotation - refresh token cũ không dùng lại được)
     const tokens = generateTokens(user);
 
-    // Update refresh token
+    // Cập nhật refresh token mới vào DB
     user.refreshToken = tokens.refreshToken;
     await user.save();
 
@@ -296,7 +329,109 @@ const updateProfile = asyncHandler(async (req, res) => {
   return successResponse(res, user.toJSON(), 'Cập nhật hồ sơ thành công');
 });
 
-module.exports = {
+/**
+ * Quên mật khẩu - tạo reset token tạm thời
+ * Trong môi trường production nên gửi qua email, ở đây trả token trực tiếp
+ * POST /api/auth/forgot-password
+ */
+
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { identifier } = req.body;
+
+  if (!identifier) {
+    throw new BadRequestError('Vui lòng nhập tên đăng nhập hoặc email');
+  }
+
+  // Tìm user theo username hoặc email
+  const user = await User.findOne({
+    where: {
+      [Op.or]: [
+        { username: identifier },
+        { email: identifier },
+      ],
+      isActive: true,
+    },
+  });
+
+  if (!user) {
+    // Không tiết lộ user có tồn tại hay không (bảo mật)
+    return successResponse(res, null,
+      'Nếu tài khoản tồn tại, hướng dẫn đặt lại mật khẩu sẽ được gửi'
+    );
+  }
+
+  // Tạo reset token ngẫu nhiên (6 ký tự, dễ nhập thủ công)
+  const resetToken = crypto.randomBytes(3).toString('hex').toUpperCase();
+  const resetExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 phút
+
+  // Lưu token vào refreshToken field (tận dụng field có sẵn)
+  // Format: RESET:<token>:<expires_timestamp>
+  user.refreshToken = `RESET:${resetToken}:${resetExpires.getTime()}`;
+  await user.save();
+
+  // TODO: Gửi email chứa resetToken trong production
+  // Ở môi trường dev, trả token trực tiếp để test
+  const responseData = {
+    message: 'Mã xác nhận đã được tạo',
+    email: user.email ? user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3') : null,
+  };
+
+  if (process.env.NODE_ENV === 'development') {
+    responseData.resetToken = resetToken;
+  }
+
+  return successResponse(res, responseData,
+    'Nếu tài khoản tồn tại, hướng dẫn đặt lại mật khẩu sẽ được gửi'
+  );
+});
+
+/**
+ * Đặt lại mật khẩu bằng reset token
+ * POST /api/auth/reset-password
+ */
+const resetPassword = asyncHandler(async (req, res) => {
+  const { token, newPassword, confirmPassword } = req.body;
+
+  if (!token || !newPassword) {
+    throw new BadRequestError('Vui lòng cung cấp mã xác nhận và mật khẩu mới');
+  }
+
+  if (newPassword.length < 6) {
+    throw new BadRequestError('Mật khẩu mới phải có ít nhất 6 ký tự');
+  }
+
+  if (newPassword !== confirmPassword) {
+    throw new BadRequestError('Mật khẩu xác nhận không khớp');
+  }
+
+  // Tìm user có reset token phù hợp và chưa hết hạn
+  const users = await User.findAll({
+    where: {
+      isActive: true,
+    },
+  });
+
+  const user = users.find((u) => {
+    if (!u.refreshToken || !u.refreshToken.startsWith('RESET:')) return false;
+    const parts = u.refreshToken.split(':');
+    if (parts.length !== 3) return false;
+    const [, savedToken, expires] = parts;
+    return savedToken === token.toUpperCase() && parseInt(expires) > Date.now();
+  });
+
+  if (!user) {
+    throw new BadRequestError('Mã xác nhận không hợp lệ hoặc đã hết hạn');
+  }
+
+  // Cập nhật mật khẩu và xóa reset token
+  user.password = newPassword;
+  user.refreshToken = null;
+  await user.save();
+
+  return successResponse(res, null, 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.');
+});
+
+export {
   login,
   register,
   refreshAccessToken,
@@ -304,4 +439,6 @@ module.exports = {
   getCurrentUser,
   changePassword,
   updateProfile,
+  forgotPassword,
+  resetPassword,
 };

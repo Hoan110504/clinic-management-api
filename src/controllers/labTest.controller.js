@@ -2,17 +2,17 @@
  * Lab Test Controller
  * Handles lab test operations
  */
-const { Op } = require('sequelize');
-const { LabTest, Patient, User, ServiceOrder, MedicalRecord, LabService } = require('../models');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+import { Op } from 'sequelize';
+import { LabTest, Patient, User, ServiceOrder, MedicalRecord, LabService } from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, BadRequestError } = require('../utils/errors');
-const { LAB_STATUS, ROLES } = require('../config/constants');
+} from '../utils/response.js';
+import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { LAB_STATUS, ROLES } from '../config/constants.js';
 
 /**
  * Get all lab tests (with pagination and filters)
@@ -331,7 +331,7 @@ const updateLabService = asyncHandler(async (req, res) => {
   return successResponse(res, service, 'Cập nhật dịch vụ thành công');
 });
 
-module.exports = {
+export {
   getAllLabTests,
   getLabTestById,
   createLabTest,

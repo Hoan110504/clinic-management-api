@@ -2,14 +2,14 @@
  * Appointment Model
  * Handles patient appointments scheduling
  */
-const { DataTypes } = require('sequelize');
-const {
+import { DataTypes } from 'sequelize';
+import {
   APPOINTMENT_STATUS,
   APPOINTMENT_SOURCE,
   GENDER,
-} = require('../config/constants');
+} from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const Appointment = sequelize.define(
     'Appointment',
     {

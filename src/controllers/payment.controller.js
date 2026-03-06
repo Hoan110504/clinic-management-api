@@ -1,21 +1,22 @@
 /**
- * Payment Controller
- * Handles payment and billing operations
+ * Controller Thanh Toán & Hóa Đơn
+ * Quản lý tạo hóa đơn, xử lý thanh toán, thống kê doanh thu
  */
-const { Op } = require('sequelize');
-const { Payment, Patient, User, MedicalRecord, Prescription } = require('../models');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+import { Op } from 'sequelize';
+import { Payment, Patient, User, MedicalRecord, Prescription } from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, BadRequestError } = require('../utils/errors');
-const { PAYMENT_STATUS, PAYMENT_TYPES } = require('../config/constants');
+} from '../utils/response.js';
+import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { PAYMENT_STATUS, PAYMENT_TYPES } from '../config/constants.js';
 
 /**
- * Get all payments (with pagination and filters)
+ * Lấy tất cả hóa đơn (có phân trang và lọc)
+ * Hỗ trợ lọc: status, type, patientId, fromDate-toDate, search
  * GET /api/payments
  */
 const getAllPayments = asyncHandler(async (req, res) => {
@@ -124,7 +125,10 @@ const getPaymentById = asyncHandler(async (req, res) => {
 });
 
 /**
- * Create new payment
+ * Tạo hóa đơn mới
+ * Tính toán tự động: subtotal = khám + xét nghiệm + thuốc
+ * Giảm giá: hỗ trợ theo % hoặc số tiền cố định
+ * total = subtotal - discountAmount
  * POST /api/payments
  */
 const createPayment = asyncHandler(async (req, res) => {
@@ -147,12 +151,13 @@ const createPayment = asyncHandler(async (req, res) => {
     notes,
   } = req.body;
 
-  // Calculate totals
+  // Tính tổng phí từ các hạng mục: khám + xét nghiệm + thuốc
   const subTotal =
     parseFloat(consultationFee || 0) +
     parseFloat(labTestFee || 0) +
     parseFloat(medicineFee || 0);
 
+  // Tính giảm giá: 'percent' → % trên subtotal, 'amount' → số tiền cố định
   let discountAmount = 0;
   if (discountType === 'percent') {
     discountAmount = (subTotal * parseFloat(discountValue || 0)) / 100;
@@ -191,7 +196,9 @@ const createPayment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Process payment (complete payment)
+ * Xử lý thanh toán hóa đơn
+ * Kiểm tra: số tiền đưa ≥ tổng hóa đơn, tính tiền thừa trả lại
+ * Gắn thông tin thu ngân (cashier) tù user đang đăng nhập
  * POST /api/payments/:id/process
  */
 const processPayment = asyncHandler(async (req, res) => {
@@ -207,11 +214,13 @@ const processPayment = asyncHandler(async (req, res) => {
     throw new BadRequestError('Hóa đơn đã được thanh toán');
   }
 
+  // Kiểm tra số tiền đưa phải đủ thanh toán
   const paidAmount = parseFloat(amountPaid);
   if (paidAmount < payment.total) {
     throw new BadRequestError('Số tiền thanh toán không đủ');
   }
 
+  // Tính tiền thừa trả lại bệnh nhân
   const changeAmount = paidAmount - parseFloat(payment.total);
 
   await payment.update({
@@ -231,7 +240,8 @@ const processPayment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Update payment
+ * Cập nhật hóa đơn (chỉ cho phép hóa đơn chưa thanh toán)
+ * Tự động tính lại tổng nếu thay đổi các khoản phí hoặc giảm giá
  * PUT /api/payments/:id
  */
 const updatePayment = asyncHandler(async (req, res) => {
@@ -247,7 +257,8 @@ const updatePayment = asyncHandler(async (req, res) => {
     throw new BadRequestError('Không thể cập nhật hóa đơn đã thanh toán');
   }
 
-  // Recalculate if fees changed
+  // Tính lại tổng tiền nếu có thay đổi bất kỳ khoản phí nào
+  // Dùng nullish coalescing (??) để giữ giá trị cũ nếu không gửi lên
   if (
     updateData.consultationFee !== undefined ||
     updateData.labTestFee !== undefined ||
@@ -306,7 +317,7 @@ const deletePayment = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get unpaid payments
+ * Lấy hóa đơn chưa thanh toán - sắp xếp theo thời gian tạo (cũ nhất trước)
  * GET /api/payments/unpaid
  */
 const getUnpaidPayments = asyncHandler(async (req, res) => {
@@ -327,7 +338,9 @@ const getUnpaidPayments = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get payment statistics
+ * Thống kê doanh thu
+ * Mặc định: hôm nay. Tùy chỉnh qua query fromDate/toDate
+ * Trả về: tổng doanh thu, doanh thu theo loại, số lượng đã thanh toán/chưa
  * GET /api/payments/statistics
  */
 const getPaymentStatistics = asyncHandler(async (req, res) => {
@@ -388,7 +401,7 @@ const getPaymentStatistics = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = {
+export {
   getAllPayments,
   getPaymentById,
   createPayment,

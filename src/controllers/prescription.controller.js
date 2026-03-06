@@ -2,18 +2,18 @@
  * Prescription Controller
  * Handles prescription operations
  */
-const { Op } = require('sequelize');
-const { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction } = require('../models');
-const { sequelize } = require('../models/database');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+import { Op } from 'sequelize';
+import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction } from '../models/index.js';
+import { sequelize } from '../models/database.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, BadRequestError } = require('../utils/errors');
-const { INVENTORY_TRANSACTION_TYPES, ROLES } = require('../config/constants');
+} from '../utils/response.js';
+import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { INVENTORY_TRANSACTION_TYPES, ROLES } from '../config/constants.js';
 
 /**
  * Get all prescriptions (with pagination and filters)
@@ -328,7 +328,7 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
   return successResponse(res, prescriptions);
 });
 
-module.exports = {
+export {
   getAllPrescriptions,
   getPrescriptionById,
   createPrescription,

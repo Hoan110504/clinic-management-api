@@ -1,12 +1,14 @@
 /**
- * Rate Limiting Middleware
- * Protect against brute force and DoS attacks
+ * Middleware Giới Hạn Tần Suất (Rate Limiting)
+ * Bảo vệ chống tấn công brute-force và DDoS
+ * Sử dụng sliding window algorithm của express-rate-limit
  */
-const rateLimit = require('express-rate-limit');
-const config = require('../config');
+import rateLimit from 'express-rate-limit';
+import config from '../config/index.js';
 
 /**
- * General API rate limiter
+ * Giới hạn API chung - áp dụng cho tất cả endpoint
+ * Bỏ qua /health để hệ thống monitoring không bị chặn
  */
 const apiLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
@@ -28,7 +30,8 @@ const apiLimiter = rateLimit({
 });
 
 /**
- * Strict rate limiter for auth endpoints
+ * Giới hạn đăng nhập - chặt hơn để chống brute-force mật khẩu
+ * 10 lần / 15 phút, chỉ đếm request thất bại (skipSuccessfulRequests)
  */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -47,7 +50,8 @@ const authLimiter = rateLimit({
 });
 
 /**
- * Strict rate limiter for password reset
+ * Giới hạn quên mật khẩu - rất chặt để tránh spam email reset
+ * 5 lần / giờ
  */
 const passwordResetLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -64,7 +68,7 @@ const passwordResetLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = {
+export {
   apiLimiter,
   authLimiter,
   passwordResetLimiter,

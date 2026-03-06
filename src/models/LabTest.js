@@ -2,10 +2,10 @@
  * Lab Test Model
  * Handles laboratory test records
  */
-const { DataTypes } = require('sequelize');
-const { LAB_STATUS } = require('../config/constants');
+import { DataTypes } from 'sequelize';
+import { LAB_STATUS } from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const LabTest = sequelize.define(
     'LabTest',
     {

@@ -1,13 +1,14 @@
 /**
  * Authentication Routes
  */
-const express = require('express');
+import express from 'express';
+import { authController } from '../controllers/index.js';
+import { authenticate } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { authValidator } from '../validators/index.js';
+import { authLimiter } from '../middleware/rateLimiter.js';
+
 const router = express.Router();
-const { authController } = require('../controllers');
-const { authenticate } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { authValidator } = require('../validators');
-const { authLimiter } = require('../middleware/rateLimiter');
 
 /**
  * @route POST /api/auth/login
@@ -77,4 +78,18 @@ router.put(
  */
 router.put('/profile', authenticate, authController.updateProfile);
 
-module.exports = router;
+/**
+ * @route POST /api/auth/forgot-password
+ * @desc Quên mật khẩu - tạo mã reset
+ * @access Public
+ */
+router.post('/forgot-password', authLimiter, authController.forgotPassword);
+
+/**
+ * @route POST /api/auth/reset-password
+ * @desc Đặt lại mật khẩu bằng mã reset
+ * @access Public
+ */
+router.post('/reset-password', authLimiter, authController.resetPassword);
+
+export default router;

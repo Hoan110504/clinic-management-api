@@ -2,8 +2,8 @@
  * Medicine Validators
  * Input validation for medicine endpoints
  */
-const { body, param, query } = require('express-validator');
-const { MEDICINE_CATEGORIES } = require('../config/constants');
+import { body, param, query } from 'express-validator';
+import { MEDICINE_CATEGORIES } from '../config/constants.js';
 
 const createMedicineValidator = [
   body('name')
@@ -114,7 +114,7 @@ const adjustInventoryValidator = [
     .withMessage('Lý do không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createMedicineValidator,
   updateMedicineValidator,
   getMedicineValidator,

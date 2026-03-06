@@ -2,8 +2,8 @@
  * Patient Validators
  * Input validation for patient endpoints
  */
-const { body, param, query } = require('express-validator');
-const { GENDER } = require('../config/constants');
+import { body, param, query } from 'express-validator';
+import { GENDER } from '../config/constants.js';
 
 const createPatientValidator = [
   body('fullName')
@@ -95,7 +95,7 @@ const listPatientsValidator = [
     .withMessage('Tìm kiếm không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createPatientValidator,
   updatePatientValidator,
   getPatientValidator,

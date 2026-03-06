@@ -3,9 +3,7 @@
  * Central export for middleware
  */
 
-module.exports = {
-  auth: require('./auth'),
-  errorHandler: require('./errorHandler'),
-  validate: require('./validate'),
-  rateLimiter: require('./rateLimiter'),
-};
+export { authenticate, optionalAuth, authorize, authorizeOwnerOrAdmin } from './auth.js';
+export { errorHandler, notFoundHandler, asyncErrorHandler } from './errorHandler.js';
+export { validate, sanitize } from './validate.js';
+export { apiLimiter, authLimiter, passwordResetLimiter } from './rateLimiter.js';

@@ -2,16 +2,16 @@
  * Patient Controller
  * Handles patient management operations
  */
-const { Op } = require('sequelize');
-const { Patient, User, MedicalRecord, Appointment, LabTest, Payment } = require('../models');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+import { Op } from 'sequelize';
+import { Patient, User, MedicalRecord, Appointment, LabTest, Payment } from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, ConflictError } = require('../utils/errors');
+} from '../utils/response.js';
+import { NotFoundError, ConflictError } from '../utils/errors.js';
 
 /**
  * Get all patients (with pagination and filters)
@@ -316,7 +316,7 @@ const searchPatients = asyncHandler(async (req, res) => {
   return successResponse(res, patients);
 });
 
-module.exports = {
+export {
   getAllPatients,
   getPatientById,
   createPatient,

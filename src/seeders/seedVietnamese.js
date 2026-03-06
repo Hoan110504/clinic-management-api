@@ -2,13 +2,13 @@
  * Database Seeder - Dữ liệu mẫu cho CSDL
  * Seeds initial data into the database
  */
-require('dotenv').config();
+import 'dotenv/config';
 
-const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
-const { sequelize, connectDatabase, syncDatabase } = require('../models/database');
-const models = require('../models');
-const logger = require('../utils/logger');
+import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
+import { sequelize, connectDatabase, syncDatabase } from '../models/database.js';
+import models from '../models/index.js';
+import logger from '../utils/logger.js';
 
 // =============================================
 // HẰNG SỐ

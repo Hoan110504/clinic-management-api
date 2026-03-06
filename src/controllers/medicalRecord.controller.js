@@ -1,9 +1,9 @@
 /**
- * Medical Record Controller
- * Handles medical record operations
+ * Controller Phiếu Khám Bệnh
+ * Quản lý quy trình khám: tiếp nhận → chờ khám → đang khám → hoàn thành
  */
-const { Op } = require('sequelize');
-const {
+import { Op } from 'sequelize';
+import {
   MedicalRecord,
   Patient,
   Appointment,
@@ -11,19 +11,20 @@ const {
   ServiceOrder,
   LabTest,
   Prescription,
-} = require('../models');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+} from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, BadRequestError } = require('../utils/errors');
-const { MEDICAL_RECORD_STATUS, APPOINTMENT_STATUS, ROLES } = require('../config/constants');
+} from '../utils/response.js';
+import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { MEDICAL_RECORD_STATUS, APPOINTMENT_STATUS, ROLES } from '../config/constants.js';
 
 /**
- * Get all medical records (with pagination and filters)
+ * Lấy tất cả phiếu khám (có phân trang và lọc)
+ * Bác sĩ chỉ thấy phiếu của mình (tự động filter theo doctorId)
  * GET /api/medical-records
  */
 const getAllMedicalRecords = asyncHandler(async (req, res) => {
@@ -148,7 +149,9 @@ const getMedicalRecordById = asyncHandler(async (req, res) => {
 });
 
 /**
- * Create new medical record
+ * Tạo phiếu khám mới
+ * Fallback thông tin: ưu tiên dữ liệu gửi lên, sau đó lấy từ bệnh nhân/user
+ * Tự động đồng bộ trạng thái lịch hẹn nếu có liên kết
  * POST /api/medical-records
  */
 const createMedicalRecord = asyncHandler(async (req, res) => {
@@ -173,7 +176,7 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
-  // Get doctor info
+  // Xác định bác sĩ: ưu tiên doctorId gửi lên, fallback lấy từ user đang đăng nhập
   let docName = doctorName;
   let docId = doctorId;
 
@@ -187,6 +190,7 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
     }
   }
 
+  // Fallback thông tin BN: lấy từ request, nếu không có thì lấy từ bảng Patient
   const record = await MedicalRecord.create({
     patientId,
     appointmentId,
@@ -204,7 +208,7 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
     status: MEDICAL_RECORD_STATUS.WAITING,
   });
 
-  // Update appointment status if linked
+  // Đồng bộ trạng thái lịch hẹn → "chờ khám" (nếu có liên kết)
   if (appointmentId) {
     await Appointment.update(
       { status: APPOINTMENT_STATUS.WAITING },
@@ -216,7 +220,9 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
 });
 
 /**
- * Update medical record
+ * Cập nhật phiếu khám
+ * Tự động gắn startedAt/completedAt khi chuyển trạng thái
+ * Đồng bộ trạng thái lịch hẹn liên kết theo phiếu khám
  * PUT /api/medical-records/:id
  */
 const updateMedicalRecord = asyncHandler(async (req, res) => {
@@ -228,7 +234,7 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy phiếu khám');
   }
 
-  // Update status timestamps
+  // Tự động gắn mốc thời gian khi chuyển trạng thái (chỉ gắn lần đầu)
   if (updateData.status === MEDICAL_RECORD_STATUS.IN_PROGRESS && !record.startedAt) {
     updateData.startedAt = new Date();
   }
@@ -238,7 +244,7 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
 
   await record.update(updateData);
 
-  // Update appointment status if linked
+  // Đồng bộ trạng thái lịch hẹn: phiếu khám → lịch hẹn (mapping IN_PROGRESS/COMPLETED)
   if (record.appointmentId) {
     let appointmentStatus;
     switch (updateData.status) {
@@ -261,7 +267,8 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
 });
 
 /**
- * Start examination
+ * Bắt đầu khám (waiting → in_progress)
+ * Gắn bác sĩ nếu chưa có- đồng bộ lịch hẹn
  * POST /api/medical-records/:id/start
  */
 const startExamination = asyncHandler(async (req, res) => {
@@ -283,7 +290,7 @@ const startExamination = asyncHandler(async (req, res) => {
     doctorName: record.doctorName || req.user.fullName,
   });
 
-  // Update appointment status if linked
+  // Đồng bộ lịch hẹn → "đang khám"
   if (record.appointmentId) {
     await Appointment.update(
       { status: APPOINTMENT_STATUS.IN_PROGRESS },
@@ -295,7 +302,8 @@ const startExamination = asyncHandler(async (req, res) => {
 });
 
 /**
- * Complete examination
+ * Hoàn thành khám - lưu chẩn đoán, phương pháp điều trị
+ * Không cho hoàn thành phiếu đã hoàn thành trước đó
  * POST /api/medical-records/:id/complete
  */
 const completeExamination = asyncHandler(async (req, res) => {
@@ -321,7 +329,7 @@ const completeExamination = asyncHandler(async (req, res) => {
     vitalSigns: vitalSigns || record.vitalSigns,
   });
 
-  // Update appointment status if linked
+  // Đồng bộ lịch hẹn → "hoàn thành"
   if (record.appointmentId) {
     await Appointment.update(
       { status: APPOINTMENT_STATUS.COMPLETED },
@@ -397,7 +405,7 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   return successResponse(res, records);
 });
 
-module.exports = {
+export {
   getAllMedicalRecords,
   getMedicalRecordById,
   createMedicalRecord,

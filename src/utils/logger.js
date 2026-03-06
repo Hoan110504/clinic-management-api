@@ -2,9 +2,13 @@
  * Winston Logger Configuration
  * Centralized logging with multiple transports
  */
-const winston = require('winston');
-const path = require('path');
-const config = require('../config');
+import winston from 'winston';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import config from '../config/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Custom format for console output
 const consoleFormat = winston.format.combine(
@@ -75,4 +79,4 @@ logger.stream = {
   },
 };
 
-module.exports = logger;
+export default logger;

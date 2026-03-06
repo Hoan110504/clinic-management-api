@@ -1,13 +1,14 @@
 /**
  * Medical Record Routes
  */
-const express = require('express');
+import express from 'express';
+import { medicalRecordController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { medicalRecordValidator } from '../validators/index.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { medicalRecordController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { medicalRecordValidator } = require('../validators');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -105,4 +106,4 @@ router.post(
   medicalRecordController.completeExamination
 );
 
-module.exports = router;
+export default router;

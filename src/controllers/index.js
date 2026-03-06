@@ -3,15 +3,13 @@
  * Central export for all controllers
  */
 
-module.exports = {
-  authController: require('./auth.controller'),
-  userController: require('./user.controller'),
-  patientController: require('./patient.controller'),
-  appointmentController: require('./appointment.controller'),
-  medicalRecordController: require('./medicalRecord.controller'),
-  medicineController: require('./medicine.controller'),
-  labTestController: require('./labTest.controller'),
-  prescriptionController: require('./prescription.controller'),
-  paymentController: require('./payment.controller'),
-  dashboardController: require('./dashboard.controller'),
-};
+export * as authController from './auth.controller.js';
+export * as userController from './user.controller.js';
+export * as patientController from './patient.controller.js';
+export * as appointmentController from './appointment.controller.js';
+export * as medicalRecordController from './medicalRecord.controller.js';
+export * as medicineController from './medicine.controller.js';
+export * as labTestController from './labTest.controller.js';
+export * as prescriptionController from './prescription.controller.js';
+export * as paymentController from './payment.controller.js';
+export * as dashboardController from './dashboard.controller.js';

@@ -2,15 +2,15 @@
  * Express Application Setup
  * Configures Express middleware and routes
  */
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const config = require('./config');
-const routes = require('./routes');
-const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
-const { apiLimiter } = require('./middleware/rateLimiter');
-const logger = require('./utils/logger');
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import config from './config/index.js';
+import routes from './routes/index.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { apiLimiter } from './middleware/rateLimiter.js';
+import logger from './utils/logger.js';
 
 // Create Express app
 const app = express();
@@ -73,4 +73,4 @@ app.use(notFoundHandler);
 // Global error handler
 app.use(errorHandler);
 
-module.exports = app;
+export default app;

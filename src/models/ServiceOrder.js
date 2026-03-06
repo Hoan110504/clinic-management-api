@@ -2,10 +2,10 @@
  * Service Order Model
  * Handles lab test and service orders
  */
-const { DataTypes } = require('sequelize');
-const { GENDER } = require('../config/constants');
+import { DataTypes } from 'sequelize';
+import { GENDER } from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const ServiceOrder = sequelize.define(
     'ServiceOrder',
     {

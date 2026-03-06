@@ -95,7 +95,7 @@ class ServiceUnavailableError extends AppError {
   }
 }
 
-module.exports = {
+export {
   AppError,
   BadRequestError,
   UnauthorizedError,

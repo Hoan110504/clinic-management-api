@@ -2,9 +2,9 @@
  * Medicine Model
  * Handles medicine/drug inventory
  */
-const { DataTypes } = require('sequelize');
+import { DataTypes } from 'sequelize';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const Medicine = sequelize.define(
     'Medicine',
     {

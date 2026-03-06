@@ -2,9 +2,9 @@
  * Prescription Model
  * Handles medication prescriptions
  */
-const { DataTypes } = require('sequelize');
+import { DataTypes } from 'sequelize';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const Prescription = sequelize.define(
     'Prescription',
     {

@@ -2,15 +2,15 @@
  * Payment Model
  * Handles billing and payment records
  */
-const { DataTypes } = require('sequelize');
-const {
+import { DataTypes } from 'sequelize';
+import {
   PAYMENT_STATUS,
   PAYMENT_TYPES,
   PAYMENT_METHODS,
   GENDER,
-} = require('../config/constants');
+} from '../config/constants.js';
 
-module.exports = (sequelize) => {
+export default (sequelize) => {
   const Payment = sequelize.define(
     'Payment',
     {

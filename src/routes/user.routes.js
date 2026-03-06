@@ -1,13 +1,14 @@
 /**
  * User Routes
  */
-const express = require('express');
+import express from 'express';
+import { userController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { userValidator } from '../validators/index.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { userController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { userValidator } = require('../validators');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -105,4 +106,4 @@ router.post(
   userController.resetUserPassword
 );
 
-module.exports = router;
+export default router;

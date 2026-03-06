@@ -1,13 +1,14 @@
 /**
  * Lab Test Routes
  */
-const express = require('express');
+import express from 'express';
+import { labTestController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { labTestValidator } from '../validators/index.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { labTestController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { labTestValidator } = require('../validators');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -105,4 +106,4 @@ router.post(
   labTestController.completeLabTest
 );
 
-module.exports = router;
+export default router;

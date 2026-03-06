@@ -2,9 +2,9 @@
  * Sequelize Database Configuration
  * Supports multiple environments
  */
-const config = require('./index');
+import config from './index.js';
 
-module.exports = {
+export default {
   development: {
     username: config.database.username,
     password: config.database.password,

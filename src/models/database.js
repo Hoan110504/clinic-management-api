@@ -2,9 +2,9 @@
  * Sequelize Database Instance
  * Central database connection management
  */
-const { Sequelize } = require('sequelize');
-const config = require('../config');
-const logger = require('../utils/logger');
+import { Sequelize } from 'sequelize';
+import config from '../config/index.js';
+import logger from '../utils/logger.js';
 
 const sequelize = new Sequelize(
   config.database.name,
@@ -51,9 +51,4 @@ const syncDatabase = async (force = false) => {
   }
 };
 
-module.exports = {
-  sequelize,
-  connectDatabase,
-  syncDatabase,
-  Sequelize,
-};
+export { sequelize, connectDatabase, syncDatabase, Sequelize };

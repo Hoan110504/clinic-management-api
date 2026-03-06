@@ -2,8 +2,8 @@
  * User Validators
  * Input validation for user endpoints
  */
-const { body, param, query } = require('express-validator');
-const { ROLES, GENDER } = require('../config/constants');
+import { body, param, query } from 'express-validator';
+import { ROLES, GENDER } from '../config/constants.js';
 
 const createUserValidator = [
   body('username')
@@ -106,7 +106,7 @@ const listUsersValidator = [
     .withMessage('Tìm kiếm không hợp lệ'),
 ];
 
-module.exports = {
+export {
   createUserValidator,
   updateUserValidator,
   getUserValidator,

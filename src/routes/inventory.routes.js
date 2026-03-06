@@ -1,11 +1,12 @@
 /**
  * Inventory Routes
  */
-const express = require('express');
+import express from 'express';
+import { medicineController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { medicineController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -21,4 +22,4 @@ router.get(
   medicineController.getAllInventoryTransactions
 );
 
-module.exports = router;
+export default router;

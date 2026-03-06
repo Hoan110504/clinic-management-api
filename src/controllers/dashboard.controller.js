@@ -1,9 +1,10 @@
 /**
- * Dashboard Controller
- * Handles dashboard statistics and overview data
+ * Controller Dashboard
+ * Tổng hợp dữ liệu thống kê cho từng vai trò: Admin, Bác sĩ, Tiếp nhận, Dược sĩ, Bệnh nhân
  */
-const { Op } = require('sequelize');
-const {
+import { Op } from 'sequelize';
+import { sequelize } from '../models/database.js';
+import {
   User,
   Patient,
   Appointment,
@@ -12,19 +13,21 @@ const {
   Payment,
   LabTest,
   Prescription,
-} = require('../models');
-const { asyncHandler } = require('../utils/helpers');
-const { successResponse } = require('../utils/response');
-const {
+} from '../models/index.js';
+import { asyncHandler } from '../utils/helpers.js';
+import { successResponse } from '../utils/response.js';
+import {
   APPOINTMENT_STATUS,
   MEDICAL_RECORD_STATUS,
   PAYMENT_STATUS,
   LAB_STATUS,
   ROLES,
-} = require('../config/constants');
+} from '../config/constants.js';
 
 /**
- * Get admin dashboard statistics
+ * Dashboard Admin - tổng quan toàn hệ thống
+ * Thống kê: nhân sự theo role, tổng BN, lịch hẹn hôm nay,
+ * doanh thu hôm nay, hóa đơn chờ, thuốc sắp hết, lịch hẹn gần nhất
  * GET /api/dashboard/admin
  */
 const getAdminDashboard = asyncHandler(async (req, res) => {
@@ -33,7 +36,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // User counts by role
+  // Đếm nhân sự theo vai trò (GROUP BY role)
   const userCounts = await User.findAll({
     attributes: [
       'role',
@@ -72,8 +75,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     where: { status: PAYMENT_STATUS.UNPAID },
   });
 
-  // Low stock medicines
-  const { sequelize } = require('../models/database');
+  // Thuốc sắp hết: số lượng hiện tại ≤ số lượng tối thiểu (min_quantity)
   const lowStockCount = await Medicine.count({
     where: {
       isActive: true,
@@ -106,7 +108,9 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get doctor dashboard
+ * Dashboard Bác sĩ - thông tin khám bệnh hôm nay
+ * Thống kê: lịch hẹn, BN chờ khám, đang khám, đã xong, XN chờ kết quả
+ * Lọc theo doctorId = user đang đăng nhập
  * GET /api/dashboard/doctor
  */
 const getDoctorDashboard = asyncHandler(async (req, res) => {
@@ -196,7 +200,8 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get receptionist dashboard
+ * Dashboard Tiếp nhận - quản lý lịch hẹn và BN
+ * Thống kê: lịch hẹn theo trạng thái, lịch sắp tới, hóa đơn chưa thanh toán, BN mới
  * GET /api/dashboard/receptionist
  */
 const getReceptionistDashboard = asyncHandler(async (req, res) => {
@@ -269,7 +274,8 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get pharmacist dashboard
+ * Dashboard Dược sĩ - quản lý thuốc và đơn
+ * Thống kê: đơn chờ phát, thuốc sắp hết, thuốc sắp hết hạn, số đơn phát hôm nay
  * GET /api/dashboard/pharmacist
  */
 const getPharmacistDashboard = asyncHandler(async (req, res) => {
@@ -300,7 +306,6 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
   });
 
   // Low stock medicines
-  const { sequelize } = require('../models/database');
   const lowStockMedicines = await Medicine.findAll({
     where: {
       isActive: true,
@@ -348,7 +353,9 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get patient dashboard
+ * Dashboard Bệnh nhân - thông tin cá nhân
+ * Trả về: lịch hẹn sắp tới, phiếu khám gần đây, hóa đơn chưa thanh toán, kết quả XN
+ * Tìm patient theo userId của user đang đăng nhập
  * GET /api/dashboard/patient
  */
 const getPatientDashboard = asyncHandler(async (req, res) => {
@@ -435,7 +442,7 @@ const getPatientDashboard = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = {
+export {
   getAdminDashboard,
   getDoctorDashboard,
   getReceptionistDashboard,

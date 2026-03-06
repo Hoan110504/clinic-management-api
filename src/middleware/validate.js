@@ -2,8 +2,8 @@
  * Validation Middleware
  * Request validation using express-validator
  */
-const { validationResult } = require('express-validator');
-const { ValidationError } = require('../utils/errors');
+import { validationResult } from 'express-validator';
+import { ValidationError } from '../utils/errors.js';
 
 /**
  * validate(validations)
@@ -71,7 +71,7 @@ const sanitize = (req, res, next) => {
   next();
 };
 
-module.exports = {
+export {
   validate,
   sanitize,
 };

@@ -122,7 +122,7 @@ const MEDICINE_CATEGORIES = [
   'Khác',
 ];
 
-module.exports = {
+export {
   ROLES,
   ROLE_LABELS,
   APPOINTMENT_STATUS,

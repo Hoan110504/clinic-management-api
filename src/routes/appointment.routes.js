@@ -1,13 +1,14 @@
 /**
  * Appointment Routes
  */
-const express = require('express');
+import express from 'express';
+import { appointmentController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { appointmentValidator } from '../validators/index.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { appointmentController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { appointmentValidator } = require('../validators');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -124,4 +125,4 @@ router.post(
   appointmentController.checkInAppointment
 );
 
-module.exports = router;
+export default router;

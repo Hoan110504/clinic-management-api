@@ -2,22 +2,21 @@
  * Routes Index
  * Central router configuration
  */
-const express = require('express');
-const router = express.Router();
+import express from 'express';
+import authRoutes from './auth.routes.js';
+import userRoutes from './user.routes.js';
+import patientRoutes from './patient.routes.js';
+import appointmentRoutes from './appointment.routes.js';
+import medicalRecordRoutes from './medicalRecord.routes.js';
+import medicineRoutes from './medicine.routes.js';
+import labTestRoutes from './labTest.routes.js';
+import labServiceRoutes from './labService.routes.js';
+import prescriptionRoutes from './prescription.routes.js';
+import paymentRoutes from './payment.routes.js';
+import inventoryRoutes from './inventory.routes.js';
+import dashboardRoutes from './dashboard.routes.js';
 
-// Import route modules
-const authRoutes = require('./auth.routes');
-const userRoutes = require('./user.routes');
-const patientRoutes = require('./patient.routes');
-const appointmentRoutes = require('./appointment.routes');
-const medicalRecordRoutes = require('./medicalRecord.routes');
-const medicineRoutes = require('./medicine.routes');
-const labTestRoutes = require('./labTest.routes');
-const labServiceRoutes = require('./labService.routes');
-const prescriptionRoutes = require('./prescription.routes');
-const paymentRoutes = require('./payment.routes');
-const inventoryRoutes = require('./inventory.routes');
-const dashboardRoutes = require('./dashboard.routes');
+const router = express.Router();
 
 // Health check route
 router.get('/health', (req, res) => {
@@ -43,4 +42,4 @@ router.use('/payments', paymentRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/dashboard', dashboardRoutes);
 
-module.exports = router;
+export default router;

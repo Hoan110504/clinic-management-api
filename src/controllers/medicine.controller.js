@@ -2,18 +2,18 @@
  * Medicine Controller
  * Handles medicine and inventory operations
  */
-const { Op } = require('sequelize');
-const { sequelize } = require('../models/database');
-const { Medicine, InventoryTransaction } = require('../models');
-const { asyncHandler, parsePagination, parseSort } = require('../utils/helpers');
-const {
+import { Op } from 'sequelize';
+import { sequelize } from '../models/database.js';
+import { Medicine, InventoryTransaction } from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
-} = require('../utils/response');
-const { NotFoundError, BadRequestError } = require('../utils/errors');
-const { INVENTORY_TRANSACTION_TYPES } = require('../config/constants');
+} from '../utils/response.js';
+import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
 
 /**
  * Get all medicines (with pagination and filters)
@@ -419,7 +419,7 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = {
+export {
   getAllMedicines,
   getMedicineById,
   createMedicine,

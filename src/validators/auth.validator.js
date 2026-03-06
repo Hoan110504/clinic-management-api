@@ -2,8 +2,8 @@
  * Authentication Validators
  * Input validation for auth endpoints
  */
-const { body, param } = require('express-validator');
-const { ROLES } = require('../config/constants');
+import { body, param } from 'express-validator';
+import { ROLES } from '../config/constants.js';
 
 const loginValidator = [
   body('username')
@@ -78,7 +78,19 @@ const refreshTokenValidator = [
     .withMessage('Refresh token không được để trống'),
 ];
 
-module.exports = {
+// Short name aliases for routes (e.g. authValidator.login)
+const login = loginValidator;
+const register = registerValidator;
+const changePassword = changePasswordValidator;
+const refreshToken = refreshTokenValidator;
+
+export {
+  // Short names
+  login,
+  register,
+  changePassword,
+  refreshToken,
+  // Original names
   loginValidator,
   registerValidator,
   changePasswordValidator,

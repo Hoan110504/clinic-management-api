@@ -1,11 +1,12 @@
 /**
  * Dashboard Routes
  */
-const express = require('express');
+import express from 'express';
+import { dashboardController } from '../controllers/index.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { ROLES } from '../config/constants.js';
+
 const router = express.Router();
-const { dashboardController } = require('../controllers');
-const { authenticate, authorize } = require('../middleware/auth');
-const { ROLES } = require('../config/constants');
 
 // All routes require authentication
 router.use(authenticate);
@@ -65,4 +66,4 @@ router.get(
   dashboardController.getPatientDashboard
 );
 
-module.exports = router;
+export default router;
