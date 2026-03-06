@@ -161,20 +161,35 @@ const register = asyncHandler(async (req, res) => {
     allergies,
     role: ROLES.PATIENT,
   });
+  // Nếu có idNumber (CCCD) hoặc các thông tin patient quan trọng, tạo Patient.
+  // Kiểm tra xung đột idNumber trước để tránh lỗi unique của DB.
+  let patient = null;
+  if (idNumber && String(idNumber).trim() !== '') {
+    const existingPatient = await Patient.findOne({ where: { idNumber }, paranoid: false });
+    if (existingPatient) {
+      if (existingPatient.deletedAt) {
+        await existingPatient.destroy({ force: true });
+      } else {
+        // Trả lỗi field-level để frontend hiển thị đúng ô bị lỗi
+        throw new ValidationError('Dữ liệu không hợp lệ', [
+          { field: 'idNumber', message: 'Số CCCD/CMND đã được sử dụng' },
+        ]);
+      }
+    }
 
-  // Tạo bản ghi bệnh nhân liên kết với user (quan hệ 1-1)
-  const patient = await Patient.create({
-    userId: user.id,
-    fullName,
-    dateOfBirth,
-    gender,
-    phone,
-    email,
-    address,
-    idNumber,
-    medicalHistory,
-    allergies,
-  });
+    patient = await Patient.create({
+      userId: user.id,
+      fullName,
+      dateOfBirth,
+      gender,
+      phone,
+      email,
+      address,
+      idNumber,
+      medicalHistory,
+      allergies,
+    });
+  }
 
   // Generate tokens
   const { accessToken, refreshToken } = generateTokens(user);
@@ -186,7 +201,7 @@ const register = asyncHandler(async (req, res) => {
   return createdResponse(res, {
     user: {
       ...user.toJSON(),
-      patientId: patient.id,
+      patientId: patient?.id || null,
     },
     accessToken,
     refreshToken,

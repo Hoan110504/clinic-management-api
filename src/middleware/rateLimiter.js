@@ -50,6 +50,26 @@ const authLimiter = rateLimit({
 });
 
 /**
+ * Giới hạn đăng ký - nhẹ hơn so với giới hạn login nhưng vẫn chống spam
+ * 20 lần / 15 phút, đếm các request thất bại
+ */
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 attempts per 15 minutes
+  message: {
+    success: false,
+    error: {
+      code: 'TOO_MANY_REGISTRATION_ATTEMPTS',
+      message: 'Quá nhiều lần đăng ký, vui lòng thử lại sau 15 phút',
+      statusCode: 429,
+    },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
+
+/**
  * Giới hạn quên mật khẩu - rất chặt để tránh spam email reset
  * 5 lần / giờ
  */
@@ -71,5 +91,6 @@ const passwordResetLimiter = rateLimit({
 export {
   apiLimiter,
   authLimiter,
+  registerLimiter,
   passwordResetLimiter,
 };

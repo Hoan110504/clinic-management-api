@@ -6,7 +6,7 @@ import { authController } from '../controllers/index.js';
 import { authenticate } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { authValidator } from '../validators/index.js';
-import { authLimiter } from '../middleware/rateLimiter.js';
+import { authLimiter, registerLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ router.post(
  */
 router.post(
   '/register',
-  authLimiter,
+  registerLimiter,
   validate(authValidator.register),
   authController.register
 );
