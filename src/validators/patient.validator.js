@@ -27,9 +27,11 @@ const createPatientValidator = [
     .matches(/^[0-9+\-\s()]*$/)
     .withMessage('Số điện thoại không hợp lệ'),
   body('email')
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isEmail()
-    .withMessage('Email không hợp lệ'),
+    .withMessage('Email không hợp lệ')
+    .bail()
+    .normalizeEmail(),
   body('address')
     .optional()
     .isLength({ max: 255 })
@@ -69,9 +71,11 @@ const updatePatientValidator = [
     .matches(/^[0-9+\-\s()]*$/)
     .withMessage('Số điện thoại không hợp lệ'),
   body('email')
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isEmail()
-    .withMessage('Email không hợp lệ'),
+    .withMessage('Email không hợp lệ')
+    .bail()
+    .normalizeEmail(),
 ];
 
 const getPatientValidator = [
@@ -95,7 +99,19 @@ const listPatientsValidator = [
     .withMessage('Tìm kiếm không hợp lệ'),
 ];
 
+// Short name aliases for routes
+const create = createPatientValidator;
+const update = updatePatientValidator;
+const getById = getPatientValidator;
+const getList = listPatientsValidator;
+
 export {
+  // Short names
+  create,
+  update,
+  getById,
+  getList,
+  // Original names
   createPatientValidator,
   updatePatientValidator,
   getPatientValidator,

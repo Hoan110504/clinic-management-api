@@ -110,8 +110,8 @@ const register = asyncHandler(async (req, res) => {
     allergies,
   } = req.body;
 
-  // Normalize email: convert empty string or whitespace-only to empty string
-  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
+  // Normalize email: convert empty string to null to avoid UNIQUE constraint violation
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
 
   // Kiểm tra username/email/phone đã tồn tại (bao gồm soft-deleted)
   const existingUser = await User.findOne({ where: { username }, paranoid: false });

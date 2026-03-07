@@ -102,6 +102,9 @@ const createPatient = asyncHandler(async (req, res) => {
     notes,
   } = req.body;
 
+  // Normalize email: convert empty string to null to avoid UNIQUE constraint violation
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
+
   // Check existing patient with same ID number
   if (idNumber) {
     const existingPatient = await Patient.findOne({ where: { idNumber } });
@@ -110,12 +113,20 @@ const createPatient = asyncHandler(async (req, res) => {
     }
   }
 
+  // Check email chỉ khi người dùng cung cấp email (non-empty)
+  if (normalizedEmail) {
+    const existingEmail = await Patient.findOne({ where: { email: normalizedEmail } });
+    if (existingEmail) {
+      throw new ConflictError('Email đã được sử dụng');
+    }
+  }
+
   const patient = await Patient.create({
     fullName,
     dateOfBirth,
     gender,
     phone,
-    email,
+    email: normalizedEmail,
     address,
     idNumber,
     medicalHistory,
@@ -142,11 +153,24 @@ const updatePatient = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
+  // Normalize email if provided
+  if ('email' in updateData) {
+    updateData.email = updateData.email && String(updateData.email).trim() !== '' ? String(updateData.email).trim() : null;
+  }
+
   // Check ID number uniqueness if changed
   if (updateData.idNumber && updateData.idNumber !== patient.idNumber) {
     const existingPatient = await Patient.findOne({ where: { idNumber: updateData.idNumber } });
     if (existingPatient) {
       throw new ConflictError('Số CCCD đã được đăng ký');
+    }
+  }
+
+  // Check email uniqueness if changed and provided
+  if (updateData.email && updateData.email !== patient.email) {
+    const existingEmail = await Patient.findOne({ where: { email: updateData.email } });
+    if (existingEmail) {
+      throw new ConflictError('Email đã được sử dụng');
     }
   }
 

@@ -11,6 +11,7 @@ import {
   MedicalRecord,
   Medicine,
   Payment,
+  HoaDon,
   LabTest,
   Prescription,
 } from '../models/index.js';
@@ -59,21 +60,54 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     },
   });
 
-  // Today's revenue
-  const todayRevenue = await Payment.sum('total', {
-    where: {
-      paidAt: {
-        [Op.gte]: today,
-        [Op.lt]: tomorrow,
+  // Today's revenue and pending payments
+  let todayRevenue = 0;
+  let pendingPayments = 0;
+  try {
+    // Try English Payment model first
+    todayRevenue = await Payment.sum('total', {
+      where: {
+        paidAt: {
+          [Op.gte]: today,
+          [Op.lt]: tomorrow,
+        },
+        status: PAYMENT_STATUS.PAID,
       },
-      status: PAYMENT_STATUS.PAID,
-    },
-  });
+    });
 
-  // Pending payments
-  const pendingPayments = await Payment.count({
-    where: { status: PAYMENT_STATUS.UNPAID },
-  });
+    pendingPayments = await Payment.count({
+      where: { status: PAYMENT_STATUS.UNPAID },
+    });
+  } catch (err) {
+    // Fallback: some databases use Vietnamese HoaDon table/schema
+    // Use HoaDon model if available
+    if (typeof HoaDon !== 'undefined' && HoaDon) {
+      try {
+        // HoaDon field ThanhTien is total, TrangThai uses numeric enum
+        const paidFlag = HoaDon.TRANG_THAI ? HoaDon.TRANG_THAI.DA_THANH_TOAN : 1;
+        const unpaidFlag = HoaDon.TRANG_THAI ? HoaDon.TRANG_THAI.CHUA_THANH_TOAN : 0;
+
+        const sumResult = await HoaDon.sum('ThanhTien', {
+          where: {
+            NgayTao: {
+              [Op.gte]: today,
+              [Op.lt]: tomorrow,
+            },
+            TrangThai: paidFlag,
+          },
+        });
+        todayRevenue = sumResult || 0;
+
+        pendingPayments = await HoaDon.count({ where: { TrangThai: unpaidFlag } });
+      } catch (inner) {
+        // If fallback also fails, rethrow original error to be handled by error middleware
+        throw err;
+      }
+    } else {
+      // No fallback model available, rethrow
+      throw err;
+    }
+  }
 
   // Thuốc sắp hết: số lượng hiện tại ≤ số lượng tối thiểu (min_quantity)
   const lowStockCount = await Medicine.count({

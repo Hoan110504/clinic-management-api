@@ -106,8 +106,8 @@ const createUser = asyncHandler(async (req, res) => {
     signature,
   } = req.body;
 
-  // Normalize email: treat empty string as empty string (avoid inserting NULL)
-  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
+  // Normalize email: convert empty string to null to avoid UNIQUE constraint violation
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
 
   // Check existing username
   // Check existing username/email including soft-deleted records so we can
@@ -299,7 +299,7 @@ const createUser = asyncHandler(async (req, res) => {
                   dateOfBirth,
                   gender,
                   phone,
-                  email,
+                  email: normalizedEmail,
                   address,
                   idNumber,
                 }, { transaction: t2 });
@@ -394,11 +394,11 @@ const updateUser = asyncHandler(async (req, res) => {
   // Check email uniqueness if changed
   // Normalize update email: empty -> null
   if (Object.prototype.hasOwnProperty.call(updateData, 'email')) {
-    updateData.email = updateData.email && String(updateData.email).trim() !== '' ? String(updateData.email).trim() : '';
+    updateData.email = updateData.email && String(updateData.email).trim() !== '' ? String(updateData.email).trim() : null;
   }
 
   // Check email uniqueness if changed and a non-empty email provided
-  if (updateData.email !== undefined && updateData.email !== '' && updateData.email !== user.email) {
+  if (updateData.email !== undefined && updateData.email !== null && updateData.email !== user.email) {
     const existingEmail = await User.findOne({ where: { email: updateData.email, id: { [Op.ne]: id } }, paranoid: false });
     if (existingEmail) {
       if (existingEmail.deletedAt) {

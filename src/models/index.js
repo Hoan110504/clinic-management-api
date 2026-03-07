@@ -63,6 +63,7 @@ export const LabService = models.LabService;
 export const LabTest = models.LabTest;
 export const Prescription = models.Prescription;
 export const Payment = models.Payment;
+export const HoaDon = models.HoaDon;
 export const ServiceOrder = models.ServiceOrder;
 export const InventoryTransaction = models.InventoryTransaction;
 
