@@ -72,6 +72,17 @@ router.put(
 );
 
 /**
+ * @route POST /api/auth/complete-change-password
+ * @desc Complete forced password change (public)
+ * @access Public
+ */
+router.post(
+  '/complete-change-password',
+  validate(authValidator.completeChangePassword),
+  authController.completeChangePassword
+);
+
+/**
  * @route PUT /api/auth/profile
  * @desc Update profile
  * @access Private

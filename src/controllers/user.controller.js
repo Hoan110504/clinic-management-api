@@ -521,17 +521,16 @@ const toggleUserActive = asyncHandler(async (req, res) => {
 const resetUserPassword = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
-
-  if (!newPassword || newPassword.length < 6) {
-    throw new BadRequestError('Mật khẩu mới phải có ít nhất 6 ký tự');
-  }
+  // If admin didn't provide a new password, set default and force change
+  const finalPassword = newPassword && newPassword.length >= 6 ? newPassword : 'Nk123456';
 
   const user = await User.findByPk(id);
   if (!user) {
     throw new NotFoundError('Không tìm thấy người dùng');
   }
 
-  user.password = newPassword;
+  user.password = finalPassword;
+  user.mustChangePassword = true; // force user to change password on next login
   user.refreshToken = null; // Invalidate current sessions
   await user.save();
 

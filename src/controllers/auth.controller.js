@@ -17,6 +17,7 @@ import {
   BadRequestError,
   ConflictError,
   ValidationError,
+  NotFoundError,
 } from '../utils/errors.js';
 import { ROLES } from '../config/constants.js';
 
@@ -66,6 +67,22 @@ const login = asyncHandler(async (req, res) => {
   }
 
   // Tạo cặp access + refresh token
+  // If user is required to change password, do not issue tokens
+  if (user.mustChangePassword) {
+    // Invalidate any existing sessions
+    user.refreshToken = null;
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    return successResponse(res, {
+      user: {
+        ...user.toJSON(),
+        patientId: null,
+      },
+      mustChangePassword: true,
+    }, 'Bạn cần đổi mật khẩu trước khi tiếp tục');
+  }
+
   const { accessToken, refreshToken } = generateTokens(user);
 
   // Lưu refresh token vào DB để kiểm tra khi refresh
@@ -309,9 +326,45 @@ const changePassword = asyncHandler(async (req, res) => {
 
   // Update password
   user.password = newPassword;
+  // Clear forced change flag when user updates password
+  user.mustChangePassword = false;
   await user.save();
 
   return successResponse(res, null, 'Đổi mật khẩu thành công');
+});
+
+/**
+ * Complete forced password change (public)
+ * POST /api/auth/complete-change-password
+ */
+const completeChangePassword = asyncHandler(async (req, res) => {
+  const { username, currentPassword, newPassword } = req.body;
+
+  if (!username || !currentPassword || !newPassword) {
+    throw new BadRequestError('Thiếu thông tin');
+  }
+
+  const user = await User.findOne({ where: { username } });
+  if (!user) throw new NotFoundError('Không tìm thấy người dùng');
+
+  const isMatch = await user.comparePassword(currentPassword);
+  if (!isMatch) throw new BadRequestError('Mật khẩu hiện tại không đúng');
+
+  user.password = newPassword;
+  user.mustChangePassword = false;
+  // Invalidate old sessions
+  user.refreshToken = null;
+  await user.save();
+
+  // After successful change, issue tokens so client can continue
+  const tokens = generateTokens(user);
+  user.refreshToken = tokens.refreshToken;
+  await user.save();
+
+  return successResponse(res, {
+    user: user.toJSON(),
+    ...tokens,
+  }, 'Đổi mật khẩu thành công');
 });
 
 /**
@@ -464,4 +517,5 @@ export {
   updateProfile,
   forgotPassword,
   resetPassword,
+  completeChangePassword,
 };

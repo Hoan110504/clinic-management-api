@@ -113,6 +113,12 @@ export default (sequelize) => {
         allowNull: true,
         field: 'refresh_token',
       },
+      mustChangePassword: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        field: 'must_change_password',
+      },
     },
     {
       tableName: 'users',
@@ -127,9 +133,14 @@ export default (sequelize) => {
       ],
       hooks: {
         beforeValidate: (user) => {
-          // ensure we do not save NULL to DB for email; convert explicit null -> empty string
+          // Normalize email: convert empty/whitespace-only string to NULL so DB filtered unique index works
           if (user && Object.prototype.hasOwnProperty.call(user, 'email')) {
-            if (user.email === null) user.email = '';
+            if (user.email === null) return;
+            if (String(user.email).trim() === '') {
+              user.email = null;
+            } else {
+              user.email = String(user.email).trim();
+            }
           }
         },
         beforeCreate: async (user) => {

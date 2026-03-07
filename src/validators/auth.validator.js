@@ -72,6 +72,29 @@ const changePasswordValidator = [
     }),
 ];
 
+const completeChangePasswordValidator = [
+  body('username')
+    .notEmpty()
+    .withMessage('Tên đăng nhập không được để trống'),
+  body('currentPassword')
+    .notEmpty()
+    .withMessage('Mật khẩu hiện tại không được để trống'),
+  body('newPassword')
+    .notEmpty()
+    .withMessage('Mật khẩu mới không được để trống')
+    .isLength({ min: 6 })
+    .withMessage('Mật khẩu mới phải có ít nhất 6 ký tự'),
+  body('confirmPassword')
+    .notEmpty()
+    .withMessage('Xác nhận mật khẩu không được để trống')
+    .custom((value, { req }) => {
+      if (value !== req.body.newPassword) {
+        throw new Error('Mật khẩu xác nhận không khớp');
+      }
+      return true;
+    }),
+];
+
 const refreshTokenValidator = [
   body('refreshToken')
     .notEmpty()
@@ -83,6 +106,7 @@ const login = loginValidator;
 const register = registerValidator;
 const changePassword = changePasswordValidator;
 const refreshToken = refreshTokenValidator;
+const completeChangePassword = completeChangePasswordValidator;
 
 export {
   // Short names
@@ -90,6 +114,7 @@ export {
   register,
   changePassword,
   refreshToken,
+  completeChangePassword,
   // Original names
   loginValidator,
   registerValidator,
