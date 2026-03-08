@@ -25,7 +25,13 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => {
     // Skip rate limiting for health check endpoint
-    return req.path === '/health';
+    if (req.path === '/health') return true;
+
+    // Allow patient creation from reception to bypass the global API limiter
+    // (mounted under '/api', so req.path is '/patients')
+    if (req.method === 'POST' && req.path === '/patients') return true;
+
+    return false;
   },
 });
 

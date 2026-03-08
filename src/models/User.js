@@ -67,8 +67,14 @@ export default (sequelize) => {
         field: 'date_of_birth',
       },
       gender: {
-        type: DataTypes.ENUM(...Object.values(GENDER)),
+        type: DataTypes.STRING(10),
         allowNull: true,
+        validate: {
+          isIn: {
+            args: [Object.values(GENDER)],
+            msg: 'Giới tính không hợp lệ'
+          }
+        }
       },
       address: {
         type: DataTypes.STRING(255),

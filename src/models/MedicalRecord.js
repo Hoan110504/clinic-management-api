@@ -39,9 +39,15 @@ export default (sequelize) => {
         field: 'patient_name',
       },
       patientGender: {
-        type: DataTypes.ENUM(...Object.values(GENDER)),
+        type: DataTypes.STRING(10),
         allowNull: true,
         field: 'patient_gender',
+        validate: {
+          isIn: {
+            args: [Object.values(GENDER)],
+            msg: 'Giới tính không hợp lệ'
+          }
+        }
       },
       patientBirthDate: {
         type: DataTypes.DATEONLY,
