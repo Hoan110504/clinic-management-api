@@ -105,6 +105,82 @@ const createPatient = asyncHandler(async (req, res) => {
   // Normalize email: convert empty string to null to avoid UNIQUE constraint violation
   const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
 
+  // Normalize gender to match DB allowed values if possible.
+  // Map common Vietnamese and English inputs to the enum values defined in the model.
+  let genderToUse = null;
+  try {
+    const attr = Patient.rawAttributes && Patient.rawAttributes.gender;
+    const allowedValues = attr && Array.isArray(attr.values) ? attr.values : null;
+    if (!allowedValues) {
+      genderToUse = gender || null;
+    } else if (!gender) {
+      genderToUse = null;
+    } else {
+      const raw = String(gender).trim();
+      // Direct match (case-sensitive)
+      if (allowedValues.includes(raw)) {
+        genderToUse = raw;
+      } else {
+        // Normalize to lowercase for mapping
+        const low = raw.toLowerCase();
+        const candidateMap = {};
+        // Build reverse map for allowedValues (lowercase -> original)
+        for (const v of allowedValues) {
+          candidateMap[String(v).toLowerCase()] = v;
+        }
+
+        // common synonyms
+        const synonymLists = {
+          'nam': ['male', 'nam', 'm'],
+          'nữ': ['female', 'nu', 'f', 'nữ'],
+          'khác': ['other', 'khac', 'o', 'khác'],
+        };
+
+        // Try direct lowercase match to allowed values
+        if (candidateMap[low]) {
+          genderToUse = candidateMap[low];
+        } else {
+          // Find which synonym group the input belongs to
+          let group = null;
+          for (const key of Object.keys(synonymLists)) {
+            if (synonymLists[key].includes(low)) {
+              group = synonymLists[key];
+              break;
+            }
+          }
+
+          if (group) {
+            // Try to find an allowed value that matches any synonym in the group
+            let found = null;
+            for (const syn of group) {
+              if (candidateMap[syn]) {
+                found = candidateMap[syn];
+                break;
+              }
+            }
+            if (!found) {
+              // fuzzy: allowed value contains synonym
+              found = allowedValues.find(av => {
+                const avLow = String(av).toLowerCase();
+                return group.some(s => avLow.includes(s));
+              });
+            }
+            genderToUse = found || null;
+          } else {
+            genderToUse = null;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    genderToUse = null;
+  }
+
+  if (gender && genderToUse === null) {
+    // Log for debugging mapping issues
+    console.warn(`patient.controller:createPatient - incoming gender='${gender}' could not be mapped to allowed Patient.gender values`);
+  }
+
   // Check existing patient with same ID number
   if (idNumber) {
     const existingPatient = await Patient.findOne({ where: { idNumber } });
@@ -124,7 +200,7 @@ const createPatient = asyncHandler(async (req, res) => {
   const patient = await Patient.create({
     fullName,
     dateOfBirth,
-    gender,
+    gender: genderToUse,
     phone,
     email: normalizedEmail,
     address,
