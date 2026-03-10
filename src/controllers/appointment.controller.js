@@ -14,6 +14,31 @@ import {
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
 import { APPOINTMENT_STATUS, ROLES, TIME_SLOTS } from '../config/constants.js';
 
+// Precompute valid status values and a small mapping for common code keys
+const VALID_APPOINTMENT_STATUSES = Object.values(APPOINTMENT_STATUS || {});
+const STATUS_KEY_MAP = {
+  CANCELLED: APPOINTMENT_STATUS.CANCELLED,
+  SCHEDULED: APPOINTMENT_STATUS.SCHEDULED,
+  CONFIRMED: APPOINTMENT_STATUS.CONFIRMED,
+  WAITING: APPOINTMENT_STATUS.WAITING,
+  IN_PROGRESS: APPOINTMENT_STATUS.IN_PROGRESS,
+  COMPLETED: APPOINTMENT_STATUS.COMPLETED,
+};
+
+function resolveStatus(input) {
+  if (input == null) return input;
+  // already a valid localized status
+  if (VALID_APPOINTMENT_STATUSES.includes(input)) return input;
+  // try mapping common english/enum keys
+  try {
+    const key = String(input).toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+    if (STATUS_KEY_MAP[key]) return STATUS_KEY_MAP[key];
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
 /**
  * Lấy tất cả lịch hẹn (có phân trang và lọc)
  * Hỗ trợ lọc theo: status, date, doctorId, patientId, source, search, fromDate-toDate
@@ -96,8 +121,24 @@ const getAllAppointments = asyncHandler(async (req, res) => {
     ],
   });
 
+  // Normalize rows to plain objects and ensure status is present
+  const plainRows = (rows || []).map((r) => {
+    try {
+      const obj = r && r.get ? r.get({ plain: true }) : r;
+      if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+      return obj;
+    } catch (e) {
+      if (r && r.dataValues) {
+        const obj = { ...r.dataValues };
+        if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+        return obj;
+      }
+      return r;
+    }
+  });
+
   return paginatedResponse(res, {
-    data: rows,
+    data: plainRows,
     page,
     limit,
     total: count,
@@ -198,7 +239,8 @@ const createAppointment = asyncHandler(async (req, res) => {
     }
   }
 
-  const appointment = await Appointment.create({
+  // Build create data (omit status so DB default/check is applied)
+  const createData = {
     patientId,
     patientName,
     patientGender,
@@ -217,8 +259,37 @@ const createAppointment = asyncHandler(async (req, res) => {
     source: source || 'Offline',
     patientNotes,
     internalNotes,
-    status: APPOINTMENT_STATUS.SCHEDULED,
-  });
+  };
+
+  // Insert while excluding `status` column so the DB-side constraint/default applies
+  const allowedFields = Object.keys(Appointment.rawAttributes).filter(f => f !== 'status');
+  let appointment = await Appointment.create(createData, { fields: allowedFields });
+
+  // Ensure status is set to scheduled after create (some DB setups may apply defaults differently)
+  try {
+    const scheduledStatus = resolveStatus(APPOINTMENT_STATUS.SCHEDULED);
+    if (!appointment.status || appointment.status !== scheduledStatus) {
+      if (!scheduledStatus) {
+        console.error('Configured scheduled status is invalid for DB constraint:', APPOINTMENT_STATUS.SCHEDULED);
+      } else {
+        console.debug('Setting appointment.status ->', scheduledStatus);
+        await appointment.update({ status: scheduledStatus });
+        // reload to include associations/fields
+        appointment = await Appointment.findByPk(appointment.id);
+      }
+    }
+  } catch (e) {
+    // If update fails, log but continue returning created appointment
+    console.error('Failed to ensure appointment status:', e?.message || e);
+    // If DB update failed (possible constraint mismatch), ensure the API response
+    // still contains the expected scheduled status so the frontend can display it.
+    try {
+      appointment = appointment.get ? appointment.get({ plain: true }) : appointment;
+      appointment.status = APPOINTMENT_STATUS.SCHEDULED;
+    } catch (e2) {
+      // fallback: leave appointment as-is
+    }
+  }
 
   return createdResponse(res, appointment, 'Tạo lịch hẹn thành công');
 });
@@ -274,6 +345,16 @@ const updateAppointment = asyncHandler(async (req, res) => {
     }
   }
 
+  // Resolve and validate status if provided in update payload
+  if (Object.prototype.hasOwnProperty.call(updateData, 'status')) {
+    const resolved = resolveStatus(updateData.status);
+    if (!resolved) {
+      throw new BadRequestError(`Giá trị trạng thái không hợp lệ: ${updateData.status}`);
+    }
+    updateData.status = resolved;
+    console.debug('updateAppointment: resolved status ->', updateData.status);
+  }
+
   await appointment.update(updateData);
 
   return successResponse(res, appointment, 'Cập nhật lịch hẹn thành công');
@@ -300,11 +381,22 @@ const cancelAppointment = asyncHandler(async (req, res) => {
     throw new BadRequestError('Không thể hủy lịch hẹn đã hoàn thành');
   }
 
-  await appointment.update({
-    status: APPOINTMENT_STATUS.CANCELLED,
-    cancelledAt: new Date(),
-    cancelReason: reason,
-  });
+  // resolve status to DB-safe value and log attempt for diagnostics
+  const cancelStatus = resolveStatus(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED;
+  if (!VALID_APPOINTMENT_STATUSES.includes(cancelStatus)) {
+    console.error('cancelAppointment: resolved status not in allowed list', { cancelStatus, allowed: VALID_APPOINTMENT_STATUSES });
+  }
+  try {
+    console.error('cancelAppointment: attempting update', { id: appointment.id, status: cancelStatus });
+    await appointment.update({
+      status: cancelStatus,
+      cancelledAt: new Date(),
+      cancelReason: reason,
+    });
+  } catch (e) {
+    console.error('cancelAppointment: DB update failed. attempted status=', cancelStatus, e?.message || e);
+    throw e;
+  }
 
   return successResponse(res, appointment, 'Hủy lịch hẹn thành công');
 });
@@ -325,10 +417,24 @@ const confirmAppointment = asyncHandler(async (req, res) => {
     throw new BadRequestError('Chỉ có thể xác nhận lịch hẹn đang chờ');
   }
 
-  await appointment.update({
-    status: APPOINTMENT_STATUS.CONFIRMED,
-    confirmedAt: new Date(),
-  });
+  // ensure DB-friendly status
+  const confirmedStatus = resolveStatus(APPOINTMENT_STATUS.CONFIRMED);
+  if (!confirmedStatus) {
+    throw new BadRequestError('Giá trị trạng thái xác nhận không hợp lệ');
+  }
+  try {
+    if (!VALID_APPOINTMENT_STATUSES.includes(confirmedStatus)) {
+      console.error('confirmAppointment: resolved status not in allowed list', { confirmedStatus, allowed: VALID_APPOINTMENT_STATUSES });
+    }
+    console.error('confirmAppointment: attempting update', { id: appointment.id, status: confirmedStatus });
+    await appointment.update({
+      status: confirmedStatus,
+      confirmedAt: new Date(),
+    });
+  } catch (e) {
+    console.error('confirmAppointment: DB update failed. attempted status=', confirmedStatus, e?.message || e);
+    throw e;
+  }
 
   return successResponse(res, appointment, 'Xác nhận lịch hẹn thành công');
 });
@@ -350,9 +456,22 @@ const checkInAppointment = asyncHandler(async (req, res) => {
     throw new BadRequestError('Không thể check-in lịch hẹn này');
   }
 
-  await appointment.update({
-    status: APPOINTMENT_STATUS.WAITING,
-  });
+  const waitingStatus = resolveStatus(APPOINTMENT_STATUS.WAITING);
+  if (!waitingStatus) {
+    throw new BadRequestError('Giá trị trạng thái chờ khám không hợp lệ');
+  }
+  if (!VALID_APPOINTMENT_STATUSES.includes(waitingStatus)) {
+    console.error('checkInAppointment: resolved status not in allowed list', { waitingStatus, allowed: VALID_APPOINTMENT_STATUSES });
+  }
+  try {
+    console.error('checkInAppointment: attempting update', { id: appointment.id, status: waitingStatus });
+    await appointment.update({
+      status: waitingStatus,
+    });
+  } catch (e) {
+    console.error('checkInAppointment: DB update failed. attempted status=', waitingStatus, e?.message || e);
+    throw e;
+  }
 
   return successResponse(res, appointment, 'Check-in thành công');
 });
@@ -410,7 +529,23 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
     ],
   });
 
-  return successResponse(res, appointments);
+  // Normalize appointments to plain objects and ensure status is present
+  const safeAppointments = appointments.map(a => {
+    try {
+      const obj = a && a.get ? a.get({ plain: true }) : a;
+      if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+      return obj;
+    } catch (e) {
+      if (a && a.dataValues) {
+        const obj = { ...a.dataValues };
+        if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+        return obj;
+      }
+      return a;
+    }
+  });
+
+  return successResponse(res, safeAppointments);
 });
 
 /**

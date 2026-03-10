@@ -108,6 +108,13 @@ export default (sequelize) => {
               order: [['createdAt', 'DESC']],
               paranoid: false,
             });
+
+            // Associations
+            Patient.associate = (models) => {
+              Patient.hasMany(models.Appointment, { foreignKey: 'patientId', as: 'appointments' });
+              Patient.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+            };
+
             let nextNum = 1;
             if (lastPatient && lastPatient.id) {
               const match = lastPatient.id.match(/BN(\d+)/);

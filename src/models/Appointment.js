@@ -19,9 +19,15 @@ export default (sequelize) => {
         allowNull: false,
       },
       source: {
-        type: DataTypes.ENUM(...Object.values(APPOINTMENT_SOURCE)),
+        type: DataTypes.STRING(20),
         allowNull: false,
         defaultValue: APPOINTMENT_SOURCE.OFFLINE,
+        validate: {
+          isIn: {
+            args: [Object.values(APPOINTMENT_SOURCE)],
+            msg: 'Nguồn lịch hẹn không hợp lệ'
+          }
+        }
       },
       // Patient info (can be existing or new patient)
       patientId: {
@@ -121,9 +127,15 @@ export default (sequelize) => {
       },
       // Status and notes
       status: {
-        type: DataTypes.ENUM(...Object.values(APPOINTMENT_STATUS)),
+        type: DataTypes.STRING(255),
         allowNull: false,
         defaultValue: APPOINTMENT_STATUS.SCHEDULED,
+        validate: {
+          isIn: {
+            args: [Object.values(APPOINTMENT_STATUS)],
+            msg: 'Trạng thái lịch hẹn không hợp lệ'
+          }
+        }
       },
       confirmedAt: {
         type: DataTypes.DATE,
@@ -163,7 +175,7 @@ export default (sequelize) => {
         { fields: ['appointment_date', 'time_slot'] },
       ],
       hooks: {
-        beforeCreate: async (appointment) => {
+        beforeValidate: async (appointment) => {
           if (!appointment.id) {
             const Appointment = sequelize.models.Appointment;
             const lastAppointment = await Appointment.findOne({
@@ -183,6 +195,12 @@ export default (sequelize) => {
       },
     }
   );
+  // Associations
+  Appointment.associate = (models) => {
+    Appointment.belongsTo(models.Patient, { foreignKey: 'patientId', as: 'patient' });
+    Appointment.belongsTo(models.User, { foreignKey: 'assignedDoctorId', as: 'assignedDoctor' });
+    Appointment.belongsTo(models.User, { foreignKey: 'preferredDoctorId', as: 'preferredDoctor' });
+  };
 
   return Appointment;
 };
