@@ -260,36 +260,15 @@ const createAppointment = asyncHandler(async (req, res) => {
     patientNotes,
     internalNotes,
   };
+  // Ensure status is present and DB-safe before creating to avoid NULL insert errors
+  const scheduledStatus = resolveStatus(APPOINTMENT_STATUS.SCHEDULED) || APPOINTMENT_STATUS.SCHEDULED;
+  createData.status = scheduledStatus;
 
-  // Insert while excluding `status` column so the DB-side constraint/default applies
-  const allowedFields = Object.keys(Appointment.rawAttributes).filter(f => f !== 'status');
-  let appointment = await Appointment.create(createData, { fields: allowedFields });
+  // Create appointment (include status explicitly so DB constraint/default is not relied on)
+  let appointment = await Appointment.create(createData);
 
-  // Ensure status is set to scheduled after create (some DB setups may apply defaults differently)
-  try {
-    const scheduledStatus = resolveStatus(APPOINTMENT_STATUS.SCHEDULED);
-    if (!appointment.status || appointment.status !== scheduledStatus) {
-      if (!scheduledStatus) {
-        console.error('Configured scheduled status is invalid for DB constraint:', APPOINTMENT_STATUS.SCHEDULED);
-      } else {
-        console.debug('Setting appointment.status ->', scheduledStatus);
-        await appointment.update({ status: scheduledStatus });
-        // reload to include associations/fields
-        appointment = await Appointment.findByPk(appointment.id);
-      }
-    }
-  } catch (e) {
-    // If update fails, log but continue returning created appointment
-    console.error('Failed to ensure appointment status:', e?.message || e);
-    // If DB update failed (possible constraint mismatch), ensure the API response
-    // still contains the expected scheduled status so the frontend can display it.
-    try {
-      appointment = appointment.get ? appointment.get({ plain: true }) : appointment;
-      appointment.status = APPOINTMENT_STATUS.SCHEDULED;
-    } catch (e2) {
-      // fallback: leave appointment as-is
-    }
-  }
+  // Reload to include associations/fields
+  appointment = await Appointment.findByPk(appointment.id);
 
   return createdResponse(res, appointment, 'Tạo lịch hẹn thành công');
 });
