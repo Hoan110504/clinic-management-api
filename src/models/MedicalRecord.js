@@ -160,7 +160,7 @@ export default (sequelize) => {
       },
     },
     {
-      tableName: 'medical_records',
+      tableName: 'HoSoKham',
       timestamps: true,
       paranoid: true,
       indexes: [
@@ -170,26 +170,39 @@ export default (sequelize) => {
         { fields: ['created_at'] },
       ],
       hooks: {
-        beforeCreate: async (record) => {
+        beforeValidate: async (record) => {
           if (!record.id) {
-            const MedicalRecord = sequelize.models.MedicalRecord;
-            const lastRecord = await MedicalRecord.findOne({
-              order: [['createdAt', 'DESC']],
-              paranoid: false,
-            });
-            let nextNum = 1;
-            if (lastRecord && lastRecord.id) {
-              const match = lastRecord.id.match(/PK(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
-              }
+            try {
+              // Use timestamp-based ID to avoid querying database in hook
+              // Format: PK + timestamp (last 9 digits) for uniqueness
+              const timestamp = Date.now().toString();
+              const unique = timestamp.slice(-9);
+              record.id = `PK${unique}`;
+              console.log('MedicalRecord beforeValidate: generated id', record.id);
+            } catch (err) {
+              console.error('MedicalRecord beforeValidate: error generating id', {
+                error: err.message,
+                name: err.name,
+                stack: err.stack,
+              });
+              // Final fallback
+              record.id = `PK${Math.random().toString(36).substring(2, 11)}`;
+              console.log('MedicalRecord beforeValidate: using fallback id', record.id);
             }
-            record.id = `PK${String(nextNum).padStart(3, '0')}`;
           }
         },
       },
     }
   );
+
+  // Associations
+  MedicalRecord.associate = (models) => {
+    MedicalRecord.belongsTo(models.Patient, { foreignKey: 'patientId', as: 'patient' });
+    MedicalRecord.belongsTo(models.User, { foreignKey: 'doctorId', as: 'doctor' });
+    MedicalRecord.hasMany(models.LabTest, { foreignKey: 'medicalRecordId', as: 'labTests' });
+    MedicalRecord.hasMany(models.Prescription, { foreignKey: 'medicalRecordId', as: 'prescriptions' });
+    MedicalRecord.hasMany(models.ServiceOrder, { foreignKey: 'medicalRecordId', as: 'serviceOrders' });
+  };
 
   return MedicalRecord;
 };

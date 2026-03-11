@@ -39,9 +39,9 @@ export default (sequelize) => {
         validate: {
           isIn: {
             args: [Object.values(GENDER)],
-            msg: 'Giới tính không hợp lệ'
-          }
-        }
+            msg: 'Giới tính không hợp lệ',
+          },
+        },
       },
       phone: {
         type: DataTypes.STRING(15),
@@ -101,19 +101,12 @@ export default (sequelize) => {
         { fields: ['user_id'] },
       ],
       hooks: {
-        beforeValidate: async (patient, options) => {
+        beforeValidate: async (patient) => {
           if (!patient.id) {
-            // Generate patient ID: BN + sequence
             const lastPatient = await Patient.findOne({
               order: [['createdAt', 'DESC']],
               paranoid: false,
             });
-
-            // Associations
-            Patient.associate = (models) => {
-              Patient.hasMany(models.Appointment, { foreignKey: 'patientId', as: 'appointments' });
-              Patient.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
-            };
 
             let nextNum = 1;
             if (lastPatient && lastPatient.id) {
@@ -128,6 +121,13 @@ export default (sequelize) => {
       },
     }
   );
+
+  // Associations
+  Patient.associate = (models) => {
+    Patient.hasMany(models.Appointment, { foreignKey: 'patientId', as: 'appointments' });
+    Patient.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+    Patient.hasMany(models.MedicalRecord, { foreignKey: 'patientId', as: 'medicalRecords' });
+  };
 
   return Patient;
 };

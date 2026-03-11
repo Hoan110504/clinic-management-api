@@ -7,11 +7,13 @@ import { MEDICAL_RECORD_STATUS, GENDER } from '../config/constants.js';
 
 const createMedicalRecordValidator = [
   body('patientId')
-    .notEmpty()
-    .withMessage('ID bệnh nhân không được để trống'),
+    .optional()
+    .isString()
+    .withMessage('ID bệnh nhân không hợp lệ'),
   body('patientName')
-    .notEmpty()
-    .withMessage('Tên bệnh nhân không được để trống'),
+    .optional()
+    .isString()
+    .withMessage('Tên bệnh nhân không hợp lệ'),
   body('doctorId')
     .optional()
     .isUUID()

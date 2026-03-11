@@ -431,6 +431,8 @@ const updateUser = asyncHandler(async (req, res) => {
   // Don't allow changing password through this endpoint
   delete updateData.password;
 
+
+
   await user.update(updateData);
 
   // Update patient record if exists

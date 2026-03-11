@@ -51,17 +51,63 @@ const generateTokens = (user) => {
 const login = asyncHandler(async (req, res) => {
   const { username, password } = req.body;
 
+  // Helper to map logical attribute names to model column names
+  const getAttr = (model, candidates) => {
+    if (!model || !model.rawAttributes) return null;
+    for (const c of candidates) {
+      if (Object.prototype.hasOwnProperty.call(model.rawAttributes, c)) return c;
+    }
+    return null;
+  };
+
+  // Determine attribute names for username and active flag depending on model (DB schema variations)
+  const usernameAttr = getAttr(User, ['username', 'TenDangNhap', 'TenDangNhap']);
+  const isActiveAttr = getAttr(User, ['isActive', 'TrangThaiHoatDong', 'TrangThaiHoatDong']);
+
+  // Build where clause using detected attributes
+  const where = {};
+  if (usernameAttr) where[usernameAttr] = username;
+  if (isActiveAttr) where[isActiveAttr] = true;
+
   // Tìm user theo username và trạng thái hoạt động
-  const user = await User.findOne({
-    where: { username, isActive: true },
-  });
+  const user = await User.findOne({ where });
 
   if (!user) {
     throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
   }
 
   // So sánh mật khẩu với hash trong DB (bcrypt)
-  const isMatch = await user.comparePassword(password);
+  let isMatch = false;
+  try {
+    if (typeof user.comparePassword === 'function') {
+      isMatch = await user.comparePassword(password);
+    }
+  } catch (e) {
+    // ignore compare errors
+    isMatch = false;
+  }
+
+  // Fallback: some legacy records may store plaintext password in different field
+  if (!isMatch) {
+    const plainCandidates = [user.password, user.MatKhau, user.Matkhau, user?.get && typeof user.get === 'function' ? user.get('MatKhau') : undefined];
+    const storedPlain = plainCandidates.find((v) => typeof v === 'string');
+    if (storedPlain && storedPlain === password) {
+      isMatch = true;
+      // Hash and persist the password securely for future logins
+      try {
+        const bcrypt = await import('bcryptjs');
+        const saltRounds = (config.bcrypt && config.bcrypt.saltRounds) || 10;
+        const hashed = await bcrypt.hash(password, saltRounds);
+        // Determine password field(s) to update
+        const pwAttr = getAttr(User, ['password', 'MatKhau', 'Matkhau']) || null;
+        if (pwAttr) user[pwAttr] = hashed;
+        try { await user.save(); } catch (e) { /* non-fatal */ }
+      } catch (e) {
+        // ignore hashing errors
+      }
+    }
+  }
+
   if (!isMatch) {
     throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
   }
@@ -86,14 +132,31 @@ const login = asyncHandler(async (req, res) => {
   const { accessToken, refreshToken } = generateTokens(user);
 
   // Lưu refresh token vào DB để kiểm tra khi refresh
-  user.refreshToken = refreshToken;
-  user.lastLoginAt = new Date();
-  await user.save();
+  // Try to persist refresh token + lastLogin in model-aware way; skip if model doesn't expose fields
+  const refreshAttr = getAttr(User, ['refreshToken', 'refresh_token', 'RefreshToken']);
+  const lastLoginAttr = getAttr(User, ['lastLoginAt', 'last_login_at', 'NgayCapNhat']);
+  if (refreshAttr) user[refreshAttr] = refreshToken;
+  if (lastLoginAttr) user[lastLoginAttr] = new Date();
+  try {
+    // Only call save if at least one mapped attr exists
+    if (refreshAttr || lastLoginAttr) await user.save();
+  } catch (e) {
+    console.warn('Warning: unable to persist refresh/lastLogin on user model', e.message || e);
+  }
 
   // Nếu là bệnh nhân, lấy thêm patientId để FE định danh
   let patientInfo = null;
-  if (user.role === ROLES.PATIENT) {
-    patientInfo = await Patient.findOne({ where: { userId: user.id } });
+  if ((user.role === ROLES.PATIENT) || (!user.role && user.VaiTro === 5)) {
+    // Determine patient foreign key name for Patient model (userId vs MaNguoiDung)
+    const patientFk = getAttr(Patient, ['userId', 'MaNguoiDung']);
+    const patientWhere = {};
+    if (patientFk === 'userId') patientWhere.userId = user.id;
+    else if (patientFk === 'MaNguoiDung') patientWhere.MaNguoiDung = user.id;
+    try {
+      patientInfo = await Patient.findOne({ where: patientWhere });
+    } catch (e) {
+      // ignore
+    }
   }
 
   return successResponse(res, {

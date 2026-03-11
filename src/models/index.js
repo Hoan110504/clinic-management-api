@@ -57,7 +57,10 @@ export { sequelize, Sequelize, connectDatabase, syncDatabase };
 export const User = models.User;
 export const Patient = models.Patient;
 export const Appointment = models.Appointment;
-export const MedicalRecord = models.MedicalRecord;
+// HoSoKham is the DB-aligned model for medical records (Vietnamese schema)
+export const HoSoKham = models.HoSoKham;
+// Keep legacy export name `MedicalRecord` mapped to `HoSoKham` to avoid breaking controllers
+export const MedicalRecord = models.HoSoKham;
 export const Medicine = models.Medicine;
 export const LabService = models.LabService;
 export const LabTest = models.LabTest;
