@@ -57,10 +57,14 @@ export { sequelize, Sequelize, connectDatabase, syncDatabase };
 export const User = models.User;
 export const Patient = models.Patient;
 export const Appointment = models.Appointment;
-// HoSoKham is the DB-aligned model for medical records (Vietnamese schema)
+// MedicalRecord uses the English model (STRING PK, patient_id / doctor_id columns)
+// If the project has the legacy Vietnamese models (HoSoKham), prefer exporting that
+// as the primary `MedicalRecord` export so existing DB schema (HoSoKham table)
+// continues to work. If there is an English `MedicalRecord` model, it will
+// still be available in `models.MedicalRecord`.
+export const MedicalRecord = models.HoSoKham || models.MedicalRecord;
+// Keep a dedicated alias for the legacy model name
 export const HoSoKham = models.HoSoKham;
-// Keep legacy export name `MedicalRecord` mapped to `HoSoKham` to avoid breaking controllers
-export const MedicalRecord = models.HoSoKham;
 export const Medicine = models.Medicine;
 export const LabService = models.LabService;
 export const LabTest = models.LabTest;

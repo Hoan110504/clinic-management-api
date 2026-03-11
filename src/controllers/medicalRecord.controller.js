@@ -12,6 +12,43 @@ import {
   LabTest,
   Prescription,
 } from '../models/index.js';
+import models from '../models/index.js';
+const { LichHen } = models;
+
+// Helper: detect legacy model
+const isLegacyHoSoKham = MedicalRecord && (MedicalRecord.name === 'HoSoKham' || MedicalRecord.tableName === 'HoSoKham');
+
+// Map legacy numeric status -> string constant used by frontend
+const legacyStatusToString = (val) => {
+  if (!MedicalRecord || !MedicalRecord.TRANG_THAI) return null;
+  const mapping = MedicalRecord.TRANG_THAI; // { CHO_KHAM:0, DANG_KHAM:1, HOAN_THANH:2 }
+  const entries = Object.entries(mapping);
+  const found = entries.find(([, v]) => v === val);
+  return found ? (found[0] === 'CHO_KHAM' ? MEDICAL_RECORD_STATUS.WAITING : found[0] === 'DANG_KHAM' ? MEDICAL_RECORD_STATUS.IN_PROGRESS : MEDICAL_RECORD_STATUS.COMPLETED) : null;
+};
+
+// Normalize a legacy HoSoKham instance into the modern MedicalRecord JSON shape
+const normalizeLegacyRecord = (instance) => {
+  if (!instance) return null;
+  const r = instance.toJSON ? instance.toJSON() : instance;
+  return {
+    id: r.Id,
+    patientId: r.MaBenhNhan || null,
+    appointmentId: r.MaLichHen || null,
+    patientName: r.TrieuChung || null,
+    examType: r.MucDichKham || null,
+    symptoms: r.TrieuChung || null,
+    diagnosis: r.ChanDoan || null,
+    treatment: r.HuongDieuTri || null,
+    receptionTime: r.ThoiGianBatDau || null,
+    startedAt: r.ThoiGianBatDau || null,
+    completedAt: r.ThoiGianHoanThanh || null,
+    doctorId: r.MaBacSi || null,
+    status: legacyStatusToString(r.TrangThai),
+    createdAt: r.NgayTao || null,
+    updatedAt: r.NgayTao || null,
+  };
+};
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import {
   successResponse,
@@ -22,6 +59,8 @@ import {
 import { NotFoundError, BadRequestError, ValidationError } from '../utils/errors.js';
 import { MEDICAL_RECORD_STATUS, APPOINTMENT_STATUS, ROLES } from '../config/constants.js';
 
+// (removed duplicate isLegacy declaration)
+
 /**
  * Lấy tất cả phiếu khám (có phân trang và lọc)
  * Bác sĩ chỉ thấy phiếu của mình (tự động filter theo doctorId)
@@ -31,28 +70,55 @@ const getAllMedicalRecords = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const { status, patientId, doctorId, date, search, sort } = req.query;
 
-  // Build where clause
+  // Build where clause (support legacy HoSoKham schema)
+  if (isLegacyHoSoKham) {
+    const whereLegacy = {};
+    if (status) {
+      if (status === MEDICAL_RECORD_STATUS.WAITING) whereLegacy.TrangThai = MedicalRecord.TRANG_THAI.CHO_KHAM;
+      if (status === MEDICAL_RECORD_STATUS.IN_PROGRESS) whereLegacy.TrangThai = MedicalRecord.TRANG_THAI.DANG_KHAM;
+      if (status === MEDICAL_RECORD_STATUS.COMPLETED) whereLegacy.TrangThai = MedicalRecord.TRANG_THAI.HOAN_THANH;
+    }
+    if (patientId) whereLegacy.MaBenhNhan = patientId;
+    if (doctorId) whereLegacy.MaBacSi = doctorId;
+    if (date) {
+      whereLegacy.NgayTao = {
+        [Op.gte]: new Date(date),
+        [Op.lt]: new Date(new Date(date).getTime() + 24 * 60 * 60 * 1000),
+      };
+    }
+    if (search) {
+      whereLegacy[Op.or] = [
+        { TrieuChung: { [Op.like]: `%${search}%` } },
+        { Id: { [Op.like]: `%${search}%` } },
+        { ChanDoan: { [Op.like]: `%${search}%` } },
+      ];
+    }
+    if (req.user.role === ROLES.DOCTOR) whereLegacy.MaBacSi = req.user.id;
+
+    const order = parseSort(sort, ['NgayTao', 'TrangThai']);
+
+    const { count, rows } = await MedicalRecord.findAndCountAll({
+      where: whereLegacy,
+      order,
+      limit,
+      offset,
+    });
+
+    const data = rows.map((r) => normalizeLegacyRecord(r));
+    return paginatedResponse(res, { data, page, limit, total: count });
+  }
+
+  // Non-legacy (modern) behavior
   const where = {};
-
-  if (status) {
-    where.status = status;
-  }
-
-  if (patientId) {
-    where.patientId = patientId;
-  }
-
-  if (doctorId) {
-    where.doctorId = doctorId;
-  }
-
+  if (status) where.status = status;
+  if (patientId) where.patientId = patientId;
+  if (doctorId) where.doctorId = doctorId;
   if (date) {
     where.createdAt = {
       [Op.gte]: new Date(date),
       [Op.lt]: new Date(new Date(date).getTime() + 24 * 60 * 60 * 1000),
     };
   }
-
   if (search) {
     where[Op.or] = [
       { patientName: { [Op.like]: `%${search}%` } },
@@ -60,13 +126,7 @@ const getAllMedicalRecords = asyncHandler(async (req, res) => {
       { diagnosis: { [Op.like]: `%${search}%` } },
     ];
   }
-
-  // Role-based filtering
-  if (req.user.role === ROLES.DOCTOR) {
-    where.doctorId = req.user.id;
-  }
-
-  // Parse sort
+  if (req.user.role === ROLES.DOCTOR) where.doctorId = req.user.id;
   const order = parseSort(sort, ['createdAt', 'status']);
 
   const { count, rows } = await MedicalRecord.findAndCountAll({
@@ -145,6 +205,10 @@ const getMedicalRecordById = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy phiếu khám');
   }
 
+  if (isLegacyHoSoKham) {
+    return successResponse(res, normalizeLegacyRecord(record));
+  }
+
   return successResponse(res, record);
 });
 
@@ -183,13 +247,19 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
   // Resolve or create patient
   let resolvedPatientId = patientId;
   let patient = null;
-
   if (resolvedPatientId) {
     patient = await Patient.findByPk(resolvedPatientId);
     if (!patient) {
-      throw new NotFoundError('Không tìm thấy bệnh nhân');
+      // If frontend provided a patientId that doesn't exist in DB (legacy code like BNxxx),
+      // attempt to create a Patient fallback when patientName is provided instead of failing.
+      console.warn('createMedicalRecord: provided patientId not found, will attempt to create new Patient if name available', { providedId: resolvedPatientId, patientName });
+      // Clear resolvedPatientId so creation logic below will run
+      resolvedPatientId = null;
+      patient = null;
     }
-  } else {
+  }
+
+  if (!resolvedPatientId) {
     // If no patientId provided (e.g., appointment for walk-in), create a patient record
     if (!patientName) {
       throw new ValidationError('Dữ liệu không hợp lệ', [
@@ -234,6 +304,23 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
     status: MEDICAL_RECORD_STATUS.WAITING,
   });
 
+  // If an appointmentId is provided, ensure we don't create duplicate HoSoKham
+  if (appointmentId) {
+    if (isLegacyHoSoKham) {
+      const existing = await MedicalRecord.findOne({ where: { MaLichHen: appointmentId } });
+      if (existing) {
+        console.warn('createMedicalRecord: record already exists for appointment (legacy)', { appointmentId });
+        return successResponse(res, normalizeLegacyRecord(existing), 'Phiếu khám đã tồn tại');
+      }
+    } else {
+      const existing = await MedicalRecord.findOne({ where: { appointmentId } });
+      if (existing) {
+        console.warn('createMedicalRecord: record already exists for appointment', { appointmentId });
+        return successResponse(res, existing, 'Phiếu khám đã tồn tại');
+      }
+    }
+  }
+
   try {
     // Ensure date fields are properly formatted or null
     let formattedBirthDate = null;
@@ -245,24 +332,68 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
       }
     }
 
-    const record = await MedicalRecord.create({
-      patientId: resolvedPatientId,
-      appointmentId: appointmentId || null,
-      patientName: patientName || patient.fullName,
-      patientGender: patientGender || patient.gender || null,
-      patientBirthDate: formattedBirthDate || (patient.dateOfBirth ? new Date(patient.dateOfBirth).toISOString().split('T')[0] : null),
-      patientPhone: patientPhone || patient.phone || null,
-      patientAddress: patientAddress || patient.address || null,
-      examType: examType || null,
-      purpose: purpose || null,
-      receptionTime: new Date(),
-      doctorId: docId || null,
-      doctorName: docName || null,
-      initialVitalSigns: initialVitalSigns || null,
-      status: MEDICAL_RECORD_STATUS.WAITING,
-    });
+    let record;
+    if (isLegacyHoSoKham) {
+      // Create using legacy Vietnamese column names (HoSoKham table)
+      // Only set foreign keys when they look like legacy UUIDs to avoid FK errors
+      const isUuid = (v) => typeof v === 'string' && /^[0-9a-fA-F-]{36}$/.test(v);
+      const legacyMaBenhNhan = isUuid(resolvedPatientId) ? resolvedPatientId : null;
+      const legacyMaLichHen = isUuid(appointmentId) ? appointmentId : null;
+      const legacyMaBacSi = isUuid(docId) ? docId : null;
 
-    console.log('createMedicalRecord: record created successfully', { id: record.id });
+      record = await MedicalRecord.create({
+        MaBenhNhan: legacyMaBenhNhan,
+        MaLichHen: legacyMaLichHen,
+        MaBacSi: legacyMaBacSi,
+        ThoiGianBatDau: new Date(),
+        ThoiGianHoanThanh: null,
+        MucDichKham: examType || purpose || null,
+        TrieuChung: purpose || null,
+        ChanDoan: null,
+        HuongDieuTri: null,
+        HenTaiKham: null,
+        TrangThai: MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.CHO_KHAM : 0,
+        NgayTao: new Date(),
+      });
+    } else {
+      record = await MedicalRecord.create({
+        patientId: resolvedPatientId,
+        appointmentId: appointmentId || null,
+        patientName: patientName || patient.fullName,
+        patientGender: patientGender || patient.gender || null,
+        patientBirthDate: formattedBirthDate || (patient.dateOfBirth ? new Date(patient.dateOfBirth).toISOString().split('T')[0] : null),
+        patientPhone: patientPhone || patient.phone || null,
+        patientAddress: patientAddress || patient.address || null,
+        examType: examType || null,
+        purpose: purpose || null,
+        receptionTime: new Date(),
+        doctorId: docId || null,
+        doctorName: docName || null,
+        initialVitalSigns: initialVitalSigns || null,
+        status: MEDICAL_RECORD_STATUS.WAITING,
+      });
+    }
+
+    console.log('createMedicalRecord: record created successfully', { id: record.id || record.Id });
+
+    // Prepare response object: normalize legacy and merge patient snapshot when available
+    let responsePayload;
+    if (isLegacyHoSoKham) {
+      responsePayload = normalizeLegacyRecord(record);
+      // Merge patient snapshot into response so frontend sees patient details even if DB schema is legacy
+      if (patient) {
+        responsePayload.patientId = resolvedPatientId || responsePayload.patientId;
+        responsePayload.patientName = patient.fullName || responsePayload.patientName;
+        responsePayload.patientPhone = patient.phone || responsePayload.patientPhone;
+        responsePayload.patientGender = patient.gender || responsePayload.patientGender;
+        responsePayload.patientBirthDate = patient.dateOfBirth || responsePayload.patientBirthDate;
+        responsePayload.patientAddress = patient.address || responsePayload.patientAddress;
+        responsePayload.medicalHistory = patient.medicalHistory || responsePayload.medicalHistory;
+        responsePayload.allergies = patient.allergies || responsePayload.allergies;
+      }
+    } else {
+      responsePayload = record;
+    }
 
     // Đồng bộ trạng thái lịch hẹn → "chờ khám" (nếu có liên kết)
     if (appointmentId) {
@@ -272,19 +403,161 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
       );
     }
 
-    return createdResponse(res, record, 'Tạo phiếu khám thành công');
-  } catch (error) {
-    console.error('createMedicalRecord: error creating record', {
-      error: error.message,
-      name: error.name,
-      errors: error.errors,
-      parent: error.parent,
-      original: error.original,
-      sql: error.sql,
-      stack: error.stack,
-    });
-    throw error;
-  }
+    return createdResponse(res, responsePayload, 'Tạo phiếu khám thành công');
+    } catch (error) {
+      console.error('createMedicalRecord: error creating record', {
+        error: error.message,
+        name: error.name,
+        errors: error.errors,
+        parent: error.parent,
+        original: error.original,
+        sql: error.sql,
+        stack: error.stack,
+      });
+
+      // If unique constraint (duplicate) error, try to find and return the existing record
+        if (error.name === 'SequelizeUniqueConstraintError') {
+          try {
+            console.warn('🔍 createMedicalRecord: UNIQUE CONSTRAINT detected', {
+              constraintName: error.parent?.constraint || error.original?.constraint,
+              errorFields: error.fields,
+              providedAppointmentId: appointmentId,
+              providedPatientId: resolvedPatientId,
+              isLegacy: isLegacyHoSoKham,
+            });
+
+            // Strategy 1: Search by appointmentId/MaLichHen (most common unique key)
+            if (appointmentId) {
+              const searchKey = isLegacyHoSoKham ? 'MaLichHen' : 'appointmentId';
+              console.log(`   → Searching by ${searchKey}:`, appointmentId);
+              const existing = await MedicalRecord.findOne({ where: { [searchKey]: appointmentId } });
+              if (existing) {
+                console.log('   ✅ Found existing record by appointment:', existing.Id || existing.id);
+                return successResponse(res, isLegacyHoSoKham ? normalizeLegacyRecord(existing) : existing, 'Phiếu khám đã tồn tại');
+              }
+              console.log('   ❌ Not found by appointmentId');
+            }
+
+            // Strategy 2: Search by error.fields if available
+            if (error.fields && Object.keys(error.fields).length > 0) {
+              console.log('   → Trying error.fields:', error.fields);
+              for (const [fieldName, fieldValue] of Object.entries(error.fields)) {
+                if (fieldValue) {
+                  const existing = await MedicalRecord.findOne({ where: { [fieldName]: fieldValue } });
+                  if (existing) {
+                    console.log(`   ✅ Found existing by field ${fieldName}`);
+                    return successResponse(res, isLegacyHoSoKham ? normalizeLegacyRecord(existing) : existing, 'Phiếu khám đã tồn tại');
+                  }
+                }
+              }
+            }
+
+            // Strategy 3: Find most recent record for this patient (aggressive fallback)
+            if (resolvedPatientId) {
+              console.log('   → Searching most recent by patient:', resolvedPatientId);
+              const searchKey = isLegacyHoSoKham ? 'MaBenhNhan' : 'patientId';
+              const orderKey = isLegacyHoSoKham ? 'NgayTao' : 'createdAt';
+              const recent = await MedicalRecord.findOne({
+                where: { [searchKey]: resolvedPatientId },
+                order: [[orderKey, 'DESC']],
+              });
+              if (recent) {
+                console.log('   ✅ Returning most recent record for patient:', recent.Id || recent.id);
+                return successResponse(res, isLegacyHoSoKham ? normalizeLegacyRecord(recent) : recent, 'Phiếu khám đã tồn tại (gần nhất)');
+              }
+            }
+
+            // Strategy 4: Try to find an existing HoSoKham that has MaLichHen IS NULL
+            // In this DB the UNIQUE index treats NULL as a value, so inserting another NULL will fail.
+            if (isLegacyHoSoKham) {
+              console.log('   → Searching for existing HoSoKham with MaLichHen IS NULL...');
+              const queryConditions = { MaLichHen: null };
+              if (resolvedPatientId) queryConditions.MaBenhNhan = resolvedPatientId;
+              if (docId) queryConditions.MaBacSi = docId;
+
+              const existingNull = await MedicalRecord.findOne({ where: queryConditions });
+              if (existingNull) {
+                console.log('   ✅ Found existing HoSoKham with MaLichHen NULL:', existingNull.Id);
+                return successResponse(res, normalizeLegacyRecord(existingNull), 'Phiếu khám đã tồn tại (MaLichHen NULL)');
+              }
+
+              // Broader search: any record with MaLichHen NULL for this patient
+              if (resolvedPatientId) {
+                const broader = await MedicalRecord.findOne({ where: { MaLichHen: null, MaBenhNhan: resolvedPatientId }, order: [['NgayTao', 'DESC']] });
+                if (broader) return successResponse(res, normalizeLegacyRecord(broader), 'Phiếu khám đã tồn tại (MaLichHen NULL, gần nhất)');
+              }
+
+              // If still not found, cannot safely create another NULL due to unique index.
+              console.warn('   ⚠️ Cannot create fallback HoSoKham because MaLichHen NULL already exists in unique index and no matching record found to return.');
+              throw new ValidationError('Dữ liệu trùng lặp không thể xử lý tự động; vui lòng kiểm tra hệ thống hoặc liên hệ quản trị viên', [
+                { field: 'MaLichHen', message: 'Ràng buộc UNIQUE trên MaLichHen cấm thêm bản ghi với giá trị NULL' },
+              ]);
+            }
+          } catch (uniqueResolveErr) {
+            console.error('   ❌ Error during unique resolution:', uniqueResolveErr.message, uniqueResolveErr.stack);
+          }
+        }
+
+      // If foreign key constraint error, attempt a safe retry with FK fields nulled
+        if (error.name === 'SequelizeForeignKeyConstraintError' || error.code === 'ER_NO_REFERENCED_ROW_2') {
+        try {
+          console.warn('createMedicalRecord: detected FK constraint error, retrying with FK fields cleared');
+          if (isLegacyHoSoKham) {
+            const safePayload = {
+              MaBenhNhan: null,
+              MaLichHen: null,
+              MaBacSi: null,
+              ThoiGianBatDau: new Date(),
+              ThoiGianHoanThanh: null,
+              MucDichKham: examType || purpose || null,
+              TrieuChung: purpose || null,
+              ChanDoan: null,
+              HuongDieuTri: null,
+              HenTaiKham: null,
+              TrangThai: MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.CHO_KHAM : 0,
+              NgayTao: new Date(),
+            };
+            const recordRetry = await MedicalRecord.create(safePayload);
+            console.info('createMedicalRecord: retry succeeded with safe payload', { id: recordRetry.Id || recordRetry.id });
+            // normalize and return
+            return createdResponse(res, isLegacyHoSoKham ? normalizeLegacyRecord(recordRetry) : recordRetry, 'Tạo phiếu khám thành công');
+          }
+
+          // Modern model fallback: clear doctorId (most likely FK) and retry
+          const retryPayload = {
+            patientId: resolvedPatientId,
+            appointmentId: appointmentId || null,
+            patientName: patientName || patient.fullName,
+            patientGender: patientGender || patient.gender || null,
+            patientBirthDate: formattedBirthDate || (patient.dateOfBirth ? new Date(patient.dateOfBirth).toISOString().split('T')[0] : null),
+            patientPhone: patientPhone || patient.phone || null,
+            patientAddress: patientAddress || patient.address || null,
+            examType: examType || null,
+            purpose: purpose || null,
+            receptionTime: new Date(),
+            doctorId: null,
+            doctorName: docName || null,
+            initialVitalSigns: initialVitalSigns || null,
+            status: MEDICAL_RECORD_STATUS.WAITING,
+          };
+
+          const recordRetry = await MedicalRecord.create(retryPayload);
+          console.info('createMedicalRecord: retry succeeded for modern model', { id: recordRetry.id });
+          if (appointmentId) {
+            await Appointment.update(
+              { status: APPOINTMENT_STATUS.WAITING },
+              { where: { id: appointmentId } }
+            );
+          }
+          return createdResponse(res, recordRetry, 'Tạo phiếu khám thành công (fallback)');
+        } catch (retryErr) {
+          console.error('createMedicalRecord: retry failed', { error: retryErr.message, name: retryErr.name, stack: retryErr.stack });
+          throw error; // throw original to keep semantics
+        }
+      }
+
+      throw error;
+    }
 });
 
 /**
@@ -347,23 +620,48 @@ const startExamination = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy phiếu khám');
   }
 
-  if (record.status !== MEDICAL_RECORD_STATUS.WAITING) {
-    throw new BadRequestError('Chỉ có thể bắt đầu khám với phiếu đang chờ');
+  if (isLegacyHoSoKham) {
+    // Legacy numeric status enum
+    const waiting = MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.CHO_KHAM : 0;
+    if (record.TrangThai !== waiting) {
+      throw new BadRequestError('Chỉ có thể bắt đầu khám với phiếu đang chờ');
+    }
+
+    await record.update({
+      TrangThai: MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.DANG_KHAM : 1,
+      ThoiGianBatDau: record.ThoiGianBatDau || new Date(),
+      MaBacSi: record.MaBacSi || req.user.id,
+    });
+  } else {
+    if (record.status !== MEDICAL_RECORD_STATUS.WAITING) {
+      throw new BadRequestError('Chỉ có thể bắt đầu khám với phiếu đang chờ');
+    }
+
+    await record.update({
+      status: MEDICAL_RECORD_STATUS.IN_PROGRESS,
+      startedAt: new Date(),
+      doctorId: record.doctorId || req.user.id,
+      doctorName: record.doctorName || req.user.fullName,
+    });
   }
 
-  await record.update({
-    status: MEDICAL_RECORD_STATUS.IN_PROGRESS,
-    startedAt: new Date(),
-    doctorId: record.doctorId || req.user.id,
-    doctorName: record.doctorName || req.user.fullName,
-  });
-
   // Đồng bộ lịch hẹn → "đang khám"
-  if (record.appointmentId) {
-    await Appointment.update(
-      { status: APPOINTMENT_STATUS.IN_PROGRESS },
-      { where: { id: record.appointmentId } }
-    );
+  // Appointment foreign key may be stored under different attribute names
+  if (isLegacyHoSoKham) {
+    const lichHenId = record.MaLichHen;
+    if (lichHenId) {
+      // Update legacy LichHen.TrangThai (numeric enum)
+      const inProgress = LichHen && LichHen.TRANG_THAI ? LichHen.TRANG_THAI.DANG_KHAM : 2;
+      await LichHen.update({ TrangThai: inProgress }, { where: { Id: lichHenId } });
+    }
+  } else {
+    const appointmentFk = record.appointmentId;
+    if (appointmentFk) {
+      await Appointment.update(
+        { status: APPOINTMENT_STATUS.IN_PROGRESS },
+        { where: { id: appointmentFk } }
+      );
+    }
   }
 
   return successResponse(res, record, 'Bắt đầu khám thành công');

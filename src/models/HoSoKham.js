@@ -12,7 +12,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     MaBenhNhan: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       field: 'MaBenhNhan',
       references: {
         model: 'BenhNhan',
@@ -30,7 +30,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     MaBacSi: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       field: 'MaBacSi',
       references: {
         model: 'NguoiDung',

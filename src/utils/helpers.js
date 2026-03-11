@@ -34,12 +34,28 @@ const parseSort = (sortParam, allowedFields = [], defaultSort = 'createdAt:desc'
 
   sortString.split(',').forEach((part) => {
     const [field, direction] = part.split(':').map((s) => s.trim());
-    if (field && (allowedFields.length === 0 || allowedFields.includes(field))) {
+    if (!field) return;
+    // If allowedFields provided, only allow those fields
+    if (allowedFields.length === 0 || allowedFields.includes(field)) {
       order.push([field, direction?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC']);
     }
   });
 
-  return order.length > 0 ? order : [['createdAt', 'DESC']];
+  if (order.length > 0) return order;
+
+  // No valid sorts parsed. Choose a safe fallback:
+  // - prefer 'id' if available in allowedFields
+  // - otherwise use the first allowedField
+  // - if no allowedFields provided, fall back to parsing defaultSort's field
+  let fallbackField = 'id';
+  if (allowedFields.length > 0) {
+    fallbackField = allowedFields.includes('id') ? 'id' : allowedFields[0];
+  } else if (defaultSort) {
+    const [defField] = defaultSort.split(':').map((s) => s.trim());
+    if (defField) fallbackField = defField;
+  }
+
+  return [[fallbackField, 'DESC']];
 };
 
 /**
