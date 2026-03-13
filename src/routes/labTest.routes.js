@@ -75,13 +75,24 @@ router.put(
 /**
  * @route DELETE /api/lab-tests/:id
  * @desc Delete lab test
- * @access Admin only
+ * @access Admin or Doctor (controller enforces ownership)
  */
 router.delete(
   '/:id',
-  authorize(ROLES.ADMIN),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR),
   validate(labTestValidator.getById),
   labTestController.deleteLabTest
+);
+
+/**
+ * @route POST /api/lab-tests/batch-delete
+ * @desc Batch delete lab tests by ids
+ * @access Admin, Doctor
+ */
+router.post(
+  '/batch-delete',
+  authorize(ROLES.ADMIN, ROLES.DOCTOR),
+  labTestController.batchDeleteLabTests
 );
 
 /**

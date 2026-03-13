@@ -71,7 +71,19 @@ const listLabTestsValidator = [
     .withMessage('ID bệnh nhân không hợp lệ'),
 ];
 
+// Short name aliases for routes (e.g. labTestValidator.create)
+const create = createLabTestValidator;
+const update = updateLabTestValidator;
+const getById = getLabTestValidator;
+const getList = listLabTestsValidator;
+
 export {
+  // Short names
+  create,
+  update,
+  getById,
+  getList,
+  // Original names
   createLabTestValidator,
   updateLabTestValidator,
   getLabTestValidator,

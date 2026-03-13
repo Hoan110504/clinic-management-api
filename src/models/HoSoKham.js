@@ -53,6 +53,14 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       field: 'TrieuChung'
     },
+    ThoiGianTrieuChung: {
+      type: DataTypes.STRING(100),
+      field: 'ThoiGianTrieuChung'
+    },
+    MucDoTrieuChung: {
+      type: DataTypes.STRING(50),
+      field: 'MucDoTrieuChung'
+    },
     ChanDoan: {
       type: DataTypes.TEXT,
       field: 'ChanDoan'

@@ -10,12 +10,12 @@ export default (sequelize) => {
     'LabTest',
     {
       id: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.STRING(50),
         primaryKey: true,
         allowNull: false,
       },
       serviceOrderId: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.STRING(50),
         allowNull: true,
         field: 'service_order_id',
         references: {
@@ -24,16 +24,16 @@ export default (sequelize) => {
         },
       },
       medicalRecordId: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.STRING(50),
         allowNull: true,
         field: 'medical_record_id',
         references: {
-          model: 'medical_records',
+          model: 'HoSoKham',
           key: 'id',
         },
       },
       patientId: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.STRING(50),
         allowNull: false,
         field: 'patient_id',
         references: {
@@ -132,26 +132,53 @@ export default (sequelize) => {
         { fields: ['ordered_date'] },
       ],
       hooks: {
-        beforeCreate: async (test) => {
-          if (!test.id) {
-            const LabTest = sequelize.models.LabTest;
-            const lastTest = await LabTest.findOne({
-              order: [['createdAt', 'DESC']],
-              paranoid: false,
-            });
-            let nextNum = 1;
-            if (lastTest && lastTest.id) {
-              const match = lastTest.id.match(/XN(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
+          beforeValidate: async (test) => {
+            if (!test.id) {
+              try {
+                const LabTest = sequelize.models.LabTest;
+                const lastTest = await LabTest.findOne({
+                  order: [['createdAt', 'DESC']],
+                  paranoid: false,
+                });
+                let nextNum = 1;
+                if (lastTest && lastTest.id) {
+                  const match = lastTest.id.match(/XN(\d+)/);
+                  if (match) {
+                    nextNum = parseInt(match[1], 10) + 1;
+                  }
+                }
+                test.id = `XN${String(nextNum).padStart(3, '0')}`;
+              } catch (e) {
+                // If the lookup fails (missing table or permission), fall back to a safe generated id
+                console.warn('LabTest.beforeValidate: could not query lastTest, falling back to timestamp id', e && e.message);
+                test.id = `XN${Date.now().toString().slice(-10)}`;
               }
             }
-            test.id = `XN${String(nextNum).padStart(3, '0')}`;
-          }
-        },
+          },
       },
     }
   );
 
-  return LabTest;
-};
+    // Associations (defined after model creation)
+    LabTest.associate = (models) => {
+      if (models.Patient) {
+        LabTest.belongsTo(models.Patient, { foreignKey: 'patientId', as: 'patient' });
+      }
+
+      if (models.MedicalRecord || models.HoSoKham) {
+        const MR = models.MedicalRecord || models.HoSoKham;
+        LabTest.belongsTo(MR, { foreignKey: 'medicalRecordId', as: 'medicalRecord' });
+      }
+
+      if (models.ServiceOrder) {
+        LabTest.belongsTo(models.ServiceOrder, { foreignKey: 'serviceOrderId', as: 'serviceOrder' });
+      }
+
+      if (models.User) {
+        LabTest.belongsTo(models.User, { foreignKey: 'orderedById', as: 'orderedByUser' });
+        LabTest.belongsTo(models.User, { foreignKey: 'confirmedById', as: 'confirmedByUser' });
+      }
+    };
+
+    return LabTest;
+  };

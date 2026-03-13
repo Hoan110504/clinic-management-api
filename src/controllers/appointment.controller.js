@@ -393,7 +393,7 @@ const confirmAppointment = asyncHandler(async (req, res) => {
   }
 
   if (appointment.status !== APPOINTMENT_STATUS.SCHEDULED) {
-    throw new BadRequestError('Chỉ có thể xác nhận lịch hẹn đang chờ');
+    throw new BadRequestError('Chỉ có thể xác nhận lịch hẹn đang ở trạng thái đã đặt');
   }
 
   // ensure DB-friendly status
@@ -435,9 +435,9 @@ const checkInAppointment = asyncHandler(async (req, res) => {
     throw new BadRequestError('Không thể check-in lịch hẹn này');
   }
 
-  const waitingStatus = resolveStatus(APPOINTMENT_STATUS.WAITING);
+  const waitingStatus = resolveStatus(APPOINTMENT_STATUS.SCHEDULED);
   if (!waitingStatus) {
-    throw new BadRequestError('Giá trị trạng thái chờ khám không hợp lệ');
+    throw new BadRequestError('Giá trị trạng thái không hợp lệ');
   }
   if (!VALID_APPOINTMENT_STATUSES.includes(waitingStatus)) {
     console.error('checkInAppointment: resolved status not in allowed list', { waitingStatus, allowed: VALID_APPOINTMENT_STATUSES });

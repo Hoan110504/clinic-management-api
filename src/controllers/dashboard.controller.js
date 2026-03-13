@@ -146,7 +146,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
 
 /**
  * Dashboard Bác sĩ - thông tin khám bệnh hôm nay
- * Thống kê: lịch hẹn, BN chờ khám, đang khám, đã xong, XN chờ kết quả
+ * Thống kê: lịch hẹn, BN đã đặt lịch, đang khám, đã xong, XN chờ kết quả
  * Lọc theo doctorId = user đang đăng nhập
  * GET /api/dashboard/doctor
  */

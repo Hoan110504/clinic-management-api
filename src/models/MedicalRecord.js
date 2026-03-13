@@ -124,6 +124,17 @@ export default (sequelize) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      symptomDuration: {
+        type: DataTypes.STRING(100),
+        allowNull: true,
+        field: 'symptom_duration',
+      },
+      symptomSeverity: {
+        type: DataTypes.STRING(20),
+        allowNull: true,
+        field: 'symptom_severity',
+        defaultValue: 'medium',
+      },
       diagnosis: {
         type: DataTypes.TEXT,
         allowNull: true,

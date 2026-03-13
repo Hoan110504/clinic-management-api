@@ -127,7 +127,7 @@ BEGIN
         [ChanDoan] NVARCHAR(MAX),
         [HuongDieuTri] NVARCHAR(MAX),
         [HenTaiKham] DATETIME,
-        [TrangThai] TINYINT, -- 0:Chờ khám, 1:Đang khám, 2:Hoàn thành
+        [TrangThai] TINYINT, -- 0:Đã đặt lịch, 1:Đang khám, 2:Hoàn thành
         [NgayTao] DATETIME DEFAULT GETDATE(),
 
         CONSTRAINT FK_HoSoKham_BenhNhan FOREIGN KEY ([MaBenhNhan]) 

@@ -1,6 +1,6 @@
 /**
  * Controller Phiếu Khám Bệnh
- * Quản lý quy trình khám: tiếp nhận → chờ khám → đang khám → hoàn thành
+ * Quản lý quy trình khám: tiếp nhận → đã đặt lịch → đang khám → hoàn thành
  */
 import { Op } from 'sequelize';
 import {
@@ -31,22 +31,78 @@ const legacyStatusToString = (val) => {
 const normalizeLegacyRecord = (instance) => {
   if (!instance) return null;
   const r = instance.toJSON ? instance.toJSON() : instance;
+  
+  // Extract associated data
+  const patient = r.BenhNhan || null;
+  const doctor = r.BacSi || null;
+  const appointment = r.LichHen || null;
+  const donThuoc = r.DonThuoc || null;
+  const yeuCauDichVu = r.YeuCauDichVu || [];
+  const chiSoSinhTon = r.ChiSoSinhTon || [];
+  
+  // Build vitalSigns from ChiSoSinhTon if available
+  let vitalSigns = null;
+  if (chiSoSinhTon.length > 0) {
+    const latestVital = chiSoSinhTon[0];
+    vitalSigns = {
+      bloodPressure: `${latestVital.HuyetApTam || ''}/${latestVital.HuyetApTruong || ''}`,
+      heartRate: latestVital.NhipTim || '',
+      temperature: latestVital.NhietDo || '',
+      weight: latestVital.CanNang || '',
+      height: latestVital.ChieuCao || '',
+    };
+  }
+  
+  // Build prescriptions from DonThuoc
+  let prescriptions = [];
+  if (donThuoc && donThuoc.ChiTietDonThuoc) {
+    prescriptions = donThuoc.ChiTietDonThuoc.map(ct => ({
+      id: ct.Id,
+      medicineId: ct.MaThuoc,
+      medicineName: ct.TenThuoc || '',
+      quantity: ct.SoLuong || 0,
+      dosage: ct.LieuDung || '',
+      instructions: ct.HuongDan || '',
+    }));
+  }
+  
+  // Build lab tests from YeuCauDichVu (service orders)
+  let labTests = yeuCauDichVu.map(yc => ({
+    id: yc.Id,
+    testName: yc.TenDichVu || '',
+    testType: yc.LoaiDichVu || '',
+    status: yc.TrangThai || 'pending',
+  }));
+  
   return {
     id: r.Id,
     patientId: r.MaBenhNhan || null,
     appointmentId: r.MaLichHen || null,
-    patientName: r.TrieuChung || null,
+    patientName: patient ? patient.HoTen : null,
     examType: r.MucDichKham || null,
     symptoms: r.TrieuChung || null,
+    symptomDuration: r.ThoiGianTrieuChung || null,
+    symptomSeverity: r.MucDoTrieuChung || null,
     diagnosis: r.ChanDoan || null,
     treatment: r.HuongDieuTri || null,
+    notes: null, // HoSoKham doesn't have notes field
+    vitalSigns,
+    initialVitalSigns: vitalSigns, // Same as current
+    nextAppointment: r.HenTaiKham || null,
     receptionTime: r.ThoiGianBatDau || null,
     startedAt: r.ThoiGianBatDau || null,
     completedAt: r.ThoiGianHoanThanh || null,
     doctorId: r.MaBacSi || null,
+    doctorName: doctor ? doctor.HoTen : null,
     status: legacyStatusToString(r.TrangThai),
     createdAt: r.NgayTao || null,
     updatedAt: r.NgayTao || null,
+    // Include related data
+    patient,
+    doctor,
+    appointment,
+    prescriptions,
+    labTests,
   };
 };
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
@@ -165,41 +221,86 @@ const getAllMedicalRecords = asyncHandler(async (req, res) => {
 const getMedicalRecordById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const record = await MedicalRecord.findByPk(id, {
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
+  // Use appropriate aliases based on model type
+  const includes = isLegacyHoSoKham ? [
+    {
+      model: models.BenhNhan,
+      as: 'BenhNhan',
+      required: false,
+    },
+    {
+      model: models.NguoiDung,
+      as: 'BacSi',
+      attributes: ['Id', 'HoTen', 'SoDienThoai', 'Email'],
+      required: false,
+    },
+    {
+      model: models.LichHen || Appointment,
+      as: 'LichHen',
+      required: false,
+    },
+    {
+      model: models.ChiSoSinhTon,
+      as: 'ChiSoSinhTon',
+      required: false,
+    },
+    {
+      model: models.YeuCauDichVu,
+      as: 'YeuCauDichVu',
+      required: false,
+    },
+    {
+      model: models.DonThuoc,
+      as: 'DonThuoc',
+      required: false,
+      include: [{
+        model: models.ChiTietDonThuoc,
+        as: 'ChiTietDonThuoc',
         required: false,
-      },
-      {
-        model: User,
-        as: 'doctor',
-        attributes: ['id', 'fullName', 'phone', 'email', 'signature'],
-        required: false,
-      },
-      {
-        model: Appointment,
-        as: 'appointment',
-        required: false,
-      },
-      {
-        model: ServiceOrder,
-        as: 'serviceOrders',
-        required: false,
-      },
-      {
-        model: LabTest,
-        as: 'labTests',
-        required: false,
-      },
-      {
-        model: Prescription,
-        as: 'prescriptions',
-        required: false,
-      },
-    ],
-  });
+      }],
+    },
+  ] : [
+    {
+      model: Patient,
+      as: 'patient',
+      required: false,
+    },
+    {
+      model: User,
+      as: 'doctor',
+      attributes: ['id', 'fullName', 'phone', 'email', 'signature'],
+      required: false,
+    },
+    {
+      model: Appointment,
+      as: 'appointment',
+      required: false,
+    },
+    {
+      model: ServiceOrder,
+      as: 'serviceOrders',
+      required: false,
+    },
+    {
+      model: LabTest,
+      as: 'labTests',
+      required: false,
+    },
+    {
+      model: Prescription,
+      as: 'prescriptions',
+      required: false,
+    },
+  ];
+
+  let record;
+  try {
+    record = await MedicalRecord.findByPk(id, { include: includes });
+  } catch (dbErr) {
+    console.warn('getMedicalRecordById: include query failed, retrying without includes', { id, message: dbErr.message });
+    // Retry without includes in case legacy related tables are missing in this DB
+    record = await MedicalRecord.findByPk(id);
+  }
 
   if (!record) {
     throw new NotFoundError('Không tìm thấy phiếu khám');
@@ -349,6 +450,8 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
         ThoiGianHoanThanh: null,
         MucDichKham: examType || purpose || null,
         TrieuChung: purpose || null,
+        ThoiGianTrieuChung: req.body?.symptomDuration || null,
+        MucDoTrieuChung: req.body?.symptomSeverity || null,
         ChanDoan: null,
         HuongDieuTri: null,
         HenTaiKham: null,
@@ -395,10 +498,10 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
       responsePayload = record;
     }
 
-    // Đồng bộ trạng thái lịch hẹn → "chờ khám" (nếu có liên kết)
+    // Đồng bộ trạng thái lịch hẹn → "Đã đặt lịch" (nếu có liên kết)
     if (appointmentId) {
       await Appointment.update(
-        { status: APPOINTMENT_STATUS.WAITING },
+        { status: APPOINTMENT_STATUS.SCHEDULED },
         { where: { id: appointmentId } }
       );
     }
@@ -545,7 +648,7 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
           console.info('createMedicalRecord: retry succeeded for modern model', { id: recordRetry.id });
           if (appointmentId) {
             await Appointment.update(
-              { status: APPOINTMENT_STATUS.WAITING },
+              { status: APPOINTMENT_STATUS.SCHEDULED },
               { where: { id: appointmentId } }
             );
           }
@@ -583,7 +686,48 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
     updateData.completedAt = new Date();
   }
 
-  await record.update(updateData);
+  // If legacy HoSoKham model is used, map modern fields to legacy column names
+  if (isLegacyHoSoKham) {
+    const legacyUpdate = {};
+    if (updateData.symptoms !== undefined) legacyUpdate.TrieuChung = updateData.symptoms;
+    if (updateData.symptomDuration !== undefined) legacyUpdate.ThoiGianTrieuChung = updateData.symptomDuration;
+    if (updateData.symptomSeverity !== undefined) legacyUpdate.MucDoTrieuChung = updateData.symptomSeverity;
+    if (updateData.diagnosis !== undefined) legacyUpdate.ChanDoan = updateData.diagnosis;
+    if (updateData.treatment !== undefined) legacyUpdate.HuongDieuTri = updateData.treatment;
+    if (updateData.nextAppointment !== undefined) legacyUpdate.HenTaiKham = updateData.nextAppointment || null;
+    // Do not overwrite TrangThai here unless status mapping needed externally
+
+    // Apply legacy updates if any
+    if (Object.keys(legacyUpdate).length > 0) {
+      await record.update(legacyUpdate);
+    }
+
+    // If vitalSigns provided, create a ChiSoSinhTon entry linked to this HoSoKham
+    if (updateData.vitalSigns) {
+      try {
+        const vs = updateData.vitalSigns;
+        const chiSo = {
+          MaHoSoKham: record.Id || record.id,
+          HuyetAp: vs.bloodPressure || null,
+          NhipTim: vs.pulse || null,
+          NhietDo: vs.temperature || null,
+          CanNang: vs.weight || null,
+          ChieuCao: vs.height || null,
+          SpO2: vs.spO2 || null,
+        };
+        // Use models namespace to create legacy ChiSoSinhTon
+        if (models && models.ChiSoSinhTon) {
+          await models.ChiSoSinhTon.create(chiSo);
+        } else {
+          console.warn('updateMedicalRecord: ChiSoSinhTon model not available to create vital signs');
+        }
+      } catch (chiErr) {
+        console.error('updateMedicalRecord: failed to create ChiSoSinhTon', chiErr);
+      }
+    }
+  } else {
+    await record.update(updateData);
+  }
 
   // Đồng bộ trạng thái lịch hẹn: phiếu khám → lịch hẹn (mapping IN_PROGRESS/COMPLETED)
   if (record.appointmentId) {
