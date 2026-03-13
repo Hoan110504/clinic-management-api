@@ -210,6 +210,10 @@ export default (sequelize) => {
   MedicalRecord.associate = (models) => {
     MedicalRecord.belongsTo(models.Patient, { foreignKey: 'patientId', as: 'patient' });
     MedicalRecord.belongsTo(models.User, { foreignKey: 'doctorId', as: 'doctor' });
+    // Legacy association: HoSoKham -> ChiSoSinhTon (vital signs history)
+    if (models.ChiSoSinhTon) {
+      MedicalRecord.hasMany(models.ChiSoSinhTon, { foreignKey: 'MaHoSoKham', as: 'ChiSoSinhTon' });
+    }
     MedicalRecord.hasMany(models.LabTest, { foreignKey: 'medicalRecordId', as: 'labTests' });
     MedicalRecord.hasMany(models.Prescription, { foreignKey: 'medicalRecordId', as: 'prescriptions' });
     MedicalRecord.hasMany(models.ServiceOrder, { foreignKey: 'medicalRecordId', as: 'serviceOrders' });

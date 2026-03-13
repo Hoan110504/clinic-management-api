@@ -31,6 +31,7 @@ const legacyStatusToString = (val) => {
 const normalizeLegacyRecord = (instance) => {
   if (!instance) return null;
   const r = instance.toJSON ? instance.toJSON() : instance;
+  console.log('normalizeLegacyRecord: input', { id: r.Id, ChiSoSinhTonCount: r.ChiSoSinhTon?.length, hasVitalSigns: !!r.vitalSigns });
   
   // Extract associated data
   const patient = r.BenhNhan || null;
@@ -40,17 +41,40 @@ const normalizeLegacyRecord = (instance) => {
   const yeuCauDichVu = r.YeuCauDichVu || [];
   const chiSoSinhTon = r.ChiSoSinhTon || [];
   
-  // Build vitalSigns from ChiSoSinhTon if available
+  // Build vitalSigns from ChiSoSinhTon if available, otherwise fall back to stored JSON fields
   let vitalSigns = null;
   if (chiSoSinhTon.length > 0) {
     const latestVital = chiSoSinhTon[0];
+    console.log('normalizeLegacyRecord: extracting from ChiSoSinhTon[0]', latestVital);
+    // support different legacy column shapes: some deployments store HuyetAp as combined "120/80",
+    // others store separate HuyetApTam (systolic) and HuyetApTruong (diastolic).
+    const bpCombined = latestVital.HuyetAp || null;
+    const systolic = latestVital.HuyetApTam || null;
+    const diastolic = latestVital.HuyetApTruong || null;
+    const bp = bpCombined ? bpCombined : (systolic || diastolic ? `${systolic || ''}/${diastolic || ''}` : '');
     vitalSigns = {
-      bloodPressure: `${latestVital.HuyetApTam || ''}/${latestVital.HuyetApTruong || ''}`,
-      heartRate: latestVital.NhipTim || '',
+      bloodPressure: bp || '',
+      pulse: latestVital.NhipTim || '',
       temperature: latestVital.NhietDo || '',
       weight: latestVital.CanNang || '',
       height: latestVital.ChieuCao || '',
+      spO2: latestVital.SpO2 || latestVital.SPO2 || '',
+      // keep raw timestamp if available
+      measuredAt: latestVital.ThoiDiemDo || latestVital.ThoiGianDo || null,
     };
+    console.log('normalizeLegacyRecord: EXTRACTED vitalSigns', vitalSigns);
+  }
+  // Fallback: if legacy ChiSoSinhTon is absent, use JSON columns if present
+  if (!vitalSigns) {
+    if (r.vitalSigns) {
+      vitalSigns = r.vitalSigns;
+      console.log('normalizeLegacyRecord: using stored vitalSigns JSON', vitalSigns);
+    } else if (r.initialVitalSigns) {
+      vitalSigns = r.initialVitalSigns;
+      console.log('normalizeLegacyRecord: using stored initialVitalSigns JSON', vitalSigns);
+    } else {
+      console.log('normalizeLegacyRecord: NO vitalSigns found!');
+    }
   }
   
   // Build prescriptions from DonThuoc
@@ -220,6 +244,7 @@ const getAllMedicalRecords = asyncHandler(async (req, res) => {
  */
 const getMedicalRecordById = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  console.log('getMedicalRecordById: id', id, 'isLegacyHoSoKham', isLegacyHoSoKham, 'MedicalRecord.name', MedicalRecord?.name, 'tableName', MedicalRecord?.tableName);
 
   // Use appropriate aliases based on model type
   const includes = isLegacyHoSoKham ? [
@@ -300,6 +325,35 @@ const getMedicalRecordById = asyncHandler(async (req, res) => {
     console.warn('getMedicalRecordById: include query failed, retrying without includes', { id, message: dbErr.message });
     // Retry without includes in case legacy related tables are missing in this DB
     record = await MedicalRecord.findByPk(id);
+  }
+
+  // If legacy model and includes didn't bring ChiSoSinhTon (empty), attempt direct lookup
+  try {
+    if (isLegacyHoSoKham && record && models && models.ChiSoSinhTon) {
+      const attached = record.ChiSoSinhTon || [];
+      if ((!attached || attached.length === 0) && record.Id) {
+        try {
+          console.debug('getMedicalRecordById: attempting direct ChiSoSinhTon lookup for record', record.Id);
+          const directVitals = await models.ChiSoSinhTon.findAll({ where: { MaHoSoKham: record.Id }, order: [['ThoiDiemDo', 'DESC']], limit: 5 });
+          if (directVitals && directVitals.length > 0) {
+            console.info('getMedicalRecordById: loaded ChiSoSinhTon directly', { recordId: record.Id, count: directVitals.length });
+            // Attach to record so normalizeLegacyRecord can pick them up
+            record.ChiSoSinhTon = directVitals;
+          } else {
+            console.debug('getMedicalRecordById: no ChiSoSinhTon found for record', record.Id);
+          }
+        } catch (vErr) {
+          console.warn('getMedicalRecordById: failed to load ChiSoSinhTon directly', vErr && vErr.message);
+        }
+      }
+    }
+  } catch (e) {
+    // swallow - non-critical
+  }
+
+  // Final fallback: if legacy and still no ChiSoSinhTon, initialize as empty array so normalizeLegacyRecord doesn't error
+  if (isLegacyHoSoKham && record && !record.ChiSoSinhTon) {
+    record.ChiSoSinhTon = [];
   }
 
   if (!record) {
@@ -478,6 +532,26 @@ const createMedicalRecord = asyncHandler(async (req, res) => {
     }
 
     console.log('createMedicalRecord: record created successfully', { id: record.id || record.Id });
+
+    // If legacy table and initialVitalSigns were provided, try to persist them to ChiSoSinhTon
+    if (isLegacyHoSoKham && initialVitalSigns && models && models.ChiSoSinhTon) {
+      try {
+        const iv = initialVitalSigns;
+        const chiSoPayload = {
+          MaHoSoKham: record.Id || record.id,
+          HuyetAp: iv.bloodPressure || null,
+          NhipTim: iv.pulse || null,
+          NhietDo: iv.temperature || null,
+          CanNang: iv.weight || null,
+          ChieuCao: iv.height || null,
+          SpO2: iv.spO2 || null,
+        };
+        const createdChi = await models.ChiSoSinhTon.create(chiSoPayload);
+        console.info('createMedicalRecord: created initial ChiSoSinhTon for legacy HoSoKham', { id: createdChi.Id || createdChi.id, maHoSo: chiSoPayload.MaHoSoKham });
+      } catch (chiErr) {
+        console.warn('createMedicalRecord: failed to create initial ChiSoSinhTon', chiErr && chiErr.message);
+      }
+    }
 
     // Prepare response object: normalize legacy and merge patient snapshot when available
     let responsePayload;
@@ -673,6 +747,8 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const updateData = req.body;
 
+  console.info('updateMedicalRecord: received update for id', id, 'vitalSigns:', updateData && updateData.vitalSigns);
+
   const record = await MedicalRecord.findByPk(id);
   if (!record) {
     throw new NotFoundError('Không tìm thấy phiếu khám');
@@ -704,7 +780,10 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
 
     // If vitalSigns provided, create a ChiSoSinhTon entry linked to this HoSoKham
     if (updateData.vitalSigns) {
+      // savedVitalsFallback used if DB/table not present or creation fails
+      let savedVitalsFallback = null;
       try {
+        console.info('updateMedicalRecord: creating ChiSoSinhTon for HoSoKham', { recordId: record.Id || record.id, vitalSigns: updateData.vitalSigns });
         const vs = updateData.vitalSigns;
         const chiSo = {
           MaHoSoKham: record.Id || record.id,
@@ -717,16 +796,42 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
         };
         // Use models namespace to create legacy ChiSoSinhTon
         if (models && models.ChiSoSinhTon) {
-          await models.ChiSoSinhTon.create(chiSo);
+          const created = await models.ChiSoSinhTon.create(chiSo);
+          console.info('updateMedicalRecord: ChiSoSinhTon created', { id: created.Id || created.id });
+          // Also persist modern JSON field so frontend can read vitals back from MedicalRecord
+          try {
+            await record.update({ vitalSigns: vs });
+            console.info('updateMedicalRecord: persisted vitalSigns JSON to MedicalRecord', { id: record.Id || record.id });
+          } catch (persistJsonErr) {
+            console.warn('updateMedicalRecord: failed to persist vitalSigns JSON to MedicalRecord', persistJsonErr && persistJsonErr.message);
+          }
         } else {
           console.warn('updateMedicalRecord: ChiSoSinhTon model not available to create vital signs');
+          savedVitalsFallback = updateData.vitalSigns;
         }
       } catch (chiErr) {
+        // Table may not exist in this deployment (legacy table missing). Log and keep vitals in-memory
         console.error('updateMedicalRecord: failed to create ChiSoSinhTon', chiErr);
+        savedVitalsFallback = updateData.vitalSigns;
+      }
+      // attach fallback vitals to record for response if creation failed
+      if (savedVitalsFallback) {
+        // Try to persist fallback vitals into the existing MedicalRecord row's JSON column
+        try {
+          if (record && typeof record.update === 'function') {
+            await record.update({ vitalSigns: savedVitalsFallback });
+            console.info('updateMedicalRecord: persisted fallback vitalSigns into MedicalRecord.vitalSigns', { id: record.Id || record.id });
+          }
+        } catch (persistErr) {
+          console.warn('updateMedicalRecord: failed to persist fallback vitalSigns into MedicalRecord', persistErr && persistErr.message);
+        }
+        record._fallbackVitalSigns = savedVitalsFallback;
       }
     }
   } else {
+    console.info('updateMedicalRecord: updating modern MedicalRecord', { id: record.id, vitalSigns: updateData.vitalSigns });
     await record.update(updateData);
+    console.info('updateMedicalRecord: updated modern MedicalRecord', { id: record.id, vitalSigns: record.vitalSigns });
   }
 
   // Đồng bộ trạng thái lịch hẹn: phiếu khám → lịch hẹn (mapping IN_PROGRESS/COMPLETED)
@@ -747,8 +852,85 @@ const updateMedicalRecord = asyncHandler(async (req, res) => {
       );
     }
   }
+  // Reload the record (including legacy associations) so we return authoritative, normalized data
+  let fresh;
+  try {
+    const includes = isLegacyHoSoKham ? [
+      { model: models.BenhNhan, as: 'BenhNhan', required: false },
+      { model: models.NguoiDung, as: 'BacSi', required: false },
+      { model: models.LichHen || Appointment, as: 'LichHen', required: false },
+      { model: models.ChiSoSinhTon, as: 'ChiSoSinhTon', required: false },
+      { model: models.YeuCauDichVu, as: 'YeuCauDichVu', required: false },
+      { model: models.DonThuoc, as: 'DonThuoc', required: false, include: [{ model: models.ChiTietDonThuoc, as: 'ChiTietDonThuoc', required: false }] },
+    ] : [
+      { model: Patient, as: 'patient', required: false },
+      { model: User, as: 'doctor', required: false },
+      { model: Appointment, as: 'appointment', required: false },
+      { model: ServiceOrder, as: 'serviceOrders', required: false },
+      { model: LabTest, as: 'labTests', required: false },
+      { model: Prescription, as: 'prescriptions', required: false },
+    ];
 
-  return successResponse(res, record, 'Cập nhật phiếu khám thành công');
+    fresh = await MedicalRecord.findByPk(record.Id || record.id, { include: includes });
+  } catch (reloadErr) {
+    console.warn('updateMedicalRecord: failed to reload record after update', reloadErr && reloadErr.message);
+    fresh = record;
+  }
+
+  // If legacy and includes didn't return ChiSoSinhTon, try direct lookup
+  try {
+    if (isLegacyHoSoKham && fresh && models && models.ChiSoSinhTon) {
+      const attached = fresh.ChiSoSinhTon || [];
+      if ((!attached || attached.length === 0) && (fresh.Id || fresh.id)) {
+        try {
+          console.debug('updateMedicalRecord: attempting direct ChiSoSinhTon lookup after reload', fresh.Id || fresh.id);
+          const directVitals = await models.ChiSoSinhTon.findAll({ where: { MaHoSoKham: fresh.Id || fresh.id }, order: [['ThoiDiemDo', 'DESC']], limit: 5 });
+          if (directVitals && directVitals.length > 0) {
+            console.info('updateMedicalRecord: loaded ChiSoSinhTon directly after reload', { recordId: fresh.Id || fresh.id, count: directVitals.length });
+            fresh.ChiSoSinhTon = directVitals;
+          } else {
+            console.debug('updateMedicalRecord: no ChiSoSinhTon found after reload', fresh.Id || fresh.id);
+          }
+        } catch (vErr) {
+          console.warn('updateMedicalRecord: failed to load ChiSoSinhTon directly', vErr && vErr.message);
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Ensure ChiSoSinhTon is initialized if legacy
+  if (isLegacyHoSoKham && fresh && !fresh.ChiSoSinhTon) {
+    fresh.ChiSoSinhTon = [];
+  }
+
+  if (isLegacyHoSoKham) {
+    const normalized = normalizeLegacyRecord(fresh);
+    // Ensure response contains the vitals we just received in the request as a fallback
+    const responseVitalSigns = (updateData && updateData.vitalSigns) ? updateData.vitalSigns : (record._fallbackVitalSigns || null);
+    if (record._fallbackVitalSigns) {
+      normalized.vitalSigns = record._fallbackVitalSigns;
+    }
+    if (!normalized.vitalSigns && responseVitalSigns) {
+      normalized.vitalSigns = responseVitalSigns;
+      console.info('updateMedicalRecord: attaching request vitals to normalized response as fallback', { recordId: record.Id || record.id });
+    }
+    console.info('updateMedicalRecord: returning normalized record with vitalSigns', { recordId: record.Id || record.id, vitalSigns: normalized.vitalSigns });
+    return successResponse(res, normalized, 'Cập nhật phiếu khám thành công');
+  }
+
+  // For modern schema, also ensure the response includes vitals from the request when necessary
+  if (!fresh.vitalSigns && updateData && updateData.vitalSigns) {
+    try {
+      fresh.vitalSigns = updateData.vitalSigns;
+      console.info('updateMedicalRecord: attaching request vitals to modern record response as fallback', { id: fresh.id });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return successResponse(res, fresh, 'Cập nhật phiếu khám thành công');
 });
 
 /**
@@ -878,45 +1060,64 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   tomorrow.setDate(tomorrow.getDate() + 1);
 
   const { doctorId, status } = req.query;
-
-  const where = {
-    createdAt: {
-      [Op.gte]: today,
-      [Op.lt]: tomorrow,
-    },
-  };
-
-  if (status) {
-    where.status = status;
-  }
-
-  if (doctorId) {
-    where.doctorId = doctorId;
-  }
-
-  // Role-based filtering
-  if (req.user.role === ROLES.DOCTOR) {
-    where.doctorId = req.user.id;
-  }
-
+  console.log('getTodayQueue: isLegacyHoSoKham', isLegacyHoSoKham, 'MedicalRecord.name', MedicalRecord?.name, 'tableName', MedicalRecord?.tableName);
+  
+  // Build where clause differently for legacy HoSoKham schema
   try {
+    if (isLegacyHoSoKham) {
+      console.log('getTodayQueue: using LEGACY HoSoKham schema');
+      const whereLegacy = {};
+      whereLegacy.NgayTao = {
+        [Op.gte]: today,
+        [Op.lt]: tomorrow,
+      };
+      if (status) {
+        // Map modern status to legacy numeric enum if possible
+        if (status === MEDICAL_RECORD_STATUS.WAITING) whereLegacy.TrangThai = MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.CHO_KHAM : 0;
+        if (status === MEDICAL_RECORD_STATUS.IN_PROGRESS) whereLegacy.TrangThai = MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.DANG_KHAM : 1;
+        if (status === MEDICAL_RECORD_STATUS.COMPLETED) whereLegacy.TrangThai = MedicalRecord.TRANG_THAI ? MedicalRecord.TRANG_THAI.HOAN_THANH : 2;
+      }
+
+      if (doctorId) whereLegacy.MaBacSi = doctorId;
+      if (req.user.role === ROLES.DOCTOR) whereLegacy.MaBacSi = req.user.id;
+
+      const rows = await MedicalRecord.findAll({
+        where: whereLegacy,
+        order: [['ThoiGianBatDau', 'ASC']],
+      });
+      console.log('getTodayQueue: LEGACY query returned', rows.length, 'records');
+
+      // Normalize legacy records before returning
+      const data = rows.map(r => normalizeLegacyRecord(r));
+      return successResponse(res, data);
+    }
+
+    // Modern schema
+    console.log('getTodayQueue: using MODERN MedicalRecord schema');
+    const where = {
+      createdAt: {
+        [Op.gte]: today,
+        [Op.lt]: tomorrow,
+      },
+    };
+    if (status) where.status = status;
+    if (doctorId) where.doctorId = doctorId;
+    if (req.user.role === ROLES.DOCTOR) where.doctorId = req.user.id;
+
     const records = await MedicalRecord.findAll({
       where,
       order: [['receptionTime', 'ASC']],
-      // Do not include Patient join here to avoid cross-schema table name mismatches;
-      // MedicalRecord stores patient snapshot fields (patientName, patientPhone, ...)
     });
+    console.log('getTodayQueue: MODERN query returned', records.length, 'records', records.map(r => ({ id: r.id, patientId: r.patientId })));
 
     return successResponse(res, records);
   } catch (err) {
-    // Log detailed DB error for diagnosis
     console.error('getTodayQueue DB error:', {
       message: err.message,
       original: err.original && err.original.message,
       parent: err.parent && err.parent.message,
       stack: err.stack,
     });
-    // Return empty list to avoid propagating DB errors to the doctor UI
     return successResponse(res, []);
   }
 });
