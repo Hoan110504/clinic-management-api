@@ -60,41 +60,53 @@ module.exports = (sequelize, DataTypes) => {
 
   BenhNhan.associate = (models) => {
     // Bệnh nhân thuộc về một người dùng
-    BenhNhan.belongsTo(models.NguoiDung, {
-      foreignKey: 'MaNguoiDung',
-      as: 'NguoiDung',
-      onDelete: 'CASCADE'
-    });
+    if (models && models.NguoiDung) {
+      BenhNhan.belongsTo(models.NguoiDung, {
+        foreignKey: 'MaNguoiDung',
+        as: 'NguoiDung',
+        onDelete: 'CASCADE'
+      });
+    }
 
     // Bệnh nhân có nhiều lịch hẹn
-    BenhNhan.hasMany(models.LichHen, {
-      foreignKey: 'MaBenhNhan',
-      as: 'LichHen'
-    });
+    if (models && models.LichHen) {
+      BenhNhan.hasMany(models.LichHen, {
+        foreignKey: 'MaBenhNhan',
+        as: 'LichHen'
+      });
+    }
 
     // Bệnh nhân có nhiều hồ sơ khám
-    BenhNhan.hasMany(models.HoSoKham, {
-      foreignKey: 'MaBenhNhan',
-      as: 'HoSoKham'
-    });
+    if (models && models.HoSoKham) {
+      BenhNhan.hasMany(models.HoSoKham, {
+        foreignKey: 'MaBenhNhan',
+        as: 'HoSoKham'
+      });
+    }
 
     // Bệnh nhân có nhiều đơn thuốc
-    BenhNhan.hasMany(models.DonThuoc, {
-      foreignKey: 'MaBenhNhan',
-      as: 'DonThuoc'
-    });
+    if (models && models.DonThuoc) {
+      BenhNhan.hasMany(models.DonThuoc, {
+        foreignKey: 'MaBenhNhan',
+        as: 'DonThuoc'
+      });
+    }
 
     // Bệnh nhân có nhiều yêu cầu dịch vụ
-    BenhNhan.hasMany(models.YeuCauDichVu, {
-      foreignKey: 'MaBenhNhan',
-      as: 'YeuCauDichVu'
-    });
+    if (models && models.YeuCauDichVu) {
+      BenhNhan.hasMany(models.YeuCauDichVu, {
+        foreignKey: 'MaBenhNhan',
+        as: 'YeuCauDichVu'
+      });
+    }
 
     // Bệnh nhân có nhiều hóa đơn
-    BenhNhan.hasMany(models.HoaDon, {
-      foreignKey: 'MaBenhNhan',
-      as: 'HoaDon'
-    });
+    if (models && models.HoaDon) {
+      BenhNhan.hasMany(models.HoaDon, {
+        foreignKey: 'MaBenhNhan',
+        as: 'HoaDon'
+      });
+    }
   };
 
   return BenhNhan;

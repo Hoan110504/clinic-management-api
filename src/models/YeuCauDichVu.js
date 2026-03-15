@@ -70,34 +70,44 @@ module.exports = (sequelize, DataTypes) => {
 
   YeuCauDichVu.associate = (models) => {
     // Yêu cầu thuộc về hồ sơ khám
-    YeuCauDichVu.belongsTo(models.HoSoKham, {
-      foreignKey: 'MaHoSoKham',
-      as: 'HoSoKham'
-    });
+    if (models && models.HoSoKham) {
+      YeuCauDichVu.belongsTo(models.HoSoKham, {
+        foreignKey: 'MaHoSoKham',
+        as: 'HoSoKham'
+      });
+    }
 
     // Yêu cầu thuộc về bệnh nhân
-    YeuCauDichVu.belongsTo(models.BenhNhan, {
-      foreignKey: 'MaBenhNhan',
-      as: 'BenhNhan'
-    });
+    if (models && models.BenhNhan) {
+      YeuCauDichVu.belongsTo(models.BenhNhan, {
+        foreignKey: 'MaBenhNhan',
+        as: 'BenhNhan'
+      });
+    }
 
     // Yêu cầu được chỉ định bởi người dùng
-    YeuCauDichVu.belongsTo(models.NguoiDung, {
-      foreignKey: 'NguoiChiDinhId',
-      as: 'NguoiChiDinh'
-    });
+    if (models && models.NguoiDung) {
+      YeuCauDichVu.belongsTo(models.NguoiDung, {
+        foreignKey: 'NguoiChiDinhId',
+        as: 'NguoiChiDinh'
+      });
+    }
 
     // Yêu cầu có nhiều chi tiết dịch vụ
-    YeuCauDichVu.hasMany(models.ChiTietYeuCauDichVu, {
-      foreignKey: 'MaYeuCau',
-      as: 'ChiTietYeuCau'
-    });
+    if (models && models.ChiTietYeuCauDichVu) {
+      YeuCauDichVu.hasMany(models.ChiTietYeuCauDichVu, {
+        foreignKey: 'MaYeuCau',
+        as: 'ChiTietYeuCau'
+      });
+    }
 
     // Yêu cầu có nhiều kết quả cận lâm sàng
-    YeuCauDichVu.hasMany(models.CanLamSang, {
-      foreignKey: 'MaYeuCau',
-      as: 'KetQuaCanLamSang'
-    });
+    if (models && models.CanLamSang) {
+      YeuCauDichVu.hasMany(models.CanLamSang, {
+        foreignKey: 'MaYeuCau',
+        as: 'KetQuaCanLamSang'
+      });
+    }
   };
 
   return YeuCauDichVu;

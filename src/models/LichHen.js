@@ -108,28 +108,36 @@ module.exports = (sequelize, DataTypes) => {
 
   LichHen.associate = (models) => {
     // Lịch hẹn thuộc về bệnh nhân
-    LichHen.belongsTo(models.BenhNhan, {
-      foreignKey: 'MaBenhNhan',
-      as: 'BenhNhan'
-    });
+    if (models && models.BenhNhan) {
+      LichHen.belongsTo(models.BenhNhan, {
+        foreignKey: 'MaBenhNhan',
+        as: 'BenhNhan'
+      });
+    }
 
     // Lịch hẹn có bác sĩ ưu tiên
-    LichHen.belongsTo(models.NguoiDung, {
-      foreignKey: 'BacSiUuTienId',
-      as: 'BacSiUuTien'
-    });
+    if (models && models.NguoiDung) {
+      LichHen.belongsTo(models.NguoiDung, {
+        foreignKey: 'BacSiUuTienId',
+        as: 'BacSiUuTien'
+      });
+    }
 
     // Lịch hẹn có bác sĩ được phân công
-    LichHen.belongsTo(models.NguoiDung, {
-      foreignKey: 'BacSiDuocPhanId',
-      as: 'BacSiDuocPhan'
-    });
+    if (models && models.NguoiDung) {
+      LichHen.belongsTo(models.NguoiDung, {
+        foreignKey: 'BacSiDuocPhanId',
+        as: 'BacSiDuocPhan'
+      });
+    }
 
     // Lịch hẹn có một hồ sơ khám
-    LichHen.hasOne(models.HoSoKham, {
-      foreignKey: 'MaLichHen',
-      as: 'HoSoKham'
-    });
+    if (models && models.HoSoKham) {
+      LichHen.hasOne(models.HoSoKham, {
+        foreignKey: 'MaLichHen',
+        as: 'HoSoKham'
+      });
+    }
   };
 
   return LichHen;

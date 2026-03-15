@@ -68,22 +68,28 @@ module.exports = (sequelize, DataTypes) => {
 
   HoaDon.associate = (models) => {
     // Hóa đơn thuộc về bệnh nhân
-    HoaDon.belongsTo(models.BenhNhan, {
-      foreignKey: 'MaBenhNhan',
-      as: 'BenhNhan'
-    });
+    if (models && models.BenhNhan) {
+      HoaDon.belongsTo(models.BenhNhan, {
+        foreignKey: 'MaBenhNhan',
+        as: 'BenhNhan'
+      });
+    }
 
     // Hóa đơn thuộc về hồ sơ khám
-    HoaDon.belongsTo(models.HoSoKham, {
-      foreignKey: 'MaHoSoKham',
-      as: 'HoSoKham'
-    });
+    if (models && models.HoSoKham) {
+      HoaDon.belongsTo(models.HoSoKham, {
+        foreignKey: 'MaHoSoKham',
+        as: 'HoSoKham'
+      });
+    }
 
     // Hóa đơn có nhiều chi tiết
-    HoaDon.hasMany(models.ChiTietHoaDon, {
-      foreignKey: 'MaHoaDon',
-      as: 'ChiTietHoaDon'
-    });
+    if (models && models.ChiTietHoaDon) {
+      HoaDon.hasMany(models.ChiTietHoaDon, {
+        foreignKey: 'MaHoaDon',
+        as: 'ChiTietHoaDon'
+      });
+    }
   };
 
   return HoaDon;

@@ -124,9 +124,17 @@ export default (sequelize) => {
 
   // Associations
   Patient.associate = (models) => {
-    Patient.hasMany(models.Appointment, { foreignKey: 'patientId', as: 'appointments' });
-    Patient.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
-    Patient.hasMany(models.MedicalRecord, { foreignKey: 'patientId', as: 'medicalRecords' });
+    if (models && models.Appointment) {
+      Patient.hasMany(models.Appointment, { foreignKey: 'patientId', as: 'appointments' });
+    }
+
+    if (models && models.User) {
+      Patient.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+    }
+
+    if (models && models.MedicalRecord) {
+      Patient.hasMany(models.MedicalRecord, { foreignKey: 'patientId', as: 'medicalRecords' });
+    }
   };
 
   return Patient;

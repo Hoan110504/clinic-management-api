@@ -86,34 +86,44 @@ module.exports = (sequelize, DataTypes) => {
 
   DonThuoc.associate = (models) => {
     // Đơn thuốc thuộc về hồ sơ khám
-    DonThuoc.belongsTo(models.HoSoKham, {
-      foreignKey: 'MaHoSoKham',
-      as: 'HoSoKham'
-    });
+    if (models && models.HoSoKham) {
+      DonThuoc.belongsTo(models.HoSoKham, {
+        foreignKey: 'MaHoSoKham',
+        as: 'HoSoKham'
+      });
+    }
 
     // Đơn thuốc thuộc về bệnh nhân
-    DonThuoc.belongsTo(models.BenhNhan, {
-      foreignKey: 'MaBenhNhan',
-      as: 'BenhNhan'
-    });
+    if (models && models.BenhNhan) {
+      DonThuoc.belongsTo(models.BenhNhan, {
+        foreignKey: 'MaBenhNhan',
+        as: 'BenhNhan'
+      });
+    }
 
     // Đơn thuốc được kê bởi bác sĩ
-    DonThuoc.belongsTo(models.NguoiDung, {
-      foreignKey: 'MaBacSi',
-      as: 'BacSi'
-    });
+    if (models && models.NguoiDung) {
+      DonThuoc.belongsTo(models.NguoiDung, {
+        foreignKey: 'MaBacSi',
+        as: 'BacSi'
+      });
+    }
 
     // Đơn thuốc được phát bởi dược sĩ
-    DonThuoc.belongsTo(models.NguoiDung, {
-      foreignKey: 'NguoiPhatThuocId',
-      as: 'NguoiPhatThuoc'
-    });
+    if (models && models.NguoiDung) {
+      DonThuoc.belongsTo(models.NguoiDung, {
+        foreignKey: 'NguoiPhatThuocId',
+        as: 'NguoiPhatThuoc'
+      });
+    }
 
     // Đơn thuốc có nhiều chi tiết
-    DonThuoc.hasMany(models.ChiTietDonThuoc, {
-      foreignKey: 'MaDonThuoc',
-      as: 'ChiTietDonThuoc'
-    });
+    if (models && models.ChiTietDonThuoc) {
+      DonThuoc.hasMany(models.ChiTietDonThuoc, {
+        foreignKey: 'MaDonThuoc',
+        as: 'ChiTietDonThuoc'
+      });
+    }
   };
 
   return DonThuoc;

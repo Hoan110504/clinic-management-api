@@ -116,58 +116,76 @@ module.exports = (sequelize, DataTypes) => {
 
   NguoiDung.associate = (models) => {
     // Một người dùng có thể là một bệnh nhân
-    NguoiDung.hasOne(models.BenhNhan, {
-      foreignKey: 'MaNguoiDung',
-      as: 'BenhNhan'
-    });
+    if (models && models.BenhNhan) {
+      NguoiDung.hasOne(models.BenhNhan, {
+        foreignKey: 'MaNguoiDung',
+        as: 'BenhNhan'
+      });
+    }
 
     // Bác sĩ có nhiều lịch hẹn được ưu tiên
-    NguoiDung.hasMany(models.LichHen, {
-      foreignKey: 'BacSiUuTienId',
-      as: 'LichHenUuTien'
-    });
+    if (models && models.LichHen) {
+      NguoiDung.hasMany(models.LichHen, {
+        foreignKey: 'BacSiUuTienId',
+        as: 'LichHenUuTien'
+      });
+    }
 
     // Bác sĩ có nhiều lịch hẹn được phân công
-    NguoiDung.hasMany(models.LichHen, {
-      foreignKey: 'BacSiDuocPhanId',
-      as: 'LichHenDuocPhan'
-    });
+    if (models && models.LichHen) {
+      NguoiDung.hasMany(models.LichHen, {
+        foreignKey: 'BacSiDuocPhanId',
+        as: 'LichHenDuocPhan'
+      });
+    }
 
     // Bác sĩ có nhiều hồ sơ khám
-    NguoiDung.hasMany(models.HoSoKham, {
-      foreignKey: 'MaBacSi',
-      as: 'HoSoKhamBacSi'
-    });
+    if (models && models.HoSoKham) {
+      NguoiDung.hasMany(models.HoSoKham, {
+        foreignKey: 'MaBacSi',
+        as: 'HoSoKhamBacSi'
+      });
+    }
 
     // Bác sĩ kê đơn thuốc
-    NguoiDung.hasMany(models.DonThuoc, {
-      foreignKey: 'MaBacSi',
-      as: 'DonThuocKe'
-    });
+    if (models && models.DonThuoc) {
+      NguoiDung.hasMany(models.DonThuoc, {
+        foreignKey: 'MaBacSi',
+        as: 'DonThuocKe'
+      });
+    }
 
     // Dược sĩ phát thuốc
-    NguoiDung.hasMany(models.DonThuoc, {
-      foreignKey: 'NguoiPhatThuocId',
-      as: 'DonThuocPhat'
-    });
+    if (models && models.DonThuoc) {
+      NguoiDung.hasMany(models.DonThuoc, {
+        foreignKey: 'NguoiPhatThuocId',
+        as: 'DonThuocPhat'
+      });
+    }
 
     // Người dùng chỉ định dịch vụ
-    NguoiDung.hasMany(models.YeuCauDichVu, {
-      foreignKey: 'NguoiChiDinhId',
-      as: 'YeuCauDichVuChiDinh'
-    });
+    if (models && models.YeuCauDichVu) {
+      NguoiDung.hasMany(models.YeuCauDichVu, {
+        foreignKey: 'NguoiChiDinhId',
+        as: 'YeuCauDichVuChiDinh'
+      });
+    }
 
     // Người xác nhận cận lâm sàng
-    NguoiDung.hasMany(models.CanLamSang, {
-      foreignKey: 'NguoiXacNhanId',
-      as: 'CanLamSangXacNhan'
-    });
+    if (models && models.CanLamSang) {
+      NguoiDung.hasMany(models.CanLamSang, {
+        foreignKey: 'NguoiXacNhanId',
+        as: 'CanLamSangXacNhan'
+      });
+    }
 
     // Người thực hiện giao dịch kho
-    NguoiDung.hasMany(models.GiaoDichKho, {
-      foreignKey: 'NguoiThucHienId',
-      as: 'GiaoDichKho'
-    });
+    if (models && models.GiaoDichKho) {
+      NguoiDung.hasMany(models.GiaoDichKho, {
+        foreignKey: 'NguoiThucHienId',
+        as: 'GiaoDichKho'
+      });
+    }
   };
 
   return NguoiDung;

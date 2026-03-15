@@ -181,51 +181,61 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
     ],
   });
 
-  // Waiting patients
-  const waitingPatients = await MedicalRecord.count({
-    where: {
-      doctorId,
-      status: MEDICAL_RECORD_STATUS.WAITING,
-      createdAt: {
-        [Op.gte]: today,
-        [Op.lt]: tomorrow,
+  // Waiting / in-progress / completed counts (guard in case model isn't loaded)
+  let waitingPatients = 0;
+  let inProgressCount = 0;
+  let completedToday = 0;
+  if (typeof MedicalRecord !== 'undefined' && MedicalRecord) {
+    waitingPatients = await MedicalRecord.count({
+      where: {
+        doctorId,
+        status: MEDICAL_RECORD_STATUS.WAITING,
+        createdAt: {
+          [Op.gte]: today,
+          [Op.lt]: tomorrow,
+        },
       },
-    },
-  });
+    });
 
-  // In progress
-  const inProgressCount = await MedicalRecord.count({
-    where: {
-      doctorId,
-      status: MEDICAL_RECORD_STATUS.IN_PROGRESS,
-      createdAt: {
-        [Op.gte]: today,
-        [Op.lt]: tomorrow,
+    inProgressCount = await MedicalRecord.count({
+      where: {
+        doctorId,
+        status: MEDICAL_RECORD_STATUS.IN_PROGRESS,
+        createdAt: {
+          [Op.gte]: today,
+          [Op.lt]: tomorrow,
+        },
       },
-    },
-  });
+    });
 
-  // Completed today
-  const completedToday = await MedicalRecord.count({
-    where: {
-      doctorId,
-      status: MEDICAL_RECORD_STATUS.COMPLETED,
-      completedAt: {
-        [Op.gte]: today,
-        [Op.lt]: tomorrow,
+    completedToday = await MedicalRecord.count({
+      where: {
+        doctorId,
+        status: MEDICAL_RECORD_STATUS.COMPLETED,
+        completedAt: {
+          [Op.gte]: today,
+          [Op.lt]: tomorrow,
+        },
       },
-    },
-  });
+    });
+  } else {
+    console.warn('MedicalRecord model is not available; doctor dashboard counts set to 0');
+  }
 
-  // Pending lab results
-  const pendingLabResults = await LabTest.count({
-    where: {
-      orderedById: doctorId,
-      status: {
-        [Op.in]: [LAB_STATUS.PENDING, LAB_STATUS.IN_PROGRESS],
+  // Pending lab results (guard in case model isn't loaded)
+  let pendingLabResults = 0;
+  if (typeof LabTest !== 'undefined' && LabTest) {
+    pendingLabResults = await LabTest.count({
+      where: {
+        orderedById: doctorId,
+        status: {
+          [Op.in]: [LAB_STATUS.PENDING, LAB_STATUS.IN_PROGRESS],
+        },
       },
-    },
-  });
+    });
+  } else {
+    console.warn('LabTest model is not available; pendingLabResults set to 0');
+  }
 
   return successResponse(res, {
     todayAppointments,
