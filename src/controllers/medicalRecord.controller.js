@@ -103,6 +103,16 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   return successResponse(res, merged);
 });
 
+// Helper: generate human-friendly visit code (Mã phiếu khám)
+function generateVisitCode() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const ts = now.getTime().toString().slice(-6);
+  return `PK-${y}${m}${d}-${ts}`;
+}
+
 // GET /api/medical-records
 const getAllRecords = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
@@ -155,6 +165,10 @@ const getRecordById = asyncHandler(async (req, res) => {
 // Create medical record (supports DB if model exists, else returns synthetic object)
 const createRecord = asyncHandler(async (req, res) => {
   const payload = req.body || {};
+  // Ensure visit code exists (backend-generated if caller didn't provide)
+  if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
+    payload.maPhieuKham = generateVisitCode();
+  }
   // If model exists, create in DB
   if (typeof MedicalRecord !== 'undefined' && MedicalRecord && typeof MedicalRecord.create === 'function') {
     const created = await MedicalRecord.create(payload);
@@ -164,7 +178,9 @@ const createRecord = asyncHandler(async (req, res) => {
 
   // Fallback: synthesize an id and return payload
   const syntheticId = `REC${Date.now()}`;
-  const created = { id: syntheticId, ...payload, createdAt: new Date().toISOString() };
+  // ensure fallback also includes a generated maPhieuKham for UI display
+  const fallbackCode = payload.maPhieuKham || payload.visitCode || payload.recordCode || generateVisitCode();
+  const created = { id: syntheticId, maPhieuKham: fallbackCode, ...payload, createdAt: new Date().toISOString() };
   return createdResponse(res, created, 'Đã tạo hồ sơ khám (tạm, không lưu DB)');
 });
 
@@ -177,11 +193,25 @@ const updateRecord = asyncHandler(async (req, res) => {
     if (!rec) {
       return successResponse(res, null);
     }
+    // Preserve visit code (maPhieuKham) if already exists and not in payload
+    if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
+      const existing = rec.get ? rec.get({ plain: true }) : rec;
+      if (existing?.maPhieuKham || existing?.visitCode || existing?.recordCode) {
+        payload.maPhieuKham = existing.maPhieuKham || existing.visitCode || existing.recordCode;
+      } else {
+        // If still no code, generate one
+        payload.maPhieuKham = generateVisitCode();
+      }
+    }
     await rec.update(payload);
     const plain = rec.get ? rec.get({ plain: true }) : rec;
     return successResponse(res, plain);
   }
 
+  // Fallback: preserve visit code on update
+  if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
+    payload.maPhieuKham = generateVisitCode();
+  }
   const updated = { id, ...payload, updatedAt: new Date().toISOString() };
   return successResponse(res, updated);
 });
