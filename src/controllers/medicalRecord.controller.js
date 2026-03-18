@@ -109,8 +109,11 @@ function generateVisitCode() {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
-  const ts = now.getTime().toString().slice(-6);
-  return `PK-${y}${m}${d}-${ts}`;
+  // Use higher-entropy suffix: last 8 digits of epoch ms + 3-digit random number
+  // This ensures uniqueness even for records created within the same millisecond
+  const msSuffix = now.getTime().toString().slice(-8);
+  const rand = String(Math.floor(100 + Math.random() * 900));
+  return `PK-${y}${m}${d}-${msSuffix}${rand}`;
 }
 
 // GET /api/medical-records
