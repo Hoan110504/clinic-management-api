@@ -117,4 +117,14 @@ router.post(
   labTestController.completeLabTest
 );
 
+/**
+ * @route POST /api/lab-tests/:id/return
+ * @desc Mark lab test as returned/delivered to patient (doctor action)
+ */
+router.post(
+  '/:id/return',
+  authorize(ROLES.DOCTOR),
+  labTestController.returnLabTest
+);
+
 export default router;

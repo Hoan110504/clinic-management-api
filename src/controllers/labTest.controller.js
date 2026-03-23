@@ -358,26 +358,58 @@ const completeLabTest = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy xét nghiệm');
   }
 
-  if (labTest.status === LAB_STATUS.COMPLETED) {
-    throw new BadRequestError('Xét nghiệm đã hoàn thành');
-  }
-
   if (!results) {
     throw new BadRequestError('Kết quả không được để trống');
   }
 
+  // Only allow saving results while the test is in progress
+  if (labTest.status !== LAB_STATUS.IN_PROGRESS) {
+    throw new BadRequestError('Chỉ có thể lưu kết quả khi đang thực hiện');
+  }
+
   await labTest.update({
-    status: LAB_STATUS.COMPLETED,
+    // Keep status as IN_PROGRESS; final completion happens when returning results
     results,
     normalRange,
     notes,
+    // record last-saved timestamp
     resultDate: new Date(),
+  });
+
+  return successResponse(res, labTest, 'Lưu kết quả xét nghiệm thành công');
+});
+
+/**
+ * Return lab test (mark result as delivered/returned)
+ * POST /api/lab-tests/:id/return
+ */
+const returnLabTest = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const labTest = await LabTest.findByPk(id);
+  if (!labTest) {
+    throw new NotFoundError('Không tìm thấy xét nghiệm');
+  }
+
+  // Allow returning when test is in progress or already completed
+  if (![LAB_STATUS.IN_PROGRESS, LAB_STATUS.COMPLETED].includes(labTest.status)) {
+    throw new BadRequestError('Chỉ có thể trả kết quả cho xét nghiệm đang thực hiện hoặc đã hoàn thành');
+  }
+
+  // Clean any internal returned markers from existing notes and preserve human-friendly notes
+  const cleanedNotes = (labTest.notes || '').replace(/\[RETURNED_BY:[^\]]*\]/g, '').trim();
+
+  await labTest.update({
+    status: LAB_STATUS.COMPLETED,
+    notes: cleanedNotes,
+    // mark who confirmed and when
     confirmedBy: req.user.fullName,
     confirmedById: req.user.id,
     confirmedAt: new Date(),
+    resultDate: labTest.resultDate || new Date(),
   });
 
-  return successResponse(res, labTest, 'Hoàn thành xét nghiệm thành công');
+  return successResponse(res, { id: labTest.id, returned: true, returnedBy: req.user.fullName }, 'Đã trả kết quả');
 });
 
 /**
@@ -625,6 +657,7 @@ export {
   updateLabTest,
   startLabTest,
   completeLabTest,
+  returnLabTest,
   deleteLabTest,
   batchDeleteLabTests,
   getPendingLabTests,
