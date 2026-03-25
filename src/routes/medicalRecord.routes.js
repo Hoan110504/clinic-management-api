@@ -1,5 +1,5 @@
 import express from 'express';
-import { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord } from '../controllers/medicalRecord.controller.js';
+import { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord, startExamination, completeExamination } from '../controllers/medicalRecord.controller.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -15,6 +15,12 @@ router.get('/:id', authenticate, getRecordById);
 
 // Create record
 router.post('/', authenticate, createRecord);
+
+// Start examination
+router.post('/:id/start', authenticate, startExamination);
+
+// Complete examination
+router.post('/:id/complete', authenticate, completeExamination);
 
 // Update record
 router.put('/:id', authenticate, updateRecord);

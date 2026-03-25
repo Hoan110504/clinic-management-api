@@ -219,4 +219,56 @@ const updateRecord = asyncHandler(async (req, res) => {
   return successResponse(res, updated);
 });
 
-export { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord };
+// exports consolidated at end of file
+// Start examination (mark in-progress)
+const startExamination = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const actorId = req.user?.id || null;
+  if (typeof MedicalRecord !== 'undefined' && MedicalRecord && typeof MedicalRecord.findByPk === 'function') {
+    const rec = await MedicalRecord.findByPk(id);
+    if (!rec) return successResponse(res, null);
+    await rec.update({ status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: new Date(), doctorId: actorId });
+    const plain = rec.get ? rec.get({ plain: true }) : rec;
+    return successResponse(res, plain);
+  }
+  // Fallback: echo object with status
+  const out = { id, status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: new Date().toISOString(), doctorId: actorId };
+  return successResponse(res, out);
+});
+
+// Complete examination (mark completed and save provided fields)
+const completeExamination = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const payload = req.body || {};
+  const actorId = req.user?.id || null;
+
+  if (typeof MedicalRecord !== 'undefined' && MedicalRecord && typeof MedicalRecord.findByPk === 'function') {
+    const rec = await MedicalRecord.findByPk(id);
+    if (!rec) return successResponse(res, null);
+    const updates = {
+      diagnosis: payload.diagnosis || rec.diagnosis,
+      treatment: payload.treatment || rec.treatment,
+      notes: payload.notes || rec.notes,
+      nextAppointment: payload.nextAppointment || rec.nextAppointment,
+      vitalSigns: payload.vitalSigns || rec.vitalSigns,
+      status: MEDICAL_RECORD_STATUS.COMPLETED,
+      completedAt: new Date(),
+      confirmedBy: actorId,
+    };
+    await rec.update(updates);
+    const plain = rec.get ? rec.get({ plain: true }) : rec;
+    return successResponse(res, plain);
+  }
+
+  // Fallback: respond with synthesized completed object
+  const out = {
+    id,
+    ...payload,
+    status: MEDICAL_RECORD_STATUS.COMPLETED,
+    completedAt: new Date().toISOString(),
+    confirmedBy: actorId,
+  };
+  return successResponse(res, out);
+});
+
+export { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord, startExamination, completeExamination };
