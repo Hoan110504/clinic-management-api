@@ -31,6 +31,10 @@ const apiLimiter = rateLimit({
     // (mounted under '/api', so req.path is '/patients')
     if (req.method === 'POST' && req.path === '/patients') return true;
 
+    // Allow GET read access to patient endpoints (list/search/detail)
+    // to avoid blocking frequent UI lookups (e.g., patient lookup by ID)
+    if (req.method === 'GET' && req.path && req.path.startsWith('/patients')) return true;
+
     return false;
   },
 });
