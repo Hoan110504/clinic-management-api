@@ -3,7 +3,7 @@
  * Handles lab test operations
  */
 import { Op } from 'sequelize';
-import { LabTest, Patient, User, ServiceOrder, MedicalRecord, LabService } from '../models/index.js';
+import { LabTest, Patient, User, ServiceOrder, MedicalRecord, LabService, sequelize } from '../models/index.js';
 import models from '../models/index.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import config from '../config/index.js';
@@ -56,23 +56,149 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   // Parse sort
   const order = parseSort(sort, ['orderedDate', 'status', 'createdAt']);
 
+  // Build includes for modern + legacy data
+  const includes = [
+    {
+      model: Patient,
+      as: 'patient',
+      attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
+      required: false,
+    },
+  ];
+
+  // Try to include legacy YeuCauDichVu results (with CanLamSang/images)
+  try {
+    const rawTables = await sequelize.getQueryInterface().showAllTables();
+    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+    const hasYeuCau = tableNames.includes('yeucaudichvu');
+    const hasCanLamSang = tableNames.includes('canlamsang');
+
+    if (models && models.YeuCauDichVu && hasYeuCau && models.MedicalRecord && models.HoSoKham) {
+      // Get lab tests with a single join to fetch legacy results
+      // We'll fetch them after grouping by medicalRecordId and add to each row
+      // For now, just ensure we can access the legacy data when needed
+      // (full include would be complex without hitting N+1; instead fetch legacy separately if needed)
+    }
+  } catch (e) {
+    console.warn('getAllLabTests: could not check for legacy tables', e && e.message);
+  }
+
   const { count, rows } = await LabTest.findAndCountAll({
     where,
     order,
     limit,
     offset,
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
-        required: false,
-      },
-    ],
+    include: includes,
   });
 
+  // For each row, try to fetch legacy CanLamSang results by medicalRecordId or patientId+testName
+  // and attach them to the response
+  let enrichedRows = rows;
+  try {
+    if (models && models.YeuCauDichVu && models.CanLamSang && rows.length > 0) {
+      const rawTables = await sequelize.getQueryInterface().showAllTables();
+      const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+      const hasYeuCau = tableNames.includes('yeucaudichvu');
+      const hasCanLamSang = tableNames.includes('canlamsang');
+
+      if (hasYeuCau && hasCanLamSang) {
+        enrichedRows = await Promise.all(
+          rows.map(async (row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            let legacyResults = null;
+
+            // Try 1: Direct match by medicalRecordId
+            if (plain.medicalRecordId) {
+              try {
+                const YeuCauDichVu = models.YeuCauDichVu;
+                legacyResults = await YeuCauDichVu.findAll({
+                  where: { MaHoSoKham: plain.medicalRecordId },
+                  include: [
+                    {
+                      model: models.CanLamSang,
+                      as: 'KetQuaCanLamSang',
+                      required: false,
+                      include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
+                    },
+                  ],
+                  raw: false,
+                });
+                if (legacyResults && legacyResults.length > 0) {
+                  plain.legacyResults = legacyResults.map(r => r.get ? r.get({ plain: true }) : r);
+                }
+              } catch (e) {
+                console.warn('getAllLabTests: failed to load legacy results for medicalRecordId', plain.medicalRecordId, e && e.message);
+              }
+            }
+
+            // Try 2: Fallback search by patientId + testName + date range (handles unlinked lab tests)
+            if (!plain.legacyResults && !plain.medicalRecordId && plain.patientId && plain.testName && plain.orderedDate) {
+              try {
+                const YeuCauDichVu = models.YeuCauDichVu;
+                const BenhNhan = models.BenhNhan;
+                
+                // Find BenhNhan by modern patientId
+                let benhNhanId = null;
+                if (BenhNhan) {
+                  let foundBN = await BenhNhan.findByPk(plain.patientId);
+                  if (foundBN) {
+                    benhNhanId = foundBN.Id;
+                  } else if (Patient && String(plain.patientId).startsWith('BN')) {
+                    // Try resolving via modern Patient table
+                    const pat = await Patient.findByPk(plain.patientId);
+                    if (pat && pat.userId) {
+                      foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
+                      if (foundBN) benhNhanId = foundBN.Id;
+                    }
+                  }
+                }
+
+                if (benhNhanId) {
+                  const searchDate = new Date(plain.orderedDate);
+                  const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+                  const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
+                  
+                  legacyResults = await YeuCauDichVu.findAll({
+                    where: {
+                      MaBenhNhan: benhNhanId,
+                      NgayChiDinh: { [Op.between]: [startDate, endDate] }
+                    },
+                    include: [
+                      {
+                        model: models.CanLamSang,
+                        as: 'KetQuaCanLamSang',
+                        required: false,
+                        where: { TenXetNghiem: { [Op.like]: `%${plain.testName}%` } },
+                        include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
+                      },
+                    ],
+                    raw: false,
+                  });
+                  
+                  if (legacyResults && legacyResults.length > 0) {
+                    const filtered = legacyResults.filter(r => r.KetQuaCanLamSang && r.KetQuaCanLamSang.length > 0);
+                    if (filtered.length > 0) {
+                      plain.legacyResults = filtered.map(r => r.get ? r.get({ plain: true }) : r);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('getAllLabTests: fallback search by patientId+testName failed for', plain.patientId, plain.testName, e && e.message);
+              }
+            }
+
+            return plain;
+          })
+        );
+      }
+    }
+  } catch (e) {
+    console.warn('getAllLabTests: enrichment with legacy results failed', e && e.message);
+    enrichedRows = rows;
+  }
+
   return paginatedResponse(res, {
-    data: rows,
+    data: enrichedRows,
     page,
     limit,
     total: count,
@@ -86,28 +212,129 @@ const getAllLabTests = asyncHandler(async (req, res) => {
 const getLabTestById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const labTest = await LabTest.findByPk(id, {
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        required: false,
-      },
-      {
-        model: ServiceOrder,
-        as: 'serviceOrder',
-        required: false,
-      },
-      {
-        model: MedicalRecord,
-        as: 'medicalRecord',
-        required: false,
-      },
-    ],
+  // Build include array only for models that are defined and whose tables exist
+  const includes = [];
+  if (Patient) includes.push({ model: Patient, as: 'patient', required: false });
+
+  // Check whether the ServiceOrder table actually exists in the DB before including it.
+  // Some deployments use legacy Vietnamese tables instead of the modern `service_orders` table.
+  try {
+    const rawTables = await sequelize.getQueryInterface().showAllTables();
+    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+    const hasServiceOrders = tableNames.includes('service_orders');
+    if (ServiceOrder && hasServiceOrders) {
+      includes.push({ model: ServiceOrder, as: 'serviceOrder', required: false });
+    }
+  } catch (tbErr) {
+    // If checking tables fails, avoid including ServiceOrder to prevent SQL errors.
+    console.warn('getLabTestById: could not enumerate tables, skipping ServiceOrder include', tbErr && tbErr.message);
+  }
+
+  if (MedicalRecord) includes.push({ model: MedicalRecord, as: 'medicalRecord', required: false });
+
+  let labTest = await LabTest.findByPk(id, {
+    include: includes.length > 0 ? includes : undefined,
   });
 
   if (!labTest) {
     throw new NotFoundError('Không tìm thấy xét nghiệm');
+  }
+
+  // Enrich with legacy results if available (by medicalRecordId or patientId+testName)
+  try {
+    if (models && models.YeuCauDichVu && models.CanLamSang) {
+      const rawTables = await sequelize.getQueryInterface().showAllTables();
+      const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+      const hasYeuCau = tableNames.includes('yeucaudichvu');
+      const hasCanLamSang = tableNames.includes('canlamsang');
+
+      if (hasYeuCau && hasCanLamSang) {
+        const plain = labTest.get ? labTest.get({ plain: true }) : labTest;
+        let legacyResults = null;
+
+        // Try 1: By medicalRecordId
+        if (plain.medicalRecordId) {
+          try {
+            const YeuCauDichVu = models.YeuCauDichVu;
+            legacyResults = await YeuCauDichVu.findAll({
+              where: { MaHoSoKham: plain.medicalRecordId },
+              include: [
+                {
+                  model: models.CanLamSang,
+                  as: 'KetQuaCanLamSang',
+                  required: false,
+                  include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
+                },
+              ],
+              raw: false,
+            });
+          } catch (e) {
+            console.warn('getLabTestById: failed by medicalRecordId', plain.medicalRecordId, e && e.message);
+          }
+        }
+
+        // Try 2: By patientId + testName + date range
+        if (!legacyResults && plain.patientId && plain.testName && plain.orderedDate) {
+          try {
+            const YeuCauDichVu = models.YeuCauDichVu;
+            const BenhNhan = models.BenhNhan;
+            
+            let benhNhanId = null;
+            if (BenhNhan) {
+              let foundBN = await BenhNhan.findByPk(plain.patientId);
+              if (foundBN) {
+                benhNhanId = foundBN.Id;
+              } else if (Patient && String(plain.patientId).startsWith('BN')) {
+                const pat = await Patient.findByPk(plain.patientId);
+                if (pat && pat.userId) {
+                  foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
+                  if (foundBN) benhNhanId = foundBN.Id;
+                }
+              }
+            }
+
+            if (benhNhanId) {
+              const searchDate = new Date(plain.orderedDate);
+              const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+              const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
+              
+              const results = await YeuCauDichVu.findAll({
+                where: {
+                  MaBenhNhan: benhNhanId,
+                  NgayChiDinh: { [Op.between]: [startDate, endDate] }
+                },
+                include: [
+                  {
+                    model: models.CanLamSang,
+                    as: 'KetQuaCanLamSang',
+                    required: false,
+                    where: { TenXetNghiem: { [Op.like]: `%${plain.testName}%` } },
+                    include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
+                  },
+                ],
+                raw: false,
+              });
+              
+              if (results && results.length > 0) {
+                const filtered = results.filter(r => r.KetQuaCanLamSang && r.KetQuaCanLamSang.length > 0);
+                if (filtered.length > 0) {
+                  legacyResults = filtered;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('getLabTestById: fallback search by patientId+testName failed', e && e.message);
+          }
+        }
+
+        if (legacyResults && legacyResults.length > 0) {
+          plain.legacyResults = legacyResults.map(r => r.get ? r.get({ plain: true }) : r);
+          labTest = plain;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('getLabTestById: enrichment with legacy results failed', e && e.message);
   }
 
   return successResponse(res, labTest);
@@ -233,7 +460,42 @@ const createLabTest = asyncHandler(async (req, res) => {
         TrangThai: 0,
       });
 
-      return createdResponse(res, { id: cls.Id, testName: cls.TenXetNghiem, status: cls.TrangThai }, 'Tạo chỉ định cận lâm sàng thành công');
+      // ALSO create modern LabTest record (if table exists) to bridge legacy + modern systems
+      // This ensures we can fetch legacy results when querying lab tests from modern table
+      let labTestRecord = null;
+      try {
+        const generatedId = `XN${Date.now().toString().slice(-10)}`;
+        const rawTables = await sequelize.getQueryInterface().showAllTables();
+        const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+        const hasLabTests = tableNames.includes('lab_tests');
+
+        if (LabTest && hasLabTests) {
+          labTestRecord = await LabTest.create({
+            id: generatedId,
+            patientId,
+            patientName,
+            testType,
+            testName,
+            medicalRecordId,
+            serviceOrderId: null,
+            orderedBy: req.user.fullName,
+            orderedById: req.user.id,
+            orderedDate: new Date(),
+            status: LAB_STATUS.PENDING,
+            notes,
+          }, { returning: false });
+        }
+      } catch (e) {
+        console.warn('createLabTest: failed to create modern LabTest record for legacy YeuCauDichVu', e && e.message);
+      }
+
+      return createdResponse(res, {
+        id: labTestRecord?.id || cls.Id,
+        yeuCauDichVuId: yc.Id,
+        canLamSangId: cls.Id,
+        testName: cls.TenXetNghiem,
+        status: cls.TrangThai
+      }, 'Tạo chỉ định cận lâm sàng thành công');
     }
 
     // Pre-generate id to avoid relying on MSSQL OUTPUT when Sequelize expects inserted row
@@ -409,7 +671,104 @@ const returnLabTest = asyncHandler(async (req, res) => {
     resultDate: labTest.resultDate || new Date(),
   });
 
-  return successResponse(res, { id: labTest.id, returned: true, returnedBy: req.user.fullName }, 'Đã trả kết quả');
+  // Re-fetch the lab test with related data so the client receives full details
+  const include = [];
+  if (Patient) include.push({ model: Patient, as: 'patient', required: false });
+  if (MedicalRecord) include.push({ model: MedicalRecord, as: 'medicalRecord', required: false });
+
+  // Only include ServiceOrder if the physical table exists (some deployments use legacy VN tables)
+  try {
+    const rawTables = await sequelize.getQueryInterface().showAllTables();
+    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+    const hasServiceOrders = tableNames.includes('service_orders');
+    if (ServiceOrder && hasServiceOrders) {
+      include.push({ model: ServiceOrder, as: 'serviceOrder', required: false });
+    }
+  } catch (tbErr) {
+    console.warn('returnLabTest: could not enumerate tables, skipping ServiceOrder include', tbErr && tbErr.message);
+  }
+
+  if (User) {
+    include.push({ model: User, as: 'orderedByUser', required: false });
+    include.push({ model: User, as: 'confirmedByUser', required: false });
+  }
+
+  const fullLabTest = await LabTest.findByPk(id, { include: include.length ? include : undefined });
+
+  // If legacy Vietnamese models exist, also include CanLamSang results related to the medical record
+  let legacyResults = null;
+  try {
+    if (models && models.YeuCauDichVu && models.CanLamSang && fullLabTest) {
+      const YeuCauDichVu = models.YeuCauDichVu;
+      const CanLamSang = models.CanLamSang;
+      const ChiTietYeuCauDichVu = models.ChiTietYeuCauDichVu;
+      const BenhNhan = models.BenhNhan;
+
+      // Try 1: Direct match by medicalRecordId
+      if (fullLabTest.medicalRecordId) {
+        legacyResults = await YeuCauDichVu.findAll({
+          where: { MaHoSoKham: fullLabTest.medicalRecordId },
+          include: [
+            { model: ChiTietYeuCauDichVu, as: 'ChiTietYeuCau', required: false },
+            { model: CanLamSang, as: 'KetQuaCanLamSang', required: false, include: [
+              { model: models.NguoiDung, as: 'NguoiXacNhan', required: false }
+            ] },
+          ],
+        });
+      }
+
+      // Try 2: Fallback search by patientId + testName + date range (for unlinked lab tests)
+      if (!legacyResults && fullLabTest.patientId && fullLabTest.testName && fullLabTest.orderedDate) {
+        let benhNhanId = null;
+        if (BenhNhan) {
+          // Try looking up BenhNhan by patientId directly (might be a GUID)
+          let foundBN = await BenhNhan.findByPk(fullLabTest.patientId);
+          if (foundBN) {
+            benhNhanId = foundBN.Id;
+          } else if (Patient && String(fullLabTest.patientId).startsWith('BN')) {
+            // Try resolving via modern Patient table (patientId like "BN031")
+            const pat = await Patient.findByPk(fullLabTest.patientId);
+            if (pat && pat.userId) {
+              foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
+              if (foundBN) benhNhanId = foundBN.Id;
+            }
+          }
+        }
+
+        if (benhNhanId) {
+          const searchDate = new Date(fullLabTest.orderedDate);
+          const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+          const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
+
+          legacyResults = await YeuCauDichVu.findAll({
+            where: {
+              MaBenhNhan: benhNhanId,
+              NgayChiDinh: { [Op.between]: [startDate, endDate] }
+            },
+            include: [
+              { model: ChiTietYeuCauDichVu, as: 'ChiTietYeuCau', required: false },
+              {
+                model: CanLamSang,
+                as: 'KetQuaCanLamSang',
+                required: false,
+                where: { TenXetNghiem: { [Op.like]: `%${fullLabTest.testName}%` } },
+                include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
+              },
+            ],
+          });
+
+          // Filter to only results that have CanLamSang data
+          if (legacyResults && legacyResults.length > 0) {
+            legacyResults = legacyResults.filter(r => r.KetQuaCanLamSang && r.KetQuaCanLamSang.length > 0);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('returnLabTest: failed to load legacy CanLamSang results', e && e.message);
+  }
+
+  return successResponse(res, { id: labTest.id, returned: true, returnedBy: req.user.fullName, labTest: fullLabTest, legacyResults }, 'Đã trả kết quả');
 });
 
 /**

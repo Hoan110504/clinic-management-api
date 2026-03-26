@@ -3,6 +3,7 @@
  */
 import { Op } from 'sequelize';
 import { Appointment, Patient, User, MedicalRecord } from '../models/index.js';
+import models from '../models/index.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { successResponse, createdResponse } from '../utils/response.js';
 import { APPOINTMENT_STATUS, MEDICAL_RECORD_STATUS } from '../config/constants.js';
@@ -153,12 +154,37 @@ const getRecordById = asyncHandler(async (req, res) => {
     return successResponse(res, null);
   }
 
-  const rec = await MedicalRecord.findByPk(id, {
-    include: [
-      { model: Patient, as: 'patient', required: false },
-      { model: User, as: 'doctor', required: false },
-    ],
-  });
+  // Build includes dynamically to support deployments that use legacy VN schema (YeuCauDichVu/CanLamSang)
+  const includes = [
+    { model: Patient, as: 'patient', required: false },
+    { model: User, as: 'doctor', required: false },
+  ];
+
+  // If legacy models exist and the physical tables are present, include service requests and results
+  try {
+    const rawTables = await (MedicalRecord && MedicalRecord.sequelize && MedicalRecord.sequelize.getQueryInterface().showAllTables ? MedicalRecord.sequelize.getQueryInterface().showAllTables() : []);
+    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
+    const hasYeuCau = tableNames.includes('yeucaudichvu');
+    const hasCanLamSang = tableNames.includes('canlamsang');
+    const hasChiTietYeuCau = tableNames.includes('chitietyeucaudichvu');
+
+    if (models && models.YeuCauDichVu && hasYeuCau) {
+      const ycInclude = { model: models.YeuCauDichVu, as: 'YeuCauDichVu', required: false, include: [] };
+      if (models && models.ChiTietYeuCauDichVu && hasChiTietYeuCau) {
+        ycInclude.include.push({ model: models.ChiTietYeuCauDichVu, as: 'ChiTietYeuCau', required: false });
+      }
+      if (models && models.CanLamSang && hasCanLamSang) {
+        ycInclude.include.push({ model: models.CanLamSang, as: 'KetQuaCanLamSang', required: false, include: [
+          { model: models.NguoiDung, as: 'NguoiXacNhan', required: false }
+        ] });
+      }
+      includes.push(ycInclude);
+    }
+  } catch (e) {
+    console.warn('getRecordById: could not enumerate tables for legacy includes', e && e.message);
+  }
+
+  const rec = await MedicalRecord.findByPk(id, { include: includes });
 
   if (!rec) return successResponse(res, null);
   const plain = rec.get ? rec.get({ plain: true }) : rec;
