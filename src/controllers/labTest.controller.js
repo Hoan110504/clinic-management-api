@@ -613,7 +613,7 @@ const startLabTest = asyncHandler(async (req, res) => {
  */
 const completeLabTest = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { results, normalRange, notes } = req.body;
+  const { results, normalRange, notes, conclusion, images } = req.body;
 
   const labTest = await LabTest.findByPk(id);
   if (!labTest) {
@@ -629,14 +629,21 @@ const completeLabTest = asyncHandler(async (req, res) => {
     throw new BadRequestError('Chỉ có thể lưu kết quả khi đang thực hiện');
   }
 
-  await labTest.update({
+  const updatePayload = {
     // Keep status as IN_PROGRESS; final completion happens when returning results
     results,
     normalRange,
     notes,
+    conclusion,
     // record last-saved timestamp
     resultDate: new Date(),
-  });
+  };
+
+  if (images !== undefined) {
+    updatePayload.images = images;
+  }
+
+  await labTest.update(updatePayload);
 
   return successResponse(res, labTest, 'Lưu kết quả xét nghiệm thành công');
 });

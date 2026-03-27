@@ -21,7 +21,7 @@ import { NotFoundError, ConflictError, BadRequestError } from '../utils/errors.j
  */
 const getAllPatients = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
-  const { search, gender, sort } = req.query;
+  const { search, gender, sort, onlyTodayAppointment, appointmentDate } = req.query;
 
   // Build where clause
   const where = {};
@@ -43,11 +43,42 @@ const getAllPatients = asyncHandler(async (req, res) => {
   // Parse sort
   const order = parseSort(sort, ['createdAt', 'fullName', 'dateOfBirth']);
 
+  const include = [];
+
+  // Optional filter: only patients who have an appointment on a target date.
+  // - onlyTodayAppointment=true => use today (local server date)
+  // - appointmentDate=YYYY-MM-DD => use explicit date
+  const truthy = new Set(['1', 'true', 'yes', 'on']);
+  const onlyToday = truthy.has(String(onlyTodayAppointment || '').toLowerCase());
+  const targetDate = onlyToday
+    ? (() => {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      })()
+    : (appointmentDate || null);
+
+  if (targetDate) {
+    include.push({
+      model: Appointment,
+      as: 'appointments',
+      attributes: [],
+      required: true,
+      where: {
+        appointmentDate: targetDate,
+      },
+    });
+  }
+
   const { count, rows } = await Patient.findAndCountAll({
     where,
+    include,
     order,
     limit,
     offset,
+    distinct: true,
   });
 
   return paginatedResponse(res, {

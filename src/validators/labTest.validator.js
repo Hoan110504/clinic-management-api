@@ -44,6 +44,14 @@ const updateLabTestValidator = [
     .optional()
     .isString()
     .withMessage('Ghi chú không hợp lệ'),
+  body('conclusion')
+    .optional()
+    .isString()
+    .withMessage('Kết luận không hợp lệ'),
+  body('images')
+    .optional()
+    .isArray()
+    .withMessage('Danh sách ảnh không hợp lệ'),
 ];
 
 const getLabTestValidator = [

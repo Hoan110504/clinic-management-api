@@ -97,6 +97,14 @@ const listPatientsValidator = [
     .optional()
     .isString()
     .withMessage('Tìm kiếm không hợp lệ'),
+  query('onlyTodayAppointment')
+    .optional()
+    .isIn(['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off'])
+    .withMessage('onlyTodayAppointment không hợp lệ'),
+  query('appointmentDate')
+    .optional()
+    .isISO8601()
+    .withMessage('appointmentDate phải có định dạng YYYY-MM-DD'),
 ];
 
 // Short name aliases for routes

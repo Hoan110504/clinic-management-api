@@ -100,6 +100,38 @@ export default (sequelize) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      images: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        get() {
+          const raw = this.getDataValue('images');
+          if (!raw) return [];
+          if (Array.isArray(raw)) return raw;
+          if (typeof raw === 'string') {
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) return parsed;
+              return parsed ? [parsed] : [];
+            } catch (_e) {
+              return [raw];
+            }
+          }
+          return [];
+        },
+        set(value) {
+          if (value === null || value === undefined) {
+            this.setDataValue('images', null);
+            return;
+          }
+
+          const normalized = Array.isArray(value) ? value.filter(Boolean) : [value];
+          this.setDataValue('images', JSON.stringify(normalized));
+        },
+      },
+      conclusion: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
       // Confirmation
       confirmedBy: {
         type: DataTypes.STRING(100),
