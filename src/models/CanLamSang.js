@@ -31,6 +31,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(255),
       field: 'GiaTriThamChieu'
     },
+    HinhAnh: {
+      type: DataTypes.TEXT,
+      field: 'HinhAnh'
+    },
     TrangThai: {
       type: DataTypes.TINYINT,
       field: 'TrangThai'

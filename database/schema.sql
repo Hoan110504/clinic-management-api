@@ -362,6 +362,7 @@ BEGIN
         [TenXetNghiem] NVARCHAR(150),
         [KetQua] NVARCHAR(MAX),
         [GiaTriThamChieu] NVARCHAR(255),
+        [HinhAnh] NVARCHAR(MAX) NULL,
         [TrangThai] TINYINT, -- 0:Chờ kết quả, 1:Có kết quả, 2:Đã xác nhận
         [NgayCoKetQua] DATETIME,
         [NguoiXacNhanId] UNIQUEIDENTIFIER,

@@ -10,6 +10,7 @@
     "seed": "node src/seeders/seed.js",
     "seed:vn": "node src/seeders/seedVietnamese.js",
     "fix:gender": "node src/scripts/fix_gender_constraints.js",
+    "db:add-hinhanh-cls": "node src/scripts/add_hinhanh_column_to_canlamsang.js",
     "db:migrate": "sequelize-cli db:migrate",
     "db:migrate:undo": "sequelize-cli db:migrate:undo",
     "db:seed": "sequelize-cli db:seed:all",

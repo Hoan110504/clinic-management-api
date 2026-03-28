@@ -16,6 +16,98 @@ import {
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { LAB_STATUS, ROLES } from '../config/constants.js';
 
+// Sync modern lab_tests result back to legacy CanLamSang when legacy tables exist.
+const syncLegacyCanLamSangResult = async ({ labTest, userId }) => {
+  try {
+    if (!labTest || !models?.YeuCauDichVu || !models?.CanLamSang) return;
+
+    const rawTables = await sequelize.getQueryInterface().showAllTables();
+    const tableNames = (rawTables || [])
+      .map((t) => (t && (t.tableName || t.name)) || t)
+      .map(String)
+      .map((s) => s.toLowerCase());
+    const hasYeuCau = tableNames.includes('yeucaudichvu');
+    const hasCanLamSang = tableNames.includes('canlamsang');
+    if (!hasYeuCau || !hasCanLamSang) return;
+
+    const YeuCauDichVu = models.YeuCauDichVu;
+    const CanLamSang = models.CanLamSang;
+    const BenhNhan = models.BenhNhan;
+
+    let targetRequests = [];
+    if (labTest.medicalRecordId) {
+      targetRequests = await YeuCauDichVu.findAll({ where: { MaHoSoKham: labTest.medicalRecordId } });
+    }
+
+    if ((!targetRequests || targetRequests.length === 0) && labTest.patientId && labTest.testName && labTest.orderedDate) {
+      let benhNhanId = null;
+      if (BenhNhan) {
+        let foundBN = await BenhNhan.findByPk(labTest.patientId);
+        if (foundBN) {
+          benhNhanId = foundBN.Id;
+        } else if (Patient && String(labTest.patientId).startsWith('BN')) {
+          const pat = await Patient.findByPk(labTest.patientId);
+          if (pat?.userId) {
+            foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
+            if (foundBN) benhNhanId = foundBN.Id;
+          }
+        }
+      }
+
+      if (benhNhanId) {
+        const searchDate = new Date(labTest.orderedDate);
+        const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
+        targetRequests = await YeuCauDichVu.findAll({
+          where: {
+            MaBenhNhan: benhNhanId,
+            NgayChiDinh: { [Op.between]: [startDate, endDate] },
+          },
+        });
+      }
+    }
+
+    if (!targetRequests || targetRequests.length === 0) return;
+
+    const imagesPayload = (() => {
+      if (Array.isArray(labTest.images)) return labTest.images;
+      if (typeof labTest.images === 'string' && labTest.images.trim()) {
+        try {
+          const parsed = JSON.parse(labTest.images);
+          return Array.isArray(parsed) ? parsed : [parsed];
+        } catch (_e) {
+          return [labTest.images];
+        }
+      }
+      return [];
+    })();
+    const hinhAnhValue = imagesPayload.length > 0 ? JSON.stringify(imagesPayload) : null;
+
+    for (const reqRow of targetRequests) {
+      const reqId = reqRow?.Id || reqRow?.id;
+      if (!reqId) continue;
+      const where = { MaYeuCau: reqId };
+      if (labTest.testName) {
+        where.TenXetNghiem = { [Op.like]: `%${labTest.testName}%` };
+      }
+
+      const rows = await CanLamSang.findAll({ where });
+      for (const row of rows) {
+        await row.update({
+          KetQua: labTest.results || row.KetQua,
+          GiaTriThamChieu: labTest.normalRange || row.GiaTriThamChieu,
+          HinhAnh: hinhAnhValue,
+          TrangThai: 1,
+          NgayCoKetQua: new Date(),
+          NguoiXacNhanId: userId || row.NguoiXacNhanId,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('syncLegacyCanLamSangResult: skipped due to error', e && e.message);
+  }
+};
+
 /**
  * Get all lab tests (with pagination and filters)
  * GET /api/lab-tests
@@ -644,6 +736,7 @@ const completeLabTest = asyncHandler(async (req, res) => {
   }
 
   await labTest.update(updatePayload);
+  await syncLegacyCanLamSangResult({ labTest, userId: req.user?.id });
 
   return successResponse(res, labTest, 'Lưu kết quả xét nghiệm thành công');
 });
@@ -677,6 +770,8 @@ const returnLabTest = asyncHandler(async (req, res) => {
     confirmedAt: new Date(),
     resultDate: labTest.resultDate || new Date(),
   });
+
+  await syncLegacyCanLamSangResult({ labTest, userId: req.user?.id });
 
   // Re-fetch the lab test with related data so the client receives full details
   const include = [];
