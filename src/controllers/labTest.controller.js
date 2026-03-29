@@ -16,97 +16,10 @@ import {
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { LAB_STATUS, ROLES } from '../config/constants.js';
 
-// Sync modern lab_tests result back to legacy CanLamSang when legacy tables exist.
-const syncLegacyCanLamSangResult = async ({ labTest, userId }) => {
-  try {
-    if (!labTest || !models?.YeuCauDichVu || !models?.CanLamSang) return;
-
-    const rawTables = await sequelize.getQueryInterface().showAllTables();
-    const tableNames = (rawTables || [])
-      .map((t) => (t && (t.tableName || t.name)) || t)
-      .map(String)
-      .map((s) => s.toLowerCase());
-    const hasYeuCau = tableNames.includes('yeucaudichvu');
-    const hasCanLamSang = tableNames.includes('canlamsang');
-    if (!hasYeuCau || !hasCanLamSang) return;
-
-    const YeuCauDichVu = models.YeuCauDichVu;
-    const CanLamSang = models.CanLamSang;
-    const BenhNhan = models.BenhNhan;
-
-    let targetRequests = [];
-    if (labTest.medicalRecordId) {
-      targetRequests = await YeuCauDichVu.findAll({ where: { MaHoSoKham: labTest.medicalRecordId } });
-    }
-
-    if ((!targetRequests || targetRequests.length === 0) && labTest.patientId && labTest.testName && labTest.orderedDate) {
-      let benhNhanId = null;
-      if (BenhNhan) {
-        let foundBN = await BenhNhan.findByPk(labTest.patientId);
-        if (foundBN) {
-          benhNhanId = foundBN.Id;
-        } else if (Patient && String(labTest.patientId).startsWith('BN')) {
-          const pat = await Patient.findByPk(labTest.patientId);
-          if (pat?.userId) {
-            foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
-            if (foundBN) benhNhanId = foundBN.Id;
-          }
-        }
-      }
-
-      if (benhNhanId) {
-        const searchDate = new Date(labTest.orderedDate);
-        const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-        const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
-        targetRequests = await YeuCauDichVu.findAll({
-          where: {
-            MaBenhNhan: benhNhanId,
-            NgayChiDinh: { [Op.between]: [startDate, endDate] },
-          },
-        });
-      }
-    }
-
-    if (!targetRequests || targetRequests.length === 0) return;
-
-    const imagesPayload = (() => {
-      if (Array.isArray(labTest.images)) return labTest.images;
-      if (typeof labTest.images === 'string' && labTest.images.trim()) {
-        try {
-          const parsed = JSON.parse(labTest.images);
-          return Array.isArray(parsed) ? parsed : [parsed];
-        } catch (_e) {
-          return [labTest.images];
-        }
-      }
-      return [];
-    })();
-    const hinhAnhValue = imagesPayload.length > 0 ? JSON.stringify(imagesPayload) : null;
-
-    for (const reqRow of targetRequests) {
-      const reqId = reqRow?.Id || reqRow?.id;
-      if (!reqId) continue;
-      const where = { MaYeuCau: reqId };
-      if (labTest.testName) {
-        where.TenXetNghiem = { [Op.like]: `%${labTest.testName}%` };
-      }
-
-      const rows = await CanLamSang.findAll({ where });
-      for (const row of rows) {
-        await row.update({
-          KetQua: labTest.results || row.KetQua,
-          GiaTriThamChieu: labTest.normalRange || row.GiaTriThamChieu,
-          HinhAnh: hinhAnhValue,
-          TrangThai: 1,
-          NgayCoKetQua: new Date(),
-          NguoiXacNhanId: userId || row.NguoiXacNhanId,
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('syncLegacyCanLamSangResult: skipped due to error', e && e.message);
-  }
-};
+// Legacy CanLamSang synchronization removed.
+// Previous logic that wrote modern LabTest results back into legacy
+// YeuCauDichVu/CanLamSang tables has been intentionally removed to
+// stop automatic propagation of ultrasound results into "Kết quả chỉ định".
 
 /**
  * Get all lab tests (with pagination and filters)
@@ -183,114 +96,9 @@ const getAllLabTests = asyncHandler(async (req, res) => {
     include: includes,
   });
 
-  // For each row, try to fetch legacy CanLamSang results by medicalRecordId or patientId+testName
-  // and attach them to the response
-  let enrichedRows = rows;
-  try {
-    if (models && models.YeuCauDichVu && models.CanLamSang && rows.length > 0) {
-      const rawTables = await sequelize.getQueryInterface().showAllTables();
-      const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-      const hasYeuCau = tableNames.includes('yeucaudichvu');
-      const hasCanLamSang = tableNames.includes('canlamsang');
-
-      if (hasYeuCau && hasCanLamSang) {
-        enrichedRows = await Promise.all(
-          rows.map(async (row) => {
-            const plain = row.get ? row.get({ plain: true }) : row;
-            let legacyResults = null;
-
-            // Try 1: Direct match by medicalRecordId
-            if (plain.medicalRecordId) {
-              try {
-                const YeuCauDichVu = models.YeuCauDichVu;
-                legacyResults = await YeuCauDichVu.findAll({
-                  where: { MaHoSoKham: plain.medicalRecordId },
-                  include: [
-                    {
-                      model: models.CanLamSang,
-                      as: 'KetQuaCanLamSang',
-                      required: false,
-                      include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
-                    },
-                  ],
-                  raw: false,
-                });
-                if (legacyResults && legacyResults.length > 0) {
-                  plain.legacyResults = legacyResults.map(r => r.get ? r.get({ plain: true }) : r);
-                }
-              } catch (e) {
-                console.warn('getAllLabTests: failed to load legacy results for medicalRecordId', plain.medicalRecordId, e && e.message);
-              }
-            }
-
-            // Try 2: Fallback search by patientId + testName + date range (handles unlinked lab tests)
-            if (!plain.legacyResults && !plain.medicalRecordId && plain.patientId && plain.testName && plain.orderedDate) {
-              try {
-                const YeuCauDichVu = models.YeuCauDichVu;
-                const BenhNhan = models.BenhNhan;
-                
-                // Find BenhNhan by modern patientId
-                let benhNhanId = null;
-                if (BenhNhan) {
-                  let foundBN = await BenhNhan.findByPk(plain.patientId);
-                  if (foundBN) {
-                    benhNhanId = foundBN.Id;
-                  } else if (Patient && String(plain.patientId).startsWith('BN')) {
-                    // Try resolving via modern Patient table
-                    const pat = await Patient.findByPk(plain.patientId);
-                    if (pat && pat.userId) {
-                      foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
-                      if (foundBN) benhNhanId = foundBN.Id;
-                    }
-                  }
-                }
-
-                if (benhNhanId) {
-                  const searchDate = new Date(plain.orderedDate);
-                  const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-                  const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
-                  
-                  legacyResults = await YeuCauDichVu.findAll({
-                    where: {
-                      MaBenhNhan: benhNhanId,
-                      NgayChiDinh: { [Op.between]: [startDate, endDate] }
-                    },
-                    include: [
-                      {
-                        model: models.CanLamSang,
-                        as: 'KetQuaCanLamSang',
-                        required: false,
-                        where: { TenXetNghiem: { [Op.like]: `%${plain.testName}%` } },
-                        include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
-                      },
-                    ],
-                    raw: false,
-                  });
-                  
-                  if (legacyResults && legacyResults.length > 0) {
-                    const filtered = legacyResults.filter(r => r.KetQuaCanLamSang && r.KetQuaCanLamSang.length > 0);
-                    if (filtered.length > 0) {
-                      plain.legacyResults = filtered.map(r => r.get ? r.get({ plain: true }) : r);
-                    }
-                  }
-                }
-              } catch (e) {
-                console.warn('getAllLabTests: fallback search by patientId+testName failed for', plain.patientId, plain.testName, e && e.message);
-              }
-            }
-
-            return plain;
-          })
-        );
-      }
-    }
-  } catch (e) {
-    console.warn('getAllLabTests: enrichment with legacy results failed', e && e.message);
-    enrichedRows = rows;
-  }
-
+  // Legacy enrichment removed: return modern LabTest rows only.
   return paginatedResponse(res, {
-    data: enrichedRows,
+    data: rows,
     page,
     limit,
     total: count,
@@ -332,102 +140,7 @@ const getLabTestById = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy xét nghiệm');
   }
 
-  // Enrich with legacy results if available (by medicalRecordId or patientId+testName)
-  try {
-    if (models && models.YeuCauDichVu && models.CanLamSang) {
-      const rawTables = await sequelize.getQueryInterface().showAllTables();
-      const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-      const hasYeuCau = tableNames.includes('yeucaudichvu');
-      const hasCanLamSang = tableNames.includes('canlamsang');
-
-      if (hasYeuCau && hasCanLamSang) {
-        const plain = labTest.get ? labTest.get({ plain: true }) : labTest;
-        let legacyResults = null;
-
-        // Try 1: By medicalRecordId
-        if (plain.medicalRecordId) {
-          try {
-            const YeuCauDichVu = models.YeuCauDichVu;
-            legacyResults = await YeuCauDichVu.findAll({
-              where: { MaHoSoKham: plain.medicalRecordId },
-              include: [
-                {
-                  model: models.CanLamSang,
-                  as: 'KetQuaCanLamSang',
-                  required: false,
-                  include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
-                },
-              ],
-              raw: false,
-            });
-          } catch (e) {
-            console.warn('getLabTestById: failed by medicalRecordId', plain.medicalRecordId, e && e.message);
-          }
-        }
-
-        // Try 2: By patientId + testName + date range
-        if (!legacyResults && plain.patientId && plain.testName && plain.orderedDate) {
-          try {
-            const YeuCauDichVu = models.YeuCauDichVu;
-            const BenhNhan = models.BenhNhan;
-            
-            let benhNhanId = null;
-            if (BenhNhan) {
-              let foundBN = await BenhNhan.findByPk(plain.patientId);
-              if (foundBN) {
-                benhNhanId = foundBN.Id;
-              } else if (Patient && String(plain.patientId).startsWith('BN')) {
-                const pat = await Patient.findByPk(plain.patientId);
-                if (pat && pat.userId) {
-                  foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
-                  if (foundBN) benhNhanId = foundBN.Id;
-                }
-              }
-            }
-
-            if (benhNhanId) {
-              const searchDate = new Date(plain.orderedDate);
-              const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-              const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
-              
-              const results = await YeuCauDichVu.findAll({
-                where: {
-                  MaBenhNhan: benhNhanId,
-                  NgayChiDinh: { [Op.between]: [startDate, endDate] }
-                },
-                include: [
-                  {
-                    model: models.CanLamSang,
-                    as: 'KetQuaCanLamSang',
-                    required: false,
-                    where: { TenXetNghiem: { [Op.like]: `%${plain.testName}%` } },
-                    include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
-                  },
-                ],
-                raw: false,
-              });
-              
-              if (results && results.length > 0) {
-                const filtered = results.filter(r => r.KetQuaCanLamSang && r.KetQuaCanLamSang.length > 0);
-                if (filtered.length > 0) {
-                  legacyResults = filtered;
-                }
-              }
-            }
-          } catch (e) {
-            console.warn('getLabTestById: fallback search by patientId+testName failed', e && e.message);
-          }
-        }
-
-        if (legacyResults && legacyResults.length > 0) {
-          plain.legacyResults = legacyResults.map(r => r.get ? r.get({ plain: true }) : r);
-          labTest = plain;
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('getLabTestById: enrichment with legacy results failed', e && e.message);
-  }
+  // Legacy CanLamSang enrichment removed: do not attach legacy ultrasound results to lab test responses.
 
   return successResponse(res, labTest);
 });
@@ -736,7 +449,6 @@ const completeLabTest = asyncHandler(async (req, res) => {
   }
 
   await labTest.update(updatePayload);
-  await syncLegacyCanLamSangResult({ labTest, userId: req.user?.id });
 
   return successResponse(res, labTest, 'Lưu kết quả xét nghiệm thành công');
 });
@@ -771,7 +483,7 @@ const returnLabTest = asyncHandler(async (req, res) => {
     resultDate: labTest.resultDate || new Date(),
   });
 
-  await syncLegacyCanLamSangResult({ labTest, userId: req.user?.id });
+  // Legacy sync removed: do not write results back to CanLamSang
 
   // Re-fetch the lab test with related data so the client receives full details
   const include = [];
@@ -797,80 +509,8 @@ const returnLabTest = asyncHandler(async (req, res) => {
 
   const fullLabTest = await LabTest.findByPk(id, { include: include.length ? include : undefined });
 
-  // If legacy Vietnamese models exist, also include CanLamSang results related to the medical record
-  let legacyResults = null;
-  try {
-    if (models && models.YeuCauDichVu && models.CanLamSang && fullLabTest) {
-      const YeuCauDichVu = models.YeuCauDichVu;
-      const CanLamSang = models.CanLamSang;
-      const ChiTietYeuCauDichVu = models.ChiTietYeuCauDichVu;
-      const BenhNhan = models.BenhNhan;
-
-      // Try 1: Direct match by medicalRecordId
-      if (fullLabTest.medicalRecordId) {
-        legacyResults = await YeuCauDichVu.findAll({
-          where: { MaHoSoKham: fullLabTest.medicalRecordId },
-          include: [
-            { model: ChiTietYeuCauDichVu, as: 'ChiTietYeuCau', required: false },
-            { model: CanLamSang, as: 'KetQuaCanLamSang', required: false, include: [
-              { model: models.NguoiDung, as: 'NguoiXacNhan', required: false }
-            ] },
-          ],
-        });
-      }
-
-      // Try 2: Fallback search by patientId + testName + date range (for unlinked lab tests)
-      if (!legacyResults && fullLabTest.patientId && fullLabTest.testName && fullLabTest.orderedDate) {
-        let benhNhanId = null;
-        if (BenhNhan) {
-          // Try looking up BenhNhan by patientId directly (might be a GUID)
-          let foundBN = await BenhNhan.findByPk(fullLabTest.patientId);
-          if (foundBN) {
-            benhNhanId = foundBN.Id;
-          } else if (Patient && String(fullLabTest.patientId).startsWith('BN')) {
-            // Try resolving via modern Patient table (patientId like "BN031")
-            const pat = await Patient.findByPk(fullLabTest.patientId);
-            if (pat && pat.userId) {
-              foundBN = await BenhNhan.findOne({ where: { MaNguoiDung: pat.userId } });
-              if (foundBN) benhNhanId = foundBN.Id;
-            }
-          }
-        }
-
-        if (benhNhanId) {
-          const searchDate = new Date(fullLabTest.orderedDate);
-          const startDate = new Date(searchDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-          const endDate = new Date(searchDate.getTime() + 1 * 24 * 60 * 60 * 1000);
-
-          legacyResults = await YeuCauDichVu.findAll({
-            where: {
-              MaBenhNhan: benhNhanId,
-              NgayChiDinh: { [Op.between]: [startDate, endDate] }
-            },
-            include: [
-              { model: ChiTietYeuCauDichVu, as: 'ChiTietYeuCau', required: false },
-              {
-                model: CanLamSang,
-                as: 'KetQuaCanLamSang',
-                required: false,
-                where: { TenXetNghiem: { [Op.like]: `%${fullLabTest.testName}%` } },
-                include: [{ model: models.NguoiDung, as: 'NguoiXacNhan', required: false }],
-              },
-            ],
-          });
-
-          // Filter to only results that have CanLamSang data
-          if (legacyResults && legacyResults.length > 0) {
-            legacyResults = legacyResults.filter(r => r.KetQuaCanLamSang && r.KetQuaCanLamSang.length > 0);
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('returnLabTest: failed to load legacy CanLamSang results', e && e.message);
-  }
-
-  return successResponse(res, { id: labTest.id, returned: true, returnedBy: req.user.fullName, labTest: fullLabTest, legacyResults }, 'Đã trả kết quả');
+  // Do not include legacy CanLamSang results in return payload
+  return successResponse(res, { id: labTest.id, returned: true, returnedBy: req.user.fullName, labTest: fullLabTest, legacyResults: null }, 'Đã trả kết quả');
 });
 
 /**
