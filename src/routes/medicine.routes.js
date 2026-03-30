@@ -59,6 +59,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/medicines/categories
+ * @desc Get distinct medicine categories (NhomThuoc)
+ * @access Admin, Doctor, Pharmacist
+ */
+router.get(
+  '/categories',
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.PHARMACIST),
+  medicineController.getMedicineCategories
+);
+
+/**
  * @route GET /api/medicines/:id
  * @desc Get medicine by ID
  * @access Admin, Doctor, Pharmacist

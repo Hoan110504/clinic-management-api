@@ -399,6 +399,32 @@ const searchMedicines = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Get distinct medicine categories (NhomThuoc)
+ * GET /api/medicines/categories
+ */
+const getMedicineCategories = asyncHandler(async (req, res) => {
+  try {
+    const rows = await Medicine.findAll({
+      attributes: [[sequelize.fn('DISTINCT', sequelize.col('NhomThuoc')), 'category']],
+      where: {
+        isActive: true,
+      },
+      order: [[sequelize.col('NhomThuoc'), 'ASC']],
+      raw: true,
+    });
+
+    const categories = (rows || [])
+      .map((r) => (r && r.category ? String(r.category).trim() : ''))
+      .filter(Boolean);
+
+    return successResponse(res, categories);
+  } catch (err) {
+    console.error('getMedicineCategories: DB error', err.message || err);
+    return successResponse(res, []);
+  }
+});
+
+/**
  * Get all inventory transactions (admin view)
  * GET /api/inventory/transactions
  */
@@ -482,4 +508,5 @@ export {
   getExpiringMedicines,
   searchMedicines,
   getAllInventoryTransactions,
+  getMedicineCategories,
 };
