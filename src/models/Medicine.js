@@ -30,6 +30,11 @@ export default (sequelize) => {
         allowNull: true,
         field: 'NhomThuoc',
       },
+      price: {
+        type: DataTypes.DECIMAL(18, 2),
+        allowNull: true,
+        field: 'GiaBan',
+      },
       isActive: {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
@@ -38,8 +43,8 @@ export default (sequelize) => {
     },
     {
       tableName: 'Thuoc',
-      timestamps: true,
-      paranoid: true,
+      timestamps: false,
+      paranoid: false,
       indexes: [
         { fields: ['TenThuoc'] },
         { fields: ['NhomThuoc'] },

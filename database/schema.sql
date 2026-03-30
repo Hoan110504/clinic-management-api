@@ -182,6 +182,7 @@ BEGIN
         [TenThuoc] NVARCHAR(150) NOT NULL UNIQUE,
         [DonVi] NVARCHAR(50),
         [NhomThuoc] NVARCHAR(100),
+        [GiaBan] DECIMAL(18,2) NULL,
         [TrangThai] BIT DEFAULT 1
     );
 END

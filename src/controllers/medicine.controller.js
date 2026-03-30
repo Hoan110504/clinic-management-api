@@ -44,7 +44,7 @@ const getAllMedicines = asyncHandler(async (req, res) => {
   }
 
   // Simple ordering fallback
-  const order = parseSort(sort, ['name', 'createdAt']);
+  const order = parseSort(sort, ['id', 'name', 'category', 'unit', 'price']);
 
   try {
     const { count, rows } = await Medicine.findAndCountAll({
@@ -52,15 +52,16 @@ const getAllMedicines = asyncHandler(async (req, res) => {
       order,
       limit,
       offset,
-      attributes: ['id', 'name', 'unit', 'category', 'isActive'],
+      attributes: ['id', 'name', 'unit', 'category', 'price', 'isActive'],
     });
 
-    // Normalize result shape to { id, name, unit, category, isActive }
+    // Normalize result shape to { id, name, category, unit, price, isActive }
     const data = (rows || []).map(r => ({
       id: r.id,
       name: r.name,
-      unit: r.unit,
       category: r.category,
+      unit: r.unit,
+      price: r.price,
       isActive: r.isActive,
     }));
 
