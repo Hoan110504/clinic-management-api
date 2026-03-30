@@ -43,8 +43,8 @@ const getAllMedicines = asyncHandler(async (req, res) => {
     ];
   }
 
-  // Simple ordering fallback
-  const order = parseSort(sort, ['id', 'name', 'category', 'unit', 'price']);
+  // Simple ordering fallback (default to id:desc for global descending)
+  const order = parseSort(sort, ['id', 'name', 'category', 'unit', 'price'], 'id:desc');
 
   try {
     const { count, rows } = await Medicine.findAndCountAll({
@@ -378,13 +378,17 @@ const searchMedicines = asyncHandler(async (req, res) => {
   }
 
   try {
+    const isNumeric = /^\d+$/.test(q);
+    const orClauses = [];
+    orClauses.push({ name: { [Op.like]: `%${q}%` } });
+    if (isNumeric) {
+      orClauses.push({ id: parseInt(q, 10) });
+    }
+
     const medicines = await Medicine.findAll({
       where: {
         isActive: true,
-        [Op.or]: [
-          { name: { [Op.like]: `%${q}%` } },
-          { id: { [Op.like]: `%${q}%` } },
-        ],
+        [Op.or]: orClauses,
       },
       attributes: ['id', 'name', 'unit'],
       limit: parseInt(limit, 10),
@@ -496,6 +500,52 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * Get all medicines without pagination (for admin dropdowns etc.)
+ * GET /api/medicines/all
+ */
+const getAllMedicinesUnpaginated = asyncHandler(async (req, res) => {
+  const { category, search, isActive, sort } = req.query;
+  const where = {};
+  if (isActive !== undefined) where.isActive = isActive === 'true';
+  else where.isActive = true;
+  if (category) where.category = category;
+  if (search) {
+    const isNumeric = /^\d+$/.test(search);
+    if (isNumeric) {
+      where[Op.or] = [
+        { id: parseInt(search, 10) },
+        { name: { [Op.like]: `%${search}%` } },
+      ];
+    } else {
+      where[Op.or] = [{ name: { [Op.like]: `%${search}%` } }];
+    }
+  }
+
+  try {
+    const rows = await Medicine.findAll({
+      where,
+      order: parseSort(sort || 'id:desc', ['id', 'name', 'category', 'unit', 'price']),
+      attributes: ['id', 'name', 'unit', 'category', 'price', 'isActive'],
+      raw: true,
+    });
+
+    const data = (rows || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      category: r.category,
+      unit: r.unit,
+      price: r.price,
+      isActive: r.isActive,
+    }));
+
+    return successResponse(res, data);
+  } catch (err) {
+    console.error('getAllMedicinesUnpaginated: DB error', err.message || err);
+    return successResponse(res, []);
+  }
+});
+
 export {
   getAllMedicines,
   getMedicineById,
@@ -509,4 +559,5 @@ export {
   searchMedicines,
   getAllInventoryTransactions,
   getMedicineCategories,
+  getAllMedicinesUnpaginated,
 };

@@ -11,7 +11,7 @@ module.exports = (sequelize, DataTypes) => {
       field: 'Id'
     },
     MaThuoc: {
-      type: DataTypes.UUID,
+      type: DataTypes.INTEGER,
       allowNull: false,
       field: 'MaThuoc',
       references: {

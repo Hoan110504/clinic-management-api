@@ -15,12 +15,12 @@ export default (sequelize) => {
         allowNull: false,
       },
       medicineId: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.INTEGER,
         allowNull: false,
         field: 'medicine_id',
         references: {
-          model: 'medicines',
-          key: 'id',
+          model: 'Thuoc',
+          key: 'Id',
         },
       },
       medicineName: {

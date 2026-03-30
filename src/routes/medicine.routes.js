@@ -70,6 +70,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/medicines/all
+ * @desc Get all medicines without pagination (for dropdowns)
+ * @access Admin, Doctor, Pharmacist
+ */
+router.get(
+  '/all',
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.PHARMACIST),
+  medicineController.getAllMedicinesUnpaginated
+);
+
+/**
  * @route GET /api/medicines/:id
  * @desc Get medicine by ID
  * @access Admin, Doctor, Pharmacist

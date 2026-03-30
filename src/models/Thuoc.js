@@ -5,9 +5,10 @@
 module.exports = (sequelize, DataTypes) => {
   const Thuoc = sequelize.define('Thuoc', {
     Id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
       primaryKey: true,
+      allowNull: false,
       field: 'Id'
     },
     TenThuoc: {

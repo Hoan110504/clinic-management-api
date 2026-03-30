@@ -178,7 +178,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Thuoc]') AND type in (N'U'))
 BEGIN
     CREATE TABLE [dbo].[Thuoc] (
-        [Id] UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        [Id] INT IDENTITY(1,1) PRIMARY KEY,
         [TenThuoc] NVARCHAR(150) NOT NULL UNIQUE,
         [DonVi] NVARCHAR(50),
         [NhomThuoc] NVARCHAR(100),
@@ -200,7 +200,7 @@ IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Qu
 BEGIN
     CREATE TABLE [dbo].[QuanLyLoThuoc] (
         [Id] UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-        [MaThuoc] UNIQUEIDENTIFIER NOT NULL,
+        [MaThuoc] INT NOT NULL,
         [SoLo] VARCHAR(50) NOT NULL,
         [HanSuDung] DATE,
         [NgaySanXuat] DATE,
@@ -263,7 +263,7 @@ BEGIN
     CREATE TABLE [dbo].[ChiTietDonThuoc] (
         [Id] UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         [MaDonThuoc] UNIQUEIDENTIFIER NOT NULL,
-        [MaThuoc] UNIQUEIDENTIFIER NOT NULL,
+        [MaThuoc] INT NOT NULL,
         [SoLuong] INT NOT NULL,
         [DonGia] DECIMAL(18,2) NOT NULL,
         [LieuDung] NVARCHAR(255),
