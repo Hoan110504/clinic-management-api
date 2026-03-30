@@ -116,11 +116,12 @@ export default (sequelize) => {
       hooks: {
         beforeCreate: async (prescription) => {
           if (!prescription.id) {
-            const Prescription = sequelize.models.Prescription;
-            const lastPrescription = await Prescription.findOne({
+            const PrescriptionModel = sequelize.models.Prescription;
+            const lastPrescription = await PrescriptionModel.findOne({
               order: [['createdAt', 'DESC']],
               paranoid: false,
             });
+
             let nextNum = 1;
             if (lastPrescription && lastPrescription.id) {
               const match = lastPrescription.id.match(/DT(\d+)/);
@@ -128,12 +129,37 @@ export default (sequelize) => {
                 nextNum = parseInt(match[1], 10) + 1;
               }
             }
+
             prescription.id = `DT${String(nextNum).padStart(3, '0')}`;
           }
         },
       },
     }
   );
+
+  // Associations
+  Prescription.associate = (models) => {
+    if (models && models.Patient) {
+      Prescription.belongsTo(models.Patient, {
+        foreignKey: 'patientId',
+        as: 'patient',
+      });
+    }
+
+    if (models && models.User) {
+      Prescription.belongsTo(models.User, {
+        foreignKey: 'doctorId',
+        as: 'doctor',
+      });
+    }
+
+    if (models && models.MedicalRecord) {
+      Prescription.belongsTo(models.MedicalRecord, {
+        foreignKey: 'medicalRecordId',
+        as: 'medicalRecord',
+      });
+    }
+  };
 
   return Prescription;
 };

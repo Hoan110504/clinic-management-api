@@ -109,17 +109,15 @@ const TIME_SLOTS = [
 
 // Medicine Categories
 const MEDICINE_CATEGORIES = [
+  'Giảm đau, hạ sốt, kháng viêm',
   'Kháng sinh',
-  'Giảm đau, hạ sốt',
+  'Hô hấp - ho - hen - viêm mũi xoang',
   'Tim mạch',
-  'Tiêu hóa',
-  'Hô hấp',
-  'Thần kinh',
-  'Vitamin & khoáng chất',
-  'Hạ huyết áp',
-  'Đái tháo đường',
-  'Dạ dày',
-  'Khác',
+  'Thuốc tiêu hóa',
+  'Nội tiết - đái tháo đường',
+  'Thuốc tiết niệu - sinh dục',
+  'Vitamin - khoáng chất - bổ trợ',
+  'Vật tư y tế',
 ];
 
 export {

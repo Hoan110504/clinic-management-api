@@ -33,18 +33,18 @@ const getAllMedicines = asyncHandler(async (req, res) => {
   }
 
   if (category) {
-    where.NhomThuoc = category;
+    where.category = category;
   }
 
   if (search) {
     where[Op.or] = [
-      { TenThuoc: { [Op.like]: `%${search}%` } },
-      { Id: { [Op.like]: `%${search}%` } },
+      { name: { [Op.like]: `%${search}%` } },
+      { id: { [Op.like]: `%${search}%` } },
     ];
   }
 
   // Simple ordering fallback
-  const order = parseSort(sort, ['TenThuoc', 'createdAt']);
+  const order = parseSort(sort, ['name', 'createdAt']);
 
   try {
     const { count, rows } = await Medicine.findAndCountAll({
@@ -52,16 +52,16 @@ const getAllMedicines = asyncHandler(async (req, res) => {
       order,
       limit,
       offset,
-      attributes: ['Id', ['TenThuoc', 'name'], ['DonVi', 'unit'], ['NhomThuoc', 'category'], ['TrangThai', 'isActive']],
+      attributes: ['id', 'name', 'unit', 'category', 'isActive'],
     });
 
     // Normalize result shape to { id, name, unit, category, isActive }
     const data = (rows || []).map(r => ({
-      id: r.Id || r.id,
-      name: r.get ? r.get('name') : r.name,
-      unit: r.get ? r.get('unit') : r.unit,
-      category: r.get ? r.get('category') : r.category,
-      isActive: r.get ? r.get('isActive') : r.isActive,
+      id: r.id,
+      name: r.name,
+      unit: r.unit,
+      category: r.category,
+      isActive: r.isActive,
     }));
 
     return paginatedResponse(res, {
@@ -381,11 +381,11 @@ const searchMedicines = asyncHandler(async (req, res) => {
       where: {
         isActive: true,
         [Op.or]: [
-          { TenThuoc: { [Op.like]: `%${q}%` } },
-          { Id: { [Op.like]: `%${q}%` } },
+          { name: { [Op.like]: `%${q}%` } },
+          { id: { [Op.like]: `%${q}%` } },
         ],
       },
-      attributes: ['Id', ['TenThuoc', 'name'], ['DonVi', 'unit']],
+      attributes: ['id', 'name', 'unit'],
       limit: parseInt(limit, 10),
       order: [['name', 'ASC']],
     });

@@ -3,7 +3,7 @@
  * Handles prescription operations
  */
 import { Op } from 'sequelize';
-import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction } from '../models/index.js';
+import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction, DonThuoc } from '../models/index.js';
 import { sequelize } from '../models/database.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import {
@@ -59,26 +59,67 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
   // Parse sort
   const order = parseSort(sort, ['prescriptionDate', 'createdAt']);
 
-  const { count, rows } = await Prescription.findAndCountAll({
-    where,
-    order,
-    limit,
-    offset,
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
-        required: false,
-      },
-      {
-        model: User,
-        as: 'doctor',
-        attributes: ['id', 'fullName'],
-        required: false,
-      },
-    ],
-  });
+  let count, rows;
+  try {
+    const result = await Prescription.findAndCountAll({
+      where,
+      order,
+      limit,
+      offset,
+      include: [
+        {
+          model: Patient,
+          as: 'patient',
+          attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'doctor',
+          attributes: ['id', 'fullName'],
+          required: false,
+        },
+      ],
+    });
+    ({ count, rows } = result);
+  } catch (err) {
+    // Fallback for legacy DB schema where prescriptions table may not exist (use DonThuoc)
+    if (err.message && err.message.includes('Invalid object name')) {
+      const legacyWhere = {};
+      if (where.patientId) legacyWhere.MaBenhNhan = where.patientId;
+      if (where.doctorId) legacyWhere.MaBacSi = where.doctorId;
+      if (where.isDispensed !== undefined) {
+        // map boolean to TrangThai enum where possible
+        legacyWhere.TrangThai = where.isDispensed ? DonThuoc?.TRANG_THAI?.DA_CAP_PHAT : DonThuoc?.TRANG_THAI?.CHO_CAP_PHAT;
+      }
+
+      const legacyOrder = [['NgayKeDon', 'DESC']];
+      const result = await DonThuoc.findAndCountAll({
+        where: legacyWhere,
+        order: legacyOrder,
+        limit,
+        offset,
+      });
+      ({ count, rows } = result);
+    } else {
+      throw err;
+    }
+  }
+
+  // If legacy fallback returned an error (e.g., table doesn't exist), ensure we
+  // return an empty result instead of propagating a DB error to the client.
+  if (!rows) {
+    try {
+      // Attempt once more to read legacy model; if it fails, return empty set
+      const legacyWhere = {};
+      if (where.patientId) legacyWhere.MaBenhNhan = where.patientId;
+      const result = await DonThuoc.findAndCountAll({ where: legacyWhere, limit, offset });
+      ({ count, rows } = result);
+    } catch (e) {
+      count = 0;
+      rows = [];
+    }
+  }
 
   return paginatedResponse(res, {
     data: rows,
