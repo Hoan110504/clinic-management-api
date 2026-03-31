@@ -15,6 +15,42 @@ import {
 import { NotFoundError, ConflictError, BadRequestError, ValidationError } from '../utils/errors.js';
 import { ROLES } from '../config/constants.js';
 
+const STAFF_PREFIX_BY_ROLE = {
+  [ROLES.ADMIN]: 'AD',
+  [ROLES.DOCTOR]: 'BS',
+  [ROLES.RECEPTIONIST]: 'LT',
+  [ROLES.PHARMACIST]: 'DS',
+  [ROLES.PATIENT]: 'BN',
+};
+
+const buildNextStaffCode = async (role, transaction) => {
+  if (role === ROLES.PATIENT) return null;
+
+  const prefix = STAFF_PREFIX_BY_ROLE[role] || 'UN';
+  const candidates = await User.findAll({
+    attributes: ['staffCode'],
+    where: {
+      role,
+      staffCode: {
+        [Op.like]: `${prefix}%`,
+      },
+    },
+    paranoid: false,
+    raw: true,
+    transaction,
+  });
+
+  let maxSeq = 0;
+  for (const row of candidates || []) {
+    const value = String(row?.staffCode || '').trim();
+    if (!value.startsWith(prefix)) continue;
+    const suffix = Number(value.slice(prefix.length));
+    if (Number.isFinite(suffix) && suffix > maxSeq) maxSeq = suffix;
+  }
+
+  return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+};
+
 /**
  * Get all users (with pagination and filters)
  * GET /api/users
@@ -46,12 +82,24 @@ const getAllUsers = asyncHandler(async (req, res) => {
   // Parse sort
   const order = parseSort(sort, ['createdAt', 'fullName', 'username', 'role']);
 
+  // Include Patient association for patients to get patientCode
+  const include = [];
+  if (role === 'patient' || !role) {
+    include.push({
+      association: 'patient',
+      model: Patient,
+      attributes: ['id'],
+      required: false,
+    });
+  }
+
   const { count, rows } = await User.findAndCountAll({
     where,
     order,
     limit,
     offset,
     attributes: { exclude: ['password', 'refreshToken'] },
+    include: include.length > 0 ? include : undefined,
   });
 
   return paginatedResponse(res, {
@@ -157,10 +205,13 @@ const createUser = asyncHandler(async (req, res) => {
   let user;
   const t = await sequelize.transaction();
   try {
+    const nextStaffCode = await buildNextStaffCode(role, t);
+
     // Create user within transaction
     try {
       user = await User.create({
         username,
+        staffCode: nextStaffCode,
         email: normalizedEmail,
         password,
         fullName,
@@ -191,6 +242,7 @@ const createUser = asyncHandler(async (req, res) => {
           // Retry create once within same transaction
           user = await User.create({
             username,
+            staffCode: await buildNextStaffCode(role, t),
             email: normalizedEmail,
             password,
             fullName,
@@ -210,33 +262,79 @@ const createUser = asyncHandler(async (req, res) => {
       }
     }
 
-    // Only create Patient when admin provided an idNumber (CCCD).
-    // Admin users typically don't have CCCD; patients fill that later in patient flow.
-    const shouldCreatePatient = role === ROLES.PATIENT && idNumber !== undefined && idNumber !== null && String(idNumber).trim() !== '';
+    // For admin "Add User" flow: role patient must always create a Patient profile.
+    const shouldCreatePatient = role === ROLES.PATIENT;
 
     if (shouldCreatePatient) {
-      // Check idNumber uniqueness (including soft-deleted)
-      const existingPatient = await Patient.findOne({ where: { idNumber }, paranoid: false, transaction: t });
-      if (existingPatient) {
-        if (existingPatient.deletedAt) {
-          await existingPatient.destroy({ force: true, transaction: t });
-        } else {
-          throw new ValidationError('Dữ liệu không hợp lệ', [
-            { field: 'idNumber', message: 'Số CCCD/CMND đã được sử dụng' },
-          ]);
-        }
+      const normalizedPhone = phone !== undefined && phone !== null && String(phone).trim() !== ''
+        ? String(phone).trim()
+        : null;
+      const normalizedIdNumber = idNumber !== undefined && idNumber !== null && String(idNumber).trim() !== ''
+        ? String(idNumber).trim()
+        : null;
+
+      // Reuse existing patient profile by phone when it has no linked user account yet.
+      let existingPatientByPhone = null;
+      if (normalizedPhone) {
+        existingPatientByPhone = await Patient.findOne({
+          where: { phone: normalizedPhone },
+          paranoid: false,
+          transaction: t,
+        });
       }
 
-      await Patient.create({
-        userId: user.id,
-        fullName,
-        dateOfBirth,
-        gender,
-        phone,
-        email: normalizedEmail,
-        address,
-        idNumber,
-      }, { transaction: t });
+      if (existingPatientByPhone && !existingPatientByPhone.deletedAt) {
+        if (existingPatientByPhone.userId) {
+          throw new ValidationError('Dữ liệu không hợp lệ', [
+            { field: 'phone', message: 'Số điện thoại này đã có tài khoản bệnh nhân' },
+          ]);
+        }
+
+        // Link the newly created user to existing patient and preserve existing patient code (BNxxx).
+        await existingPatientByPhone.update({
+          userId: user.id,
+          fullName: fullName || existingPatientByPhone.fullName,
+          dateOfBirth: dateOfBirth || existingPatientByPhone.dateOfBirth,
+          gender: gender || existingPatientByPhone.gender,
+          email: normalizedEmail || existingPatientByPhone.email,
+          address: address || existingPatientByPhone.address,
+          idNumber: normalizedIdNumber || existingPatientByPhone.idNumber,
+        }, { transaction: t });
+
+        await user.update({ staffCode: existingPatientByPhone.id }, { transaction: t });
+      } else {
+        if (existingPatientByPhone?.deletedAt) {
+          await existingPatientByPhone.destroy({ force: true, transaction: t });
+        }
+
+        // Check idNumber uniqueness only when provided
+        if (normalizedIdNumber) {
+          const existingPatient = await Patient.findOne({ where: { idNumber: normalizedIdNumber }, paranoid: false, transaction: t });
+          if (existingPatient) {
+            if (existingPatient.deletedAt) {
+              await existingPatient.destroy({ force: true, transaction: t });
+            } else {
+              throw new ValidationError('Dữ liệu không hợp lệ', [
+                { field: 'idNumber', message: 'Số CCCD/CMND đã được sử dụng' },
+              ]);
+            }
+          }
+        }
+
+        const createdPatient = await Patient.create({
+          userId: user.id,
+          fullName,
+          dateOfBirth,
+          gender,
+          phone: normalizedPhone,
+          email: normalizedEmail,
+          address,
+          idNumber: normalizedIdNumber,
+        }, { transaction: t });
+
+        // Patient code in users must follow Patient module code (BNxxx)
+        await user.update({ staffCode: createdPatient.id }, { transaction: t });
+      }
     }
 
     await t.commit();
@@ -280,6 +378,7 @@ const createUser = asyncHandler(async (req, res) => {
                 // Recreate user
                 user = await User.create({
                   username,
+                  staffCode: await buildNextStaffCode(role, t2),
                   email: normalizedEmail,
                   password,
                   fullName,
@@ -292,17 +391,59 @@ const createUser = asyncHandler(async (req, res) => {
                   signature,
                 }, { transaction: t2 });
 
-                // Recreate patient
-                await Patient.create({
-                  userId: user.id,
-                  fullName,
-                  dateOfBirth,
-                  gender,
-                  phone,
-                  email: normalizedEmail,
-                  address,
-                  idNumber,
-                }, { transaction: t2 });
+                // Recreate or relink patient
+                const normalizedPhone = phone !== undefined && phone !== null && String(phone).trim() !== ''
+                  ? String(phone).trim()
+                  : null;
+                const normalizedIdNumber = idNumber !== undefined && idNumber !== null && String(idNumber).trim() !== ''
+                  ? String(idNumber).trim()
+                  : null;
+
+                let existingPatientByPhone = null;
+                if (normalizedPhone) {
+                  existingPatientByPhone = await Patient.findOne({
+                    where: { phone: normalizedPhone },
+                    paranoid: false,
+                    transaction: t2,
+                  });
+                }
+
+                if (existingPatientByPhone && !existingPatientByPhone.deletedAt) {
+                  if (existingPatientByPhone.userId) {
+                    throw new ValidationError('Dữ liệu không hợp lệ', [
+                      { field: 'phone', message: 'Số điện thoại này đã có tài khoản bệnh nhân' },
+                    ]);
+                  }
+
+                  await existingPatientByPhone.update({
+                    userId: user.id,
+                    fullName: fullName || existingPatientByPhone.fullName,
+                    dateOfBirth: dateOfBirth || existingPatientByPhone.dateOfBirth,
+                    gender: gender || existingPatientByPhone.gender,
+                    email: normalizedEmail || existingPatientByPhone.email,
+                    address: address || existingPatientByPhone.address,
+                    idNumber: normalizedIdNumber || existingPatientByPhone.idNumber,
+                  }, { transaction: t2 });
+
+                  await user.update({ staffCode: existingPatientByPhone.id }, { transaction: t2 });
+                } else {
+                  if (existingPatientByPhone?.deletedAt) {
+                    await existingPatientByPhone.destroy({ force: true, transaction: t2 });
+                  }
+
+                  const createdPatient = await Patient.create({
+                    userId: user.id,
+                    fullName,
+                    dateOfBirth,
+                    gender,
+                    phone: normalizedPhone,
+                    email: normalizedEmail,
+                    address,
+                    idNumber: normalizedIdNumber,
+                  }, { transaction: t2 });
+
+                  await user.update({ staffCode: createdPatient.id }, { transaction: t2 });
+                }
 
                 await t2.commit();
                 return createdResponse(res, user.toJSON(), 'Tạo người dùng thành công');

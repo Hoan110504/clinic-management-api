@@ -16,6 +16,11 @@ module.exports = (sequelize, DataTypes) => {
       unique: true,
       field: 'TenDangNhap'
     },
+    MaNguoiDung: {
+      type: DataTypes.STRING(16),
+      allowNull: true,
+      field: 'MaNguoiDung'
+    },
     Email: {
       type: DataTypes.STRING(100),
       allowNull: true,

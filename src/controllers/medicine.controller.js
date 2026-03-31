@@ -4,7 +4,7 @@
  */
 import { Op } from 'sequelize';
 import { sequelize } from '../models/database.js';
-import { Medicine, InventoryTransaction } from '../models/index.js';
+import { Medicine, InventoryTransaction, User } from '../models/index.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import {
   successResponse,
@@ -14,6 +14,85 @@ import {
 } from '../utils/response.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
+
+const normalizeIdKey = (id) => String(id || '').trim().toLowerCase();
+
+const formatPerformerDisplay = (name, code) => {
+  if (name && code) return `${name} - ${code}`;
+  return name || code || null;
+};
+
+const ROLE_PREFIX_BY_ROLE = {
+  admin: 'AD',
+  doctor: 'BS',
+  receptionist: 'LT',
+  pharmacist: 'DS',
+  patient: 'BN',
+};
+
+const ROLE_PREFIX_BY_VAITRO = {
+  1: 'AD',
+  2: 'BS',
+  3: 'LT',
+  4: 'DS',
+  5: 'BN',
+};
+
+const buildPerformerLookup = async (performerIds = []) => {
+  const rawIds = [...new Set((performerIds || []).filter(Boolean))];
+  const performerMap = new Map();
+  if (!rawIds.length) return performerMap;
+
+  const [appUsers, legacyUsers] = await Promise.all([
+    User.findAll({ attributes: ['id', 'fullName', 'username', 'role', 'staffCode'], where: { id: { [Op.in]: rawIds } }, raw: true }).catch((err) => {
+      console.error('buildPerformerLookup: failed to read users', err?.message || err);
+      return [];
+    }),
+    sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'HoTen', 'TenDangNhap', 'VaiTro', 'MaNguoiDung'], where: { Id: { [Op.in]: rawIds } }, raw: true }).catch(() => []),
+  ]);
+
+  // Precompute dynamic codes only for those without stored code
+  const appRoles = [...new Set(appUsers.map((u) => u.role).filter(Boolean))];
+  const legacyRoles = [...new Set(legacyUsers.map((u) => Number(u.VaiTro)).filter(Boolean))];
+
+  const allAppUsersInRoles = appRoles.length
+    ? await User.findAll({ attributes: ['id', 'role'], where: { role: { [Op.in]: appRoles } }, raw: true }).catch(() => [])
+    : [];
+
+  const allLegacyUsersInRoles = legacyRoles.length
+    ? await sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'VaiTro'], where: { VaiTro: { [Op.in]: legacyRoles } }, raw: true }).catch(() => [])
+    : [];
+
+  const appCodeMap = new Map();
+  for (const role of appRoles) {
+    const sameRole = allAppUsersInRoles.filter((u) => u.role === role).sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+    const prefix = ROLE_PREFIX_BY_ROLE[role] || 'UN';
+    sameRole.forEach((u, index) => appCodeMap.set(normalizeIdKey(u.id), `${prefix}${String(index + 1).padStart(3, '0')}`));
+  }
+
+  const legacyCodeMap = new Map();
+  for (const v of legacyRoles) {
+    const sameRole = allLegacyUsersInRoles.filter((u) => Number(u.VaiTro) === Number(v)).sort((a, b) => String(a.Id || '').localeCompare(String(b.Id || '')));
+    const prefix = ROLE_PREFIX_BY_VAITRO[v] || 'UN';
+    sameRole.forEach((u, index) => legacyCodeMap.set(normalizeIdKey(u.Id), `${prefix}${String(index + 1).padStart(3, '0')}`));
+  }
+
+  for (const lu of legacyUsers) {
+    const idKey = normalizeIdKey(lu.Id);
+    const name = lu.HoTen || null;
+    const code = lu.MaNguoiDung || legacyCodeMap.get(idKey) || lu.TenDangNhap || null;
+    performerMap.set(idKey, { name, code, display: formatPerformerDisplay(name, code) });
+  }
+
+  for (const au of appUsers) {
+    const idKey = normalizeIdKey(au.id);
+    const name = au.fullName || null;
+    const code = au.staffCode || appCodeMap.get(idKey) || au.username || null;
+    performerMap.set(idKey, { name, code, display: formatPerformerDisplay(name, code) });
+  }
+
+  return performerMap;
+};
 
 /**
  * Get all medicines (with pagination and filters)
@@ -425,6 +504,10 @@ const adjustInventory = asyncHandler(async (req, res) => {
   await created.reload();
 
   // Normalize created transaction to API shape expected by frontend
+  const performerLookup = await buildPerformerLookup([created.NguoiThucHienId, req.user?.id]);
+  const performerKey = normalizeIdKey(created.NguoiThucHienId || req.user?.id);
+  const performer = performerLookup.get(performerKey) || {};
+
   const transaction = {
     id: created.Id,
     medicineId: medicine.id,
@@ -439,7 +522,9 @@ const adjustInventory = asyncHandler(async (req, res) => {
     // fallback to the stored MaThamChieu (GUID) otherwise.
     referenceId: referenceId || created.MaThamChieu,
     performedById: created.NguoiThucHienId,
-    performedBy: req.user.fullName,
+    performedBy: performer.name || req.user.fullName,
+    performerCode: performer.code || null,
+    performerDisplay: performer.display || formatPerformerDisplay(performer.name || req.user.fullName, performer.code),
     notes: created.GhiChu,
     // Use the timestamp from the database (now populated after reload)
     createdAt: created.ThoiGianTao,
@@ -511,23 +596,32 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
       offset,
     });
 
-    const mapped = (rows || []).map((r) => ({
-      id: r.Id,
-      medicineId: r.MaThuoc ?? id,
-      medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
-      type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
-      quantity: r.SoLuong,
-      previousQuantity: r.SoLuongTruoc,
-      newQuantity: r.SoLuongSau,
-      reason: r.LyDo,
-      referenceType: r.LoaiThamChieu,
-      referenceId: r.MaThamChieu,
-      performedById: r.NguoiThucHienId,
-      performedBy: r.NguoiThucHien?.HoTen,
-      notes: r.GhiChu,
-      createdAt: r.ThoiGianTao,
-      updatedAt: null,
-    }));
+    const performerIds = [...new Set((rows || []).map((r) => r.NguoiThucHienId).filter(Boolean))];
+    const performerLookup = await buildPerformerLookup(performerIds);
+
+    const mapped = (rows || []).map((r) => {
+      const key = normalizeIdKey(r.NguoiThucHienId);
+      const perf = performerLookup.get(key) || {};
+      return {
+        id: r.Id,
+        medicineId: r.MaThuoc ?? id,
+        medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
+        type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+        quantity: r.SoLuong,
+        previousQuantity: r.SoLuongTruoc,
+        newQuantity: r.SoLuongSau,
+        reason: r.LyDo,
+        referenceType: r.LoaiThamChieu,
+        referenceId: r.MaThamChieu,
+        performedById: r.NguoiThucHienId,
+        performedBy: perf.name || r.NguoiThucHien?.HoTen || null,
+        performerCode: perf.code || null,
+        performerDisplay: perf.display || formatPerformerDisplay(perf.name || r.NguoiThucHien?.HoTen, perf.code),
+        notes: r.GhiChu,
+        createdAt: r.ThoiGianTao,
+        updatedAt: null,
+      };
+    });
 
     return paginatedResponse(res, {
       data: mapped,
@@ -726,23 +820,32 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
 
     console.log(`[getAllInventoryTransactions] where=${JSON.stringify(where)}, found=${rows.length} transactions`);
 
-    const mapped = (rows || []).map((r) => ({
-      id: r.Id,
-      medicineId: r.MaThuoc ?? null,  // Use MaThuoc field directly from transaction record
-      medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
-      type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
-      quantity: r.SoLuong,
-      previousQuantity: r.SoLuongTruoc,
-      newQuantity: r.SoLuongSau,
-      reason: r.LyDo,
-      referenceType: r.LoaiThamChieu,
-      referenceId: r.MaThamChieu,
-      performedById: r.NguoiThucHienId,
-      performedBy: r.NguoiThucHien?.HoTen,
-      notes: r.GhiChu,
-      createdAt: r.ThoiGianTao,
-      updatedAt: null,
-    }));
+    const performerIds = [...new Set((rows || []).map((r) => r.NguoiThucHienId).filter(Boolean))];
+    const performerLookup = await buildPerformerLookup(performerIds);
+
+    const mapped = (rows || []).map((r) => {
+      const key = normalizeIdKey(r.NguoiThucHienId);
+      const perf = performerLookup.get(key) || {};
+      return {
+        id: r.Id,
+        medicineId: r.MaThuoc ?? null,  // Use MaThuoc field directly from transaction record
+        medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
+        type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+        quantity: r.SoLuong,
+        previousQuantity: r.SoLuongTruoc,
+        newQuantity: r.SoLuongSau,
+        reason: r.LyDo,
+        referenceType: r.LoaiThamChieu,
+        referenceId: r.MaThamChieu,
+        performedById: r.NguoiThucHienId,
+        performedBy: perf.name || r.NguoiThucHien?.HoTen || null,
+        performerCode: perf.code || null,
+        performerDisplay: perf.display || formatPerformerDisplay(perf.name || r.NguoiThucHien?.HoTen, perf.code),
+        notes: r.GhiChu,
+        createdAt: r.ThoiGianTao,
+        updatedAt: null,
+      };
+    });
 
     console.log(`[getAllInventoryTransactions] returning ${mapped.length} mapped transactions`);
 

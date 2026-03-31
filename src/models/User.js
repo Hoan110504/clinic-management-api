@@ -26,6 +26,11 @@ export default (sequelize) => {
           isAlphanumeric: true,
         },
       },
+      staffCode: {
+        type: DataTypes.STRING(16),
+        allowNull: true,
+        field: 'staff_code',
+      },
       email: {
         type: DataTypes.STRING(100),
         allowNull: true,
@@ -188,6 +193,13 @@ export default (sequelize) => {
 
   User.findByEmail = function (email) {
     return this.findOne({ where: { email, isActive: true } });
+  };
+
+  // Associations
+  User.associate = (models) => {
+    if (models && models.Patient) {
+      User.hasOne(models.Patient, { foreignKey: 'userId', as: 'patient' });
+    }
   };
 
   return User;
