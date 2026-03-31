@@ -112,6 +112,20 @@ const adjustInventoryValidator = [
     .optional()
     .isString()
     .withMessage('Lý do không hợp lệ'),
+  body('referenceType')
+    .optional()
+    .isString()
+    .isLength({ max: 50 })
+    .withMessage('Loại tham chiếu không hợp lệ'),
+  body('referenceId')
+    .optional()
+    .isString()
+    .isLength({ max: 50 })
+    .withMessage('Mã tham chiếu không hợp lệ'),
+  body('notes')
+    .optional()
+    .isString()
+    .withMessage('Ghi chú không hợp lệ'),
 ];
 
 export {

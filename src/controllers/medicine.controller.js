@@ -161,16 +161,20 @@ const createMedicine = asyncHandler(async (req, res) => {
 
   // Create initial inventory transaction if quantity > 0
   if (quantity > 0) {
+    const batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id } });
     await InventoryTransaction.create({
-      medicineId: medicine.id,
-      medicineName: medicine.name,
-      type: INVENTORY_TRANSACTION_TYPES.IMPORT,
-      quantity,
-      previousQuantity: 0,
-      newQuantity: quantity,
-      reason: 'Tạo mới thuốc',
-      performedById: req.user.id,
-      performedBy: req.user.fullName,
+      MaLoThuoc: batch ? batch.Id : null,
+      MaThuoc: medicine.id,  // Add direct medicine ID for easier querying
+      LoaiGiaoDich: 1,
+      SoLuong: quantity,
+      SoLuongTruoc: 0,
+      SoLuongSau: quantity,
+      LyDo: 'Tạo mới thuốc',
+      LoaiThamChieu: null,
+      MaThamChieu: null,
+      NguoiThucHienId: req.user.id,
+      GhiChu: null,
+      ThoiGianTao: new Date(),
     });
   }
 
@@ -221,52 +225,226 @@ const deleteMedicine = asyncHandler(async (req, res) => {
  */
 const adjustInventory = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { type, quantity, reason, referenceType, referenceId, notes } = req.body;
+  const { type, quantity, reason, referenceType, referenceId, notes, soLo, batchNumber, hanSuDung, ngaySanXuat, giaNhap } = req.body;
+  const batchCode = soLo || batchNumber || null;
 
   const medicine = await Medicine.findByPk(id);
   if (!medicine) {
     throw new NotFoundError('Không tìm thấy thuốc');
   }
 
-  const previousQuantity = medicine.quantity;
+  const parsedQuantity = Number(quantity);
+  if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+    throw new BadRequestError('Số lượng không hợp lệ');
+  }
+
+  // Nếu là nhập kho thì bắt buộc phải có số lô (tên trường có thể là `soLo` hoặc `batchNumber` từ frontend)
+  if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && !batchCode) {
+    throw new BadRequestError('Số lô (batchNumber) là bắt buộc khi nhập kho');
+  }
+
+  // Try to find latest transaction joined to batch -> QuanLyLoThuoc to retrieve batch-level new quantity.
+  // If the legacy table QuanLyLoThuoc does not exist, fall back to medicine.quantity.
+  let latestTransaction = null;
+  try {
+    latestTransaction = await InventoryTransaction.findOne({
+      include: [
+        {
+          model: sequelize.models.QuanLyLoThuoc,
+          as: 'LoThuoc',
+          where: { MaThuoc: medicine.id },
+          required: true,
+        },
+        {
+          model: sequelize.models.NguoiDung,
+          as: 'NguoiThucHien',
+          required: false,
+        },
+      ],
+      order: [['ThoiGianTao', 'DESC']],
+    });
+  } catch (err) {
+    // If the DB doesn't have the legacy batch table, log and continue with fallback
+    if (err && err.message && err.message.includes('Invalid object name')) {
+      console.warn('Fallback: QuanLyLoThuoc not present, using Medicine.quantity as previousQuantity');
+      latestTransaction = null;
+    } else {
+      throw err;
+    }
+  }
+
+  const previousQuantity = Number.isFinite(Number(latestTransaction?.SoLuongSau))
+    ? Number(latestTransaction.SoLuongSau)
+    : Number(medicine.quantity || 0);
   let newQuantity;
 
   switch (type) {
     case INVENTORY_TRANSACTION_TYPES.IMPORT:
-      newQuantity = previousQuantity + quantity;
+      newQuantity = previousQuantity + parsedQuantity;
       break;
     case INVENTORY_TRANSACTION_TYPES.EXPORT:
-      if (previousQuantity < quantity) {
+      if (previousQuantity < parsedQuantity) {
         throw new BadRequestError('Số lượng xuất vượt quá tồn kho');
       }
-      newQuantity = previousQuantity - quantity;
+      newQuantity = previousQuantity - parsedQuantity;
       break;
     case INVENTORY_TRANSACTION_TYPES.ADJUSTMENT:
-      newQuantity = quantity;
+      newQuantity = parsedQuantity;
       break;
     default:
       throw new BadRequestError('Loại giao dịch không hợp lệ');
   }
 
-  // Update medicine quantity
-  medicine.quantity = newQuantity;
-  await medicine.save();
+  // Persist quantity only when model contains quantity field.
+  if (Object.prototype.hasOwnProperty.call(Medicine.rawAttributes, 'quantity')) {
+    medicine.quantity = newQuantity;
+    await medicine.save();
+  }
 
-  // Create transaction record
-  const transaction = await InventoryTransaction.create({
+  // Determine or create a batch (MaLoThuoc) to associate the transaction with.
+  let batch = null;
+  try {
+    // If this is an import and a batch code (`soLo`) was provided, try to find or create that batch.
+    if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && soLo) {
+      batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id, SoLo: soLo } });
+      if (!batch) {
+        // Parse incoming date strings safely into Date objects (or null) to avoid SQL conversion errors.
+        const parseDateSafe = (v) => {
+          if (!v) return null;
+          const d = new Date(v);
+          if (!Number.isFinite(d.getTime())) return null;
+          // Return date-only string in ISO format to avoid SQL Server locale/format conversion issues
+          return d.toISOString().slice(0, 10);
+        };
+
+        // Create a new batch record. Set SoLuongTon to parsedQuantity by default.
+        batch = await sequelize.models.QuanLyLoThuoc.create({
+          MaThuoc: medicine.id,
+          SoLo: soLo,
+          HanSuDung: parseDateSafe(hanSuDung),
+          NgaySanXuat: parseDateSafe(ngaySanXuat),
+          SoLuongTon: parsedQuantity,
+          GiaNhap: giaNhap || null,
+          TrangThai: 1,
+        });
+      } else {
+        // If batch exists and this is import, increment its SoLuongTon
+        batch.SoLuongTon = Number(batch.SoLuongTon || 0) + parsedQuantity;
+        await batch.save();
+      }
+    } else {
+      // Default behavior: try to find any batch for this medicine
+      batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id } });
+    }
+  } catch (err) {
+    if (err && err.message && err.message.includes('Invalid object name')) {
+      // QuanLyLoThuoc missing — continue with null batch
+      batch = null;
+    } else {
+      throw err;
+    }
+  }
+
+  const mapTypeToLoai = (t) => {
+    switch (t) {
+      case INVENTORY_TRANSACTION_TYPES.IMPORT:
+        return 1;
+      case INVENTORY_TRANSACTION_TYPES.EXPORT:
+        return 2;
+      case INVENTORY_TRANSACTION_TYPES.ADJUSTMENT:
+        return 3;
+      default:
+        return null;
+    }
+  };
+
+  const mapRefType = (r) => {
+    if (!r) return null;
+    if (r === 'Prescription' || String(r).toUpperCase().includes('DON')) return 1;
+    if (String(r).toUpperCase().includes('NHAP')) return 2;
+    if (String(r).toUpperCase().includes('DIEU') || String(r).toUpperCase().includes('ADJUST')) return 3;
+    return null;
+  };
+
+  // Create transaction record in legacy table fields
+  if (!batch && type === INVENTORY_TRANSACTION_TYPES.IMPORT) {
+    // For imports batch must exist (soLo provided and batch created/found above)
+    throw new BadRequestError('Không tìm thấy lô thuốc tương ứng với soLo đã cung cấp');
+  }
+
+  const created = await InventoryTransaction.create({
+    MaLoThuoc: batch ? batch.Id : null,
+    MaThuoc: medicine.id,  // Add direct medicine ID for easier querying
+    LoaiGiaoDich: mapTypeToLoai(type),
+    SoLuong: parsedQuantity,
+    SoLuongTruoc: previousQuantity,
+    SoLuongSau: newQuantity,
+    LyDo: reason,
+    LoaiThamChieu: mapRefType(referenceType),
+    // MaThamChieu is a UNIQUEIDENTIFIER. Only set it when referenceId is a valid GUID.
+    // If referenceId is not a GUID, embed it in the notes JSON under `referenceText` so
+    // frontend can still read metadata (expiryDate, minThreshold) without JSON parsing errors.
+    MaThamChieu: (() => {
+      const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
+      return isGuid(referenceId) ? referenceId : null;
+    })(),
+    NguoiThucHienId: req.user.id,
+    GhiChu: (() => {
+      if (!notes && !referenceId) return null;
+      const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
+      // Try to parse incoming notes as JSON; if not JSON, keep raw text under _raw
+      let base = {};
+      if (notes) {
+        try {
+          const parsed = JSON.parse(notes);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) base = parsed;
+          else base._raw = String(notes);
+        } catch {
+          base._raw = String(notes);
+        }
+      }
+
+      // If referenceId is non-GUID, attach it to the JSON so we don't corrupt the JSON string
+      if (referenceId && !isGuid(referenceId)) {
+        base.referenceText = String(referenceId);
+      }
+
+      // If base contains only raw text, return the raw text; otherwise return JSON string
+      const keys = Object.keys(base);
+      if (keys.length === 1 && keys[0] === '_raw') return base._raw || null;
+      try {
+        return Object.keys(base).length ? JSON.stringify(base) : null;
+      } catch {
+        return notes || null;
+      }
+    })(),
+    // Omit ThoiGianTao to use DB DEFAULT GETDATE() and avoid date conversion issues
+  });
+
+  // Reload the created record to get the server-generated ThoiGianTao timestamp
+  await created.reload();
+
+  // Normalize created transaction to API shape expected by frontend
+  const transaction = {
+    id: created.Id,
     medicineId: medicine.id,
     medicineName: medicine.name,
     type,
-    quantity,
-    previousQuantity,
-    newQuantity,
-    reason,
-    referenceType,
-    referenceId,
-    notes,
-    performedById: req.user.id,
+    quantity: created.SoLuong,
+    previousQuantity: created.SoLuongTruoc,
+    newQuantity: created.SoLuongSau,
+    reason: created.LyDo,
+    referenceType: referenceType || null,
+    // Prefer returning the original referenceId provided by the API caller when present;
+    // fallback to the stored MaThamChieu (GUID) otherwise.
+    referenceId: referenceId || created.MaThamChieu,
+    performedById: created.NguoiThucHienId,
     performedBy: req.user.fullName,
-  });
+    notes: created.GhiChu,
+    // Use the timestamp from the database (now populated after reload)
+    createdAt: created.ThoiGianTao,
+    updatedAt: null,
+  };
 
   return successResponse(
     res,
@@ -287,31 +465,86 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const { type, fromDate, toDate } = req.query;
 
-  const where = { medicineId: id };
-
+  // Build where clause to filter by medicine directly
+  const where = { MaThuoc: id };
+  
   if (type) {
-    where.type = type;
+    // map API type string to numeric LoaiGiaoDich where possible
+    const mapType = (t) => {
+      switch (t) {
+        case INVENTORY_TRANSACTION_TYPES.IMPORT:
+          return 1;
+        case INVENTORY_TRANSACTION_TYPES.EXPORT:
+          return 2;
+        case INVENTORY_TRANSACTION_TYPES.ADJUSTMENT:
+          return 3;
+        default:
+          return null;
+      }
+    };
+    where.LoaiGiaoDich = mapType(type);
   }
 
   if (fromDate && toDate) {
-    where.createdAt = {
+    where.ThoiGianTao = {
       [Op.between]: [new Date(fromDate), new Date(toDate)],
     };
   }
 
-  const { count, rows } = await InventoryTransaction.findAndCountAll({
-    where,
-    order: [['createdAt', 'DESC']],
-    limit,
-    offset,
-  });
+  // Optional: include batch and medicine details for display
+  const include = [
+    {
+      model: sequelize.models.QuanLyLoThuoc,
+      as: 'LoThuoc',
+      required: false,  // LEFT JOIN - even transactions without batch will be returned
+      include: [{ model: sequelize.models.Thuoc, as: 'Thuoc', required: false }],
+    },
+    { model: sequelize.models.NguoiDung, as: 'NguoiThucHien', required: false },
+  ];
 
-  return paginatedResponse(res, {
-    data: rows,
-    page,
-    limit,
-    total: count,
-  });
+  try {
+    const { count, rows } = await InventoryTransaction.findAndCountAll({
+      where,
+      include,
+      order: [['ThoiGianTao', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const mapped = (rows || []).map((r) => ({
+      id: r.Id,
+      medicineId: r.MaThuoc ?? id,
+      medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
+      type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+      quantity: r.SoLuong,
+      previousQuantity: r.SoLuongTruoc,
+      newQuantity: r.SoLuongSau,
+      reason: r.LyDo,
+      referenceType: r.LoaiThamChieu,
+      referenceId: r.MaThamChieu,
+      performedById: r.NguoiThucHienId,
+      performedBy: r.NguoiThucHien?.HoTen,
+      notes: r.GhiChu,
+      createdAt: r.ThoiGianTao,
+      updatedAt: null,
+    }));
+
+    return paginatedResponse(res, {
+      data: mapped,
+      page,
+      limit,
+      total: mapped.length,  // Count only filtered results
+    });
+  } catch (err) {
+    console.error('getInventoryTransactions error:', err.message || err);
+    // Fallback: return empty list on error
+    return paginatedResponse(res, {
+      data: [],
+      page,
+      limit,
+      total: 0,
+    });
+  }
 });
 
 /**
@@ -438,53 +671,83 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
 
   const where = {};
 
+  // Map API type string to numeric LoaiGiaoDich
   if (type) {
-    where.type = type;
+    const mapType = (t) => {
+      switch (t) {
+        case INVENTORY_TRANSACTION_TYPES.IMPORT:
+          return 1;
+        case INVENTORY_TRANSACTION_TYPES.EXPORT:
+          return 2;
+        case INVENTORY_TRANSACTION_TYPES.ADJUSTMENT:
+          return 3;
+        default:
+          return null;
+      }
+    };
+    where.LoaiGiaoDich = mapType(type);
   }
 
+  // Filter by medicine ID (MaThuoc field)
   if (medicineId) {
-    where.medicineId = medicineId;
+    where.MaThuoc = medicineId;
   }
 
+  // Filter by date range (ThoiGianTao field)
   if (fromDate && toDate) {
-    where.createdAt = {
+    where.ThoiGianTao = {
       [Op.between]: [new Date(fromDate), new Date(toDate)],
     };
   }
 
-  const order = parseSort(sort, ['createdAt']);
-
-  const { count, rows } = await InventoryTransaction.findAndCountAll({
-    where,
-    order,
-    limit,
-    offset,
-    include: [
-      {
-        model: Medicine,
-        as: 'medicine',
-        attributes: ['id', 'name', 'unit'],
-      },
-    ],
-  });
+  // Parse sort parameter - use ThoiGianTao as the allowed column for sorting
+  // If client sends 'createdAt' it will be ignored and ThoiGianTao will be used as fallback
+  const order = parseSort(sort, ['ThoiGianTao'], 'ThoiGianTao:desc');
 
   try {
+    // Build include to optionally join to batches/medicine for display details
+    const include = [
+      {
+        model: sequelize.models.QuanLyLoThuoc,
+        as: 'LoThuoc',
+        required: false,  // LEFT JOIN even if no batch linked
+        include: [{ model: sequelize.models.Thuoc, as: 'Thuoc', required: false }],
+      },
+      { model: sequelize.models.NguoiDung, as: 'NguoiThucHien', required: false },
+    ];
+
     const { count, rows } = await InventoryTransaction.findAndCountAll({
       where,
       order,
       limit,
       offset,
-      include: [
-        {
-          model: Medicine,
-          as: 'medicine',
-          attributes: ['id', 'name', 'unit'],
-        },
-      ],
+      include,
     });
 
+    console.log(`[getAllInventoryTransactions] where=${JSON.stringify(where)}, found=${rows.length} transactions`);
+
+    const mapped = (rows || []).map((r) => ({
+      id: r.Id,
+      medicineId: r.MaThuoc ?? null,  // Use MaThuoc field directly from transaction record
+      medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
+      type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+      quantity: r.SoLuong,
+      previousQuantity: r.SoLuongTruoc,
+      newQuantity: r.SoLuongSau,
+      reason: r.LyDo,
+      referenceType: r.LoaiThamChieu,
+      referenceId: r.MaThamChieu,
+      performedById: r.NguoiThucHienId,
+      performedBy: r.NguoiThucHien?.HoTen,
+      notes: r.GhiChu,
+      createdAt: r.ThoiGianTao,
+      updatedAt: null,
+    }));
+
+    console.log(`[getAllInventoryTransactions] returning ${mapped.length} mapped transactions`);
+
     return paginatedResponse(res, {
-      data: rows,
+      data: mapped,
       page,
       limit,
       total: count,

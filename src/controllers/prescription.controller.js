@@ -282,20 +282,25 @@ const dispensePrescription = asyncHandler(async (req, res) => {
       medicine.quantity = newQuantity;
       await medicine.save({ transaction });
 
-      // Create inventory transaction
+      // Create inventory transaction in legacy table (GiaoDichKho)
+      const batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id }, transaction });
+      const mapTypeToLoai = () => 2; // export
+
       await InventoryTransaction.create(
         {
-          medicineId: medicine.id,
-          medicineName: medicine.name,
-          type: INVENTORY_TRANSACTION_TYPES.EXPORT,
-          quantity: item.quantity,
-          previousQuantity,
-          newQuantity,
-          reason: `Xuất theo đơn thuốc ${prescription.id}`,
-          referenceType: 'Prescription',
-          referenceId: prescription.id,
-          performedById: req.user.id,
-          performedBy: req.user.fullName,
+          MaLoThuoc: batch ? batch.Id : null,
+          MaThuoc: medicine.id,  // Add direct medicine ID for easier querying
+          LoaiGiaoDich: mapTypeToLoai(),
+          SoLuong: item.quantity,
+          SoLuongTruoc: previousQuantity,
+          SoLuongSau: newQuantity,
+          LyDo: `Xuất theo đơn thuốc ${prescription.id}`,
+          LoaiThamChieu: 1,
+          // Only set MaThamChieu if prescription.id is a GUID; otherwise store in GhiChu
+          MaThamChieu: typeof prescription.id === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(prescription.id) ? prescription.id : null,
+          NguoiThucHienId: req.user.id,
+          GhiChu: typeof prescription.id === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(prescription.id) ? null : `ref:${prescription.id}`,
+          // Omit ThoiGianTao to use DB DEFAULT GETDATE() and avoid date conversion issues
         },
         { transaction }
       );

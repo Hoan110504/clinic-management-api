@@ -12,10 +12,19 @@ module.exports = (sequelize, DataTypes) => {
     },
     MaLoThuoc: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       field: 'MaLoThuoc',
       references: {
         model: 'QuanLyLoThuoc',
+        key: 'Id'
+      }
+    },
+    MaThuoc: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'MaThuoc',
+      references: {
+        model: 'Thuoc',
         key: 'Id'
       }
     },
@@ -58,7 +67,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     ThoiGianTao: {
       type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
+      defaultValue: sequelize.literal('GETDATE()'),
       field: 'ThoiGianTao'
     },
     GhiChu: {
