@@ -374,6 +374,122 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
   return successResponse(res, prescriptions);
 });
 
+/**
+ * Confirm prescription (Doctor confirms - status 0 -> 1)
+ * POST /api/prescriptions/:id/confirm
+ */
+const confirmPrescription = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  // Try to find in Prescription model first, then fallback to DonThuoc
+  let prescription = await Prescription.findByPk(id);
+  let isDonThuoc = false;
+
+  if (!prescription && DonThuoc) {
+    prescription = await DonThuoc.findByPk(id);
+    isDonThuoc = true;
+  }
+
+  if (!prescription) {
+    throw new NotFoundError('Không tìm thấy đơn thuốc');
+  }
+
+  // Check current status
+  const currentStatus = isDonThuoc ? prescription.TrangThai : prescription.status;
+  if (isDonThuoc && currentStatus !== 0) {
+    throw new BadRequestError('Chỉ có thể xác nhận đơn thuốc ở trạng thái "Đang kê"');
+  }
+
+  if (isDonThuoc) {
+    // Update DonThuoc model
+    await prescription.update({ TrangThai: 1 }); // CHO_PHAT_THUOC
+  } else {
+    // Update Prescription model (new one)
+    await prescription.update({ status: 1 });
+  }
+
+  return successResponse(res, prescription, 'Xác nhận kê đơn thành công');
+});
+
+/**
+ * Complete prescription (Pharmacist completes dispensing - status 1 -> 2)
+ * POST /api/prescriptions/:id/complete
+ */
+const completePrescription = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  // Try to find in Prescription model first, then fallback to DonThuoc
+  let prescription = await Prescription.findByPk(id);
+  let isDonThuoc = false;
+
+  if (!prescription && DonThuoc) {
+    prescription = await DonThuoc.findByPk(id);
+    isDonThuoc = true;
+  }
+
+  if (!prescription) {
+    throw new NotFoundError('Không tìm thấy đơn thuốc');
+  }
+
+  // Check current status
+  const currentStatus = isDonThuoc ? prescription.TrangThai : prescription.status;
+  if (isDonThuoc && currentStatus !== 1) {
+    throw new BadRequestError('Chỉ có thể hoàn thành đơn thuốc ở trạng thái "Chờ phát thuốc"');
+  }
+
+  const updateData = isDonThuoc 
+    ? { TrangThai: 2, ThoiGianPhatThuoc: new Date(), NguoiPhatThuocId: req.user.id }
+    : { status: 2, completedAt: new Date(), completedById: req.user.id };
+
+  if (isDonThuoc) {
+    await prescription.update(updateData);
+  } else {
+    await prescription.update(updateData);
+  }
+
+  return successResponse(res, prescription, 'Xác nhận phát thuốc thành công');
+});
+
+/**
+ * Cancel prescription (Doctor or Pharmacist cancels - status any -> 3)
+ * POST /api/prescriptions/:id/cancel
+ */
+const cancelPrescription = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  // Try to find in Prescription model first, then fallback to DonThuoc
+  let prescription = await Prescription.findByPk(id);
+  let isDonThuoc = false;
+
+  if (!prescription && DonThuoc) {
+    prescription = await DonThuoc.findByPk(id);
+    isDonThuoc = true;
+  }
+
+  if (!prescription) {
+    throw new NotFoundError('Không tìm thấy đơn thuốc');
+  }
+
+  // Check current status - cannot cancel if already completed
+  const currentStatus = isDonThuoc ? prescription.TrangThai : prescription.status;
+  if (isDonThuoc && currentStatus === 2) {
+    throw new BadRequestError('Không thể hủy đơn thuốc đã hoàn thành');
+  }
+
+  const updateData = isDonThuoc
+    ? { TrangThai: 3, GhiChu: reason || '' }
+    : { status: 3, cancelReason: reason || '', cancelledAt: new Date(), cancelledById: req.user.id };
+
+  if (isDonThuoc) {
+    await prescription.update(updateData);
+  } else {
+    await prescription.update(updateData);
+  }
+
+  return successResponse(res, prescription, 'Hủy đơn thuốc thành công');
+});
+
 export {
   getAllPrescriptions,
   getPrescriptionById,
@@ -382,4 +498,7 @@ export {
   dispensePrescription,
   deletePrescription,
   getPendingPrescriptions,
+  confirmPrescription,
+  completePrescription,
+  cancelPrescription,
 };

@@ -77,11 +77,12 @@ module.exports = (sequelize, DataTypes) => {
     ]
   });
 
-  // Enum cho TrangThai
+  // Enum cho TrangThai - 4 statuses for prescription workflow
   DonThuoc.TRANG_THAI = {
-    CHO_CAP_PHAT: 0,
-    DA_CAP_PHAT: 1,
-    DA_HUY: 2
+    DANG_KE: 0,              // Đang kê - being prescribed by doctor (draft or saved)
+    CHO_PHAT_THUOC: 1,       // Chờ phát thuốc - confirmed by doctor, waiting for pharmacist to dispense
+    HOAN_THANH: 2,           // Hoàn thành - dispensed by pharmacist
+    HUY: 3                    // Hủy - cancelled by doctor or pharmacist
   };
 
   DonThuoc.associate = (models) => {

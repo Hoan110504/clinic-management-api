@@ -96,4 +96,37 @@ router.post(
   prescriptionController.dispensePrescription
 );
 
+/**
+ * @route POST /api/prescriptions/:id/confirm
+ * @desc Confirm prescription (Doctor confirms)
+ * @access Doctor
+ */
+router.post(
+  '/:id/confirm',
+  authorize(ROLES.DOCTOR),
+  prescriptionController.confirmPrescription
+);
+
+/**
+ * @route POST /api/prescriptions/:id/complete
+ * @desc Complete prescription (Pharmacist completes dispensing)
+ * @access Pharmacist
+ */
+router.post(
+  '/:id/complete',
+  authorize(ROLES.PHARMACIST),
+  prescriptionController.completePrescription
+);
+
+/**
+ * @route POST /api/prescriptions/:id/cancel
+ * @desc Cancel prescription (Doctor or Pharmacist)
+ * @access Doctor, Pharmacist
+ */
+router.post(
+  '/:id/cancel',
+  authorize(ROLES.DOCTOR, ROLES.PHARMACIST),
+  prescriptionController.cancelPrescription
+);
+
 export default router;
