@@ -161,8 +161,54 @@ const createLabTest = asyncHandler(async (req, res) => {
   } = req.body;
 
   try {
-    // If legacy models exist (SQL schema uses Vietnamese tables), write into legacy flow
-    if (models && models.YeuCauDichVu && models.CanLamSang) {
+    // Only use legacy flow when legacy tables exist and references are resolvable.
+    // Frontend may send synthetic medicalRecordId (e.g. REC...) when no HoSoKham model is loaded.
+    let shouldUseLegacyFlow = false;
+    if (models && models.YeuCauDichVu && models.CanLamSang && medicalRecordId) {
+      try {
+        const rawTables = await sequelize.getQueryInterface().showAllTables();
+        const tableNames = (rawTables || [])
+          .map(t => (t && (t.tableName || t.name)) || t)
+          .map(String)
+          .map(s => s.toLowerCase());
+
+        const hasHoSoKhamTable = tableNames.includes('hosokham');
+        const hasNguoiDungTable = tableNames.includes('nguoidung');
+
+        if (hasHoSoKhamTable) {
+          const [hsRows] = await sequelize.query(
+            'SELECT TOP 1 [Id] FROM [dbo].[HoSoKham] WHERE [Id] = :id',
+            { replacements: { id: medicalRecordId } }
+          );
+
+          if ((hsRows || []).length > 0) {
+            if (!hasNguoiDungTable) {
+              shouldUseLegacyFlow = true;
+            } else {
+              const [userRows] = await sequelize.query(
+                'SELECT TOP 1 [Id] FROM [dbo].[NguoiDung] WHERE [Id] = :id',
+                { replacements: { id: req.user.id } }
+              );
+              shouldUseLegacyFlow = (userRows || []).length > 0;
+              if (!shouldUseLegacyFlow) {
+                console.warn('createLabTest: skip legacy flow because req.user.id is not found in NguoiDung', {
+                  userId: req.user.id,
+                });
+              }
+            }
+          } else {
+            console.warn('createLabTest: skip legacy flow because medicalRecordId is not found in HoSoKham', {
+              medicalRecordId,
+            });
+          }
+        }
+      } catch (legacyCheckErr) {
+        console.warn('createLabTest: failed pre-check for legacy flow, fallback to modern flow', legacyCheckErr && legacyCheckErr.message);
+      }
+    }
+
+    // If legacy models exist and references are valid, write into legacy flow
+    if (shouldUseLegacyFlow) {
       // Resolve BenhNhan.Id: incoming patientId may be BNxxx (english Patient) or GUID (BenhNhan.Id)
       const BenhNhan = models.BenhNhan;
       const YeuCauDichVu = models.YeuCauDichVu;
@@ -237,15 +283,6 @@ const createLabTest = asyncHandler(async (req, res) => {
         return createdResponse(res, responsePayload, 'Tạo xét nghiệm (fallback)');
       }
 
-      // Ensure medicalRecordId exists in HoSoKham
-      const HoSoKham = models.HoSoKham;
-      if (medicalRecordId) {
-        const foundHs = await HoSoKham.findByPk(medicalRecordId);
-        if (!foundHs) {
-          throw new BadRequestError('Hồ sơ khám (medicalRecordId) không tồn tại');
-        }
-      }
-
       // Create YeuCauDichVu (service order)
       const yc = await YeuCauDichVu.create({
         MaHoSoKham: medicalRecordId || null,
@@ -303,15 +340,58 @@ const createLabTest = asyncHandler(async (req, res) => {
       }, 'Tạo chỉ định cận lâm sàng thành công');
     }
 
+    // Resolve patientId more flexibly to accept PK, userId or idNumber.
+    // If not found but `patientName` is provided, create a lightweight Patient
+    // so the lab test can be recorded without blocking the frontend action.
+    let resolvedPatientId = patientId;
+    if (patientId) {
+      let foundPatient = await Patient.findByPk(patientId);
+      if (!foundPatient) {
+        foundPatient = await Patient.findOne({ where: { userId: patientId } });
+      }
+      if (!foundPatient) {
+        foundPatient = await Patient.findOne({ where: { idNumber: patientId } });
+      }
+
+      if (!foundPatient && patientName) {
+        try {
+          const newPatient = await Patient.create({ fullName: patientName });
+          foundPatient = newPatient;
+        } catch (e) {
+          console.warn('createLabTest: failed to create patient fallback', e && e.message);
+        }
+      }
+
+      if (foundPatient) {
+        resolvedPatientId = foundPatient.id;
+      }
+    }
+
+    // If medicalRecordId is provided but not found, clear it so creation can proceed.
+    // This avoids hard failures from mismatched ids sent by the frontend.
+    let resolvedMedicalRecordId = medicalRecordId;
+    if (medicalRecordId) {
+      try {
+        const foundMR = await MedicalRecord.findByPk(medicalRecordId);
+        if (!foundMR) {
+          console.warn('createLabTest: provided medicalRecordId not found, clearing it before create', { medicalRecordId });
+          resolvedMedicalRecordId = null;
+        }
+      } catch (e) {
+        console.warn('createLabTest: error checking medicalRecordId', e && e.message);
+        resolvedMedicalRecordId = null;
+      }
+    }
+
     // Pre-generate id to avoid relying on MSSQL OUTPUT when Sequelize expects inserted row
     const generatedId = `XN${Date.now().toString().slice(-10)}`;
     const payload = {
       id: generatedId,
-      patientId,
+      patientId: resolvedPatientId,
       patientName,
       testType,
       testName,
-      medicalRecordId,
+      medicalRecordId: resolvedMedicalRecordId,
       serviceOrderId,
       orderedBy: req.user.fullName,
       orderedById: req.user.id,
