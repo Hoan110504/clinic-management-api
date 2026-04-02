@@ -2,7 +2,7 @@
  * Prescription Controller
  * Handles prescription operations
  */
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction, DonThuoc } from '../models/index.js';
 import { sequelize } from '../models/database.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
@@ -176,13 +176,14 @@ const createPrescription = asyncHandler(async (req, res) => {
     items,
     diagnosis,
     notes,
+    prescriptionCode,
   } = req.body;
 
-  // Get doctor info
+  // Extract doctor info - ignore status and patientPhone as they're not in model
   let doctorId = req.body.doctorId;
   let doctorName = req.body.doctorName;
 
-  if (!doctorId && req.user.role === ROLES.DOCTOR) {
+  if (!doctorId && req.user && req.user.role === ROLES.DOCTOR) {
     doctorId = req.user.id;
     doctorName = req.user.fullName;
   }
@@ -191,8 +192,33 @@ const createPrescription = asyncHandler(async (req, res) => {
     throw new BadRequestError('ID bác sĩ không được để trống');
   }
 
+  // Validate items array exists and not empty
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    throw new BadRequestError('Đơn thuốc phải có ít nhất 1 loại thuốc');
+  }
+
+  const sanitizedItems = items.map(item => ({
+    medicineId: item.medicineId,
+    medicineName: item.medicineName || '',
+    unit: item.unit || '',
+    price: Number(item.price) || 0,
+    dosage: String(item.dosage || ''),
+    frequency: String(item.frequency || ''),
+    duration: Number(item.duration) || 0,
+    quantity: Number(item.quantity) || 0,
+    instructions: String(item.instructions || '')
+  }));
+
+  // Generate prescription ID from code or create new one
+  const prescriptionId = prescriptionCode || `RX-${Date.now()}`;
+
+  // Validate required fields
+  if (!medicalRecordId || !patientId || !patientName) {
+    throw new BadRequestError('Thiếu thông tin bệnh nhân (medicalRecordId, patientId, patientName)');
+  }
+
   // Validate medicine availability
-  for (const item of items) {
+  for (const item of sanitizedItems) {
     const medicine = await Medicine.findByPk(item.medicineId);
     if (!medicine) {
       throw new NotFoundError(`Không tìm thấy thuốc: ${item.medicineName}`);
@@ -204,20 +230,87 @@ const createPrescription = asyncHandler(async (req, res) => {
     }
   }
 
-  const prescription = await Prescription.create({
-    medicalRecordId,
-    patientId,
-    patientName,
-    doctorId,
-    doctorName,
-    prescriptionDate: new Date(),
-    items,
-    diagnosis,
-    notes,
-    isDispensed: false,
-  });
+  try {
+    // Ensure prescriptionDate is a valid Date object
+    const prescriptionDate = new Date();
+    if (isNaN(prescriptionDate.getTime())) {
+      throw new BadRequestError('Ngày kê đơn không hợp lệ');
+    }
 
-  return createdResponse(res, prescription, 'Tạo đơn thuốc thành công');
+    const payload = {
+      id: prescriptionId,
+      medicalRecordId: String(medicalRecordId),
+      patientId: String(patientId),
+      patientName: String(patientName),
+      doctorId: String(doctorId),
+      doctorName: String(doctorName),
+      // omit explicit prescriptionDate so model/DB default (NOW / GETDATE()) is used
+      items: sanitizedItems, // Will be JSON.stringify by model setter
+      diagnosis: diagnosis ? String(diagnosis) : null,
+      notes: notes ? String(notes) : null,
+      isDispensed: false,
+    };
+
+    // Verbose payload logging to help debug MSSQL date conversion errors
+    try {
+      const safePayloadString = JSON.stringify(
+        payload,
+        (key, value) => (value instanceof Date ? value.toISOString() : value),
+        2
+      );
+      console.log('Creating prescription - full payload:', safePayloadString);
+      console.log('Sanitized items:', JSON.stringify(sanitizedItems, null, 2));
+    } catch (logErr) {
+      console.warn('Failed to stringify prescription payload for logging', logErr);
+      console.log('Partial payload:', {
+        id: payload.id,
+        medicalRecordId: payload.medicalRecordId,
+        doctorId: payload.doctorId,
+        itemsCount: sanitizedItems.length,
+      });
+    }
+
+    // Use raw INSERT with GETUTCDATE() to avoid MSSQL date-string conversion issues
+    await sequelize.query(
+      `
+      INSERT INTO [dbo].[prescriptions]
+        ([id], [medical_record_id], [patient_id], [patient_name], [doctor_id], [doctor_name], [items], [diagnosis], [notes], [is_dispensed], [created_at], [updated_at])
+      VALUES
+        (:id, :medicalRecordId, :patientId, :patientName, :doctorId, :doctorName, :items, :diagnosis, :notes, :isDispensed, GETUTCDATE(), GETUTCDATE())
+      `,
+      {
+        replacements: {
+          id: payload.id,
+          medicalRecordId: payload.medicalRecordId,
+          patientId: payload.patientId,
+          patientName: payload.patientName,
+          doctorId: payload.doctorId,
+          doctorName: payload.doctorName,
+          items: JSON.stringify(payload.items || []),
+          diagnosis: payload.diagnosis,
+          notes: payload.notes,
+          isDispensed: payload.isDispensed ? 1 : 0,
+        },
+        type: QueryTypes.INSERT,
+      }
+    );
+
+    const prescription = await Prescription.findByPk(payload.id);
+
+    return createdResponse(res, prescription, 'Tạo đơn thuốc thành công');
+  } catch (dbErr) {
+    console.error('Database error creating prescription:', {
+      error: dbErr.message,
+      code: dbErr.code,
+      sql: dbErr.sql,
+      sequelizeErr: dbErr.original?.message,
+      prescriptionId,
+      medicalRecordId,
+      patientId,
+      doctorId
+    });
+    throw dbErr;
+  }
 });
 
 /**
@@ -262,17 +355,37 @@ const dispensePrescription = asyncHandler(async (req, res) => {
 
   try {
     // Deduct medicine quantities and create inventory transactions
-    for (const item of prescription.items) {
+    // Merge pharmacist-provided dispense fields with doctor's prescription items.
+    // Doctor's `medicineName` and default `quantity` come from the prescription; pharmacist
+    // may provide additional fields like `batchId`, `price`, or override `quantity`.
+    const dispenseItems = Array.isArray(req.body.dispenseItems) ? req.body.dispenseItems : [];
+
+    const mergedItems = prescription.items.map(pItem => {
+      const provided = dispenseItems.find(di => String(di.medicineId) === String(pItem.medicineId)) || {};
+      return {
+        medicineId: pItem.medicineId,
+        // Always prefer doctor's medicineName as source-of-truth for name
+        medicineName: pItem.medicineName || provided.medicineName || '',
+        // Quantity: pharmacist can override, otherwise use doctor's prescribed quantity
+        quantity: Number(provided.quantity ?? pItem.quantity) || 0,
+        batchId: provided.batchId || null,
+        price: Number(provided.price ?? pItem.price ?? 0) || 0,
+        // Any other pharmacist-supplied fields can be added here
+      };
+    });
+
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const mapTypeToLoai = () => 2; // export
+
+    for (const item of mergedItems) {
       const medicine = await Medicine.findByPk(item.medicineId, { transaction });
-      
+
       if (!medicine) {
         throw new NotFoundError(`Không tìm thấy thuốc: ${item.medicineName}`);
       }
 
       if (medicine.quantity < item.quantity) {
-        throw new BadRequestError(
-          `Thuốc ${medicine.name} không đủ số lượng (còn ${medicine.quantity})`
-        );
+        throw new BadRequestError(`Thuốc ${medicine.name} không đủ số lượng (còn ${medicine.quantity})`);
       }
 
       const previousQuantity = medicine.quantity;
@@ -284,22 +397,20 @@ const dispensePrescription = asyncHandler(async (req, res) => {
 
       // Create inventory transaction in legacy table (GiaoDichKho)
       const batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id }, transaction });
-      const mapTypeToLoai = () => 2; // export
 
       await InventoryTransaction.create(
         {
-          MaLoThuoc: batch ? batch.Id : null,
-          MaThuoc: medicine.id,  // Add direct medicine ID for easier querying
+          MaLoThuoc: item.batchId || (batch ? batch.Id : null),
+          MaThuoc: medicine.id,
           LoaiGiaoDich: mapTypeToLoai(),
           SoLuong: item.quantity,
           SoLuongTruoc: previousQuantity,
           SoLuongSau: newQuantity,
           LyDo: `Xuất theo đơn thuốc ${prescription.id}`,
           LoaiThamChieu: 1,
-          // Only set MaThamChieu if prescription.id is a GUID; otherwise store in GhiChu
-          MaThamChieu: typeof prescription.id === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(prescription.id) ? prescription.id : null,
+          MaThamChieu: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? prescription.id : null,
           NguoiThucHienId: req.user.id,
-          GhiChu: typeof prescription.id === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(prescription.id) ? null : `ref:${prescription.id}`,
+          GhiChu: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? null : `ref:${prescription.id}`,
           // Omit ThoiGianTao to use DB DEFAULT GETDATE() and avoid date conversion issues
         },
         { transaction }
