@@ -533,8 +533,15 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
   }
 
   // Role-based filtering
+  // Doctors should see:
+  // 1. Appointments assigned to them
+  // 2. All waiting (status=2) appointments (receptionist check-ins), even if not assigned
   if (req.user.role === ROLES.DOCTOR) {
-    where.assignedDoctorId = req.user.id;
+    const waitingCode = labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
+    where[Op.or] = [
+      { assignedDoctorId: req.user.id },
+      { status: waitingCode }
+    ];
   }
 
   const appointments = await Appointment.findAll({

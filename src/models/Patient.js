@@ -135,6 +135,10 @@ export default (sequelize) => {
     if (models && models.MedicalRecord) {
       Patient.hasMany(models.MedicalRecord, { foreignKey: 'patientId', as: 'medicalRecords' });
     }
+    // Link to MedicalExamination when present
+    if (models && models.MedicalExamination) {
+      Patient.hasMany(models.MedicalExamination, { foreignKey: 'PatientID', as: 'examinations' });
+    }
   };
 
   return Patient;
