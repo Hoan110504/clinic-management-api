@@ -76,7 +76,10 @@ export const Payment = models.Payment;
 export const HoaDon = models.HoaDon;
 export const ServiceOrder = models.ServiceOrder;
 // InventoryTransaction: prefer explicit InventoryTransaction model, fall back to legacy GiaoDichKho
-export const GiaoDichKho = models.GiaoDichKho;
-// Force InventoryTransaction to use legacy GiaoDichKho to operate on the existing DB table
-export const InventoryTransaction = models.GiaoDichKho;
+//export const GiaoDichKho = models.GiaoDichKho;
+// Prefer new InventoryTransaction model when present; otherwise fall back to legacy GiaoDichKho
+export const InventoryTransaction = models.InventoryTransaction;
+
+// Export MedicineBatch if available
+export const MedicineBatch = models.MedicineBatch;
 

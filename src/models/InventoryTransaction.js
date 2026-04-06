@@ -1,114 +1,139 @@
 /**
- * Inventory Transaction Model
- * Handles medicine inventory in/out transactions
+ * InventoryTransaction Model
+ * Manage medicine stock import/export transactions
  */
+
 import { DataTypes } from 'sequelize';
-import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
 
 export default (sequelize) => {
   const InventoryTransaction = sequelize.define(
     'InventoryTransaction',
     {
-      id: {
-        type: DataTypes.STRING(20),
+      Id: {
+        type: DataTypes.UUID,
+        defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
-        allowNull: false,
+        field: 'Id',
       },
-      medicineId: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-        field: 'medicine_id',
-        references: {
-          model: 'Thuoc',
-          key: 'Id',
-        },
-      },
-      medicineName: {
-        type: DataTypes.STRING(200),
-        allowNull: false,
-        field: 'medicine_name',
-      },
-      type: {
-        type: DataTypes.ENUM(...Object.values(INVENTORY_TRANSACTION_TYPES)),
-        allowNull: false,
-      },
-      quantity: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-      },
-      previousQuantity: {
-        type: DataTypes.INTEGER,
-        allowNull: true,
-        field: 'previous_quantity',
-      },
-      newQuantity: {
-        type: DataTypes.INTEGER,
-        allowNull: true,
-        field: 'new_quantity',
-      },
-      reason: {
-        type: DataTypes.STRING(255),
-        allowNull: true,
-      },
-      referenceType: {
-        type: DataTypes.STRING(50),
-        allowNull: true,
-        field: 'reference_type',
-      },
-      referenceId: {
-        type: DataTypes.STRING(20),
-        allowNull: true,
-        field: 'reference_id',
-      },
-      performedById: {
+
+      MedicineBatchId: {
         type: DataTypes.UUID,
         allowNull: true,
-        field: 'performed_by_id',
+        references: {
+          model: 'MedicineBatch',
+          key: 'Id',
+        },
+        field: 'MedicineBatchId',
+      },
+
+      MedicineId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'Medicine',
+          key: 'Id',
+        },
+        field: 'MedicineId',
+      },
+
+      TransactionType: {
+        type: DataTypes.TINYINT,
+        field: 'TransactionType',
+      },
+
+      Quantity: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        field: 'Quantity',
+      },
+
+      QuantityBefore: {
+        type: DataTypes.INTEGER,
+        field: 'QuantityBefore',
+      },
+
+      QuantityAfter: {
+        type: DataTypes.INTEGER,
+        field: 'QuantityAfter',
+      },
+
+      Reason: {
+        type: DataTypes.STRING(255),
+        field: 'Reason',
+      },
+
+      ReferenceType: {
+        type: DataTypes.TINYINT,
+        field: 'ReferenceType',
+      },
+
+      ReferenceId: {
+        type: DataTypes.UUID,
+        field: 'ReferenceId',
+      },
+
+      PerformedByUserId: {
+        type: DataTypes.CHAR(36), // vì bảng users.id của bạn là char(36)
         references: {
           model: 'users',
           key: 'id',
         },
+        field: 'PerformedByUserId',
       },
-      performedBy: {
-        type: DataTypes.STRING(100),
-        allowNull: true,
-        field: 'performed_by',
+
+      CreatedAt: {
+        type: DataTypes.DATE,
+        defaultValue: sequelize.literal('GETDATE()'),
+        field: 'CreatedAt',
       },
-      notes: {
+
+      Note: {
         type: DataTypes.TEXT,
-        allowNull: true,
+        field: 'Note',
       },
     },
     {
-      tableName: 'inventory_transactions',
-      timestamps: true,
-      paranoid: false,
+      tableName: 'InventoryTransaction',
+      timestamps: false,
       indexes: [
-        { fields: ['medicine_id'] },
-        { fields: ['type'] },
-        { fields: ['created_at'] },
-        { fields: ['reference_type', 'reference_id'] },
+        { fields: ['MedicineBatchId'] },
+        { fields: ['TransactionType'] },
+        { fields: ['CreatedAt'] },
       ],
-      hooks: {
-        beforeCreate: async (transaction) => {
-          if (!transaction.id) {
-            const InventoryTransaction = sequelize.models.InventoryTransaction;
-            const lastTransaction = await InventoryTransaction.findOne({
-              order: [['createdAt', 'DESC']],
-            });
-            let nextNum = 1;
-            if (lastTransaction && lastTransaction.id) {
-              const match = lastTransaction.id.match(/INV(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
-              }
-            }
-            transaction.id = `INV${String(nextNum).padStart(3, '0')}`;
-          }
-        },
-      },
     }
   );
+
+  // ENUM Transaction Type
+  InventoryTransaction.TRANSACTION_TYPE = {
+    IMPORT: 1,     // nhập kho
+    EXPORT: 2,     // xuất kho
+    ADJUSTMENT: 3, // điều chỉnh
+    RETURN: 4,     // trả lại
+  };
+
+  // ENUM Reference Type
+  InventoryTransaction.REFERENCE_TYPE = {
+    PRESCRIPTION: 1,
+    IMPORT_RECEIPT: 2,
+    ADJUSTMENT: 3,
+  };
+
+  InventoryTransaction.associate = (models) => {
+    InventoryTransaction.belongsTo(models.MedicineBatch, {
+      foreignKey: 'MedicineBatchId',
+      as: 'batch',
+    });
+
+    InventoryTransaction.belongsTo(models.Medicine, {
+      foreignKey: 'MedicineId',
+      as: 'medicine',
+    });
+
+    InventoryTransaction.belongsTo(models.User, {
+      foreignKey: 'PerformedByUserId',
+      as: 'performedBy',
+    });
+  };
 
   return InventoryTransaction;
 };

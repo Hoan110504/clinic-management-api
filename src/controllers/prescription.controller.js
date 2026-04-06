@@ -217,16 +217,11 @@ const createPrescription = asyncHandler(async (req, res) => {
     throw new BadRequestError('Thiếu thông tin bệnh nhân (medicalRecordId, patientId, patientName)');
   }
 
-  // Validate medicine availability
+  // Validate medicine exists (inventory availability will be checked at dispensing time)
   for (const item of sanitizedItems) {
     const medicine = await Medicine.findByPk(item.medicineId);
     if (!medicine) {
       throw new NotFoundError(`Không tìm thấy thuốc: ${item.medicineName}`);
-    }
-    if (medicine.quantity < item.quantity) {
-      throw new BadRequestError(
-        `Thuốc ${medicine.name} không đủ số lượng (còn ${medicine.quantity})`
-      );
     }
   }
 
@@ -384,34 +379,39 @@ const dispensePrescription = asyncHandler(async (req, res) => {
         throw new NotFoundError(`Không tìm thấy thuốc: ${item.medicineName}`);
       }
 
-      if (medicine.quantity < item.quantity) {
-        throw new BadRequestError(`Thuốc ${medicine.name} không đủ số lượng (còn ${medicine.quantity})`);
+      const latestTx = await InventoryTransaction.findOne({
+        where: { MedicineId: medicine.Id },
+        order: [['CreatedAt', 'DESC']],
+        transaction,
+      });
+
+      const previousQuantity = Number.isFinite(Number(latestTx?.QuantityAfter))
+        ? Number(latestTx.QuantityAfter)
+        : 0;
+
+      if (previousQuantity < item.quantity) {
+        throw new BadRequestError(`Thuốc ${medicine.Name || item.medicineName} không đủ số lượng (còn ${previousQuantity})`);
       }
 
-      const previousQuantity = medicine.quantity;
       const newQuantity = previousQuantity - item.quantity;
 
-      // Update medicine quantity
-      medicine.quantity = newQuantity;
-      await medicine.save({ transaction });
-
-      // Create inventory transaction in legacy table (GiaoDichKho)
-      const batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id }, transaction });
+      // Create inventory transaction using new schema
+      const batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id }, transaction });
 
       await InventoryTransaction.create(
         {
-          MaLoThuoc: item.batchId || (batch ? batch.Id : null),
-          MaThuoc: medicine.id,
-          LoaiGiaoDich: mapTypeToLoai(),
-          SoLuong: item.quantity,
-          SoLuongTruoc: previousQuantity,
-          SoLuongSau: newQuantity,
-          LyDo: `Xuất theo đơn thuốc ${prescription.id}`,
-          LoaiThamChieu: 1,
-          MaThamChieu: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? prescription.id : null,
-          NguoiThucHienId: req.user.id,
-          GhiChu: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? null : `ref:${prescription.id}`,
-          // Omit ThoiGianTao to use DB DEFAULT GETDATE() and avoid date conversion issues
+          MedicineBatchId: item.batchId || (batch ? batch.Id : null),
+          MedicineId: medicine.Id,
+          TransactionType: mapTypeToLoai(),
+          Quantity: item.quantity,
+          QuantityBefore: previousQuantity,
+          QuantityAfter: newQuantity,
+          Reason: `Xuất theo đơn thuốc ${prescription.id}`,
+          ReferenceType: 1,
+          ReferenceId: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? prescription.id : null,
+          PerformedByUserId: req.user.id,
+          Note: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? null : `ref:${prescription.id}`,
+          // Omit CreatedAt to use DB DEFAULT GETDATE()
         },
         { transaction }
       );

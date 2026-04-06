@@ -106,24 +106,24 @@ const getAllMedicines = asyncHandler(async (req, res) => {
   const where = {};
   // Map query params to available columns in DB (Thuoc): TenThuoc, DonVi, NhomThuoc, TrangThai
   if (isActive !== undefined) {
-    where.isActive = isActive === 'true';
+    where.IsActive = isActive === 'true';
   } else {
-    where.isActive = true;
+    where.IsActive = true;
   }
 
   if (category) {
-    where.category = category;
+    where.Category = category;
   }
 
   if (search) {
-    where[Op.or] = [
-      { name: { [Op.like]: `%${search}%` } },
-      { id: { [Op.like]: `%${search}%` } },
-    ];
+    const isNumeric = /^\d+$/.test(String(search));
+    where[Op.or] = isNumeric
+      ? [{ Name: { [Op.like]: `%${search}%` } }, { Id: Number(search) }]
+      : [{ Name: { [Op.like]: `%${search}%` } }];
   }
 
-  // Simple ordering fallback (default to id:desc for global descending)
-  const order = parseSort(sort, ['id', 'name', 'category', 'unit', 'price'], 'id:desc');
+  // Simple ordering fallback (default to Id:desc for global descending)
+  const order = parseSort(sort, ['Id', 'Name', 'Category', 'Unit', 'Price'], 'Id:desc');
 
   try {
     const { count, rows } = await Medicine.findAndCountAll({
@@ -131,17 +131,17 @@ const getAllMedicines = asyncHandler(async (req, res) => {
       order,
       limit,
       offset,
-      attributes: ['id', 'name', 'unit', 'category', 'price', 'isActive'],
+      attributes: ['Id', 'Name', 'Unit', 'Category', 'Price', 'IsActive'],
     });
 
     // Normalize result shape to { id, name, category, unit, price, isActive }
     const data = (rows || []).map(r => ({
-      id: r.id,
-      name: r.name,
-      category: r.category,
-      unit: r.unit,
-      price: r.price,
-      isActive: r.isActive,
+      id: r.Id,
+      name: r.Name,
+      category: r.Category,
+      unit: r.Unit,
+      price: r.Price,
+      isActive: r.IsActive,
     }));
 
     return paginatedResponse(res, {
@@ -219,41 +219,29 @@ const createMedicine = asyncHandler(async (req, res) => {
   } = req.body;
 
   const medicine = await Medicine.create({
-    name,
-    genericName,
-    unit,
-    price,
-    quantity: quantity || 0,
-    minQuantity: minQuantity || 0,
-    category,
-    supplier,
-    manufacturer,
-    batchNumber,
-    expiryDate,
-    manufacturingDate,
-    description,
-    dosageInstructions,
-    sideEffects,
-    contraindications,
-    storageConditions,
+    Name: name,
+    Unit: unit,
+    Price: price,
+    Category: category,
+    IsActive: true,
   });
 
   // Create initial inventory transaction if quantity > 0
   if (quantity > 0) {
-    const batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id } });
+    const batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id } });
     await InventoryTransaction.create({
-      MaLoThuoc: batch ? batch.Id : null,
-      MaThuoc: medicine.id,  // Add direct medicine ID for easier querying
-      LoaiGiaoDich: 1,
-      SoLuong: quantity,
-      SoLuongTruoc: 0,
-      SoLuongSau: quantity,
-      LyDo: 'Tạo mới thuốc',
-      LoaiThamChieu: null,
-      MaThamChieu: null,
-      NguoiThucHienId: req.user.id,
-      GhiChu: null,
-      ThoiGianTao: new Date(),
+      MedicineBatchId: batch ? batch.Id : null,
+      MedicineId: medicine.Id,
+      TransactionType: InventoryTransaction.TRANSACTION_TYPE.IMPORT || 1,
+      Quantity: quantity,
+      QuantityBefore: 0,
+      QuantityAfter: quantity,
+      Reason: 'Tạo mới thuốc',
+      ReferenceType: null,
+      ReferenceId: null,
+      PerformedByUserId: req.user.id,
+      Note: null,
+      CreatedAt: new Date(),
     });
   }
 
@@ -273,10 +261,17 @@ const updateMedicine = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy thuốc');
   }
 
-  // Don't allow direct quantity update - use inventory transactions
+  // Don't allow direct quantity update - stock is tracked by transactions
   delete updateData.quantity;
 
-  await medicine.update(updateData);
+  const mappedUpdate = {};
+  if (Object.prototype.hasOwnProperty.call(updateData, 'name')) mappedUpdate.Name = updateData.name;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'unit')) mappedUpdate.Unit = updateData.unit;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'category')) mappedUpdate.Category = updateData.category;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'price')) mappedUpdate.Price = updateData.price;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'isActive')) mappedUpdate.IsActive = updateData.isActive;
+
+  await medicine.update(mappedUpdate);
 
   return successResponse(res, medicine, 'Cập nhật thuốc thành công');
 });
@@ -322,38 +317,25 @@ const adjustInventory = asyncHandler(async (req, res) => {
     throw new BadRequestError('Số lô (batchNumber) là bắt buộc khi nhập kho');
   }
 
-  // Try to find latest transaction joined to batch -> QuanLyLoThuoc to retrieve batch-level new quantity.
-  // If the legacy table QuanLyLoThuoc does not exist, fall back to medicine.quantity.
+  // Try to find latest transaction for this medicine (new InventoryTransaction schema).
+  // If none found, fall back to medicine.quantity.
   let latestTransaction = null;
   try {
     latestTransaction = await InventoryTransaction.findOne({
+      where: { MedicineId: medicine.Id },
       include: [
-        {
-          model: sequelize.models.QuanLyLoThuoc,
-          as: 'LoThuoc',
-          where: { MaThuoc: medicine.id },
-          required: true,
-        },
-        {
-          model: sequelize.models.NguoiDung,
-          as: 'NguoiThucHien',
-          required: false,
-        },
+        { model: sequelize.models.MedicineBatch, as: 'batch', required: false },
+        { model: sequelize.models.User, as: 'performedBy', required: false },
       ],
-      order: [['ThoiGianTao', 'DESC']],
+      order: [['CreatedAt', 'DESC']],
     });
   } catch (err) {
-    // If the DB doesn't have the legacy batch table, log and continue with fallback
-    if (err && err.message && err.message.includes('Invalid object name')) {
-      console.warn('Fallback: QuanLyLoThuoc not present, using Medicine.quantity as previousQuantity');
-      latestTransaction = null;
-    } else {
-      throw err;
-    }
+    console.warn('latestTransaction lookup failed, falling back to medicine.quantity', err?.message || err);
+    latestTransaction = null;
   }
 
-  const previousQuantity = Number.isFinite(Number(latestTransaction?.SoLuongSau))
-    ? Number(latestTransaction.SoLuongSau)
+  const previousQuantity = Number.isFinite(Number(latestTransaction?.QuantityAfter))
+    ? Number(latestTransaction.QuantityAfter)
     : Number(medicine.quantity || 0);
   let newQuantity;
 
@@ -385,7 +367,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
   try {
     // If this is an import and a batch code (`soLo`) was provided, try to find or create that batch.
     if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && soLo) {
-      batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id, SoLo: soLo } });
+      batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
       if (!batch) {
         // Parse incoming date strings safely into Date objects (or null) to avoid SQL conversion errors.
         const parseDateSafe = (v) => {
@@ -397,31 +379,27 @@ const adjustInventory = asyncHandler(async (req, res) => {
         };
 
         // Create a new batch record. Set SoLuongTon to parsedQuantity by default.
-        batch = await sequelize.models.QuanLyLoThuoc.create({
-          MaThuoc: medicine.id,
-          SoLo: soLo,
-          HanSuDung: parseDateSafe(hanSuDung),
-          NgaySanXuat: parseDateSafe(ngaySanXuat),
-          SoLuongTon: parsedQuantity,
-          GiaNhap: giaNhap || null,
-          TrangThai: 1,
+        batch = await sequelize.models.MedicineBatch.create({
+          MedicineId: medicine.Id,
+          BatchNumber: soLo,
+          ExpiryDate: parseDateSafe(hanSuDung),
+          ManufactureDate: parseDateSafe(ngaySanXuat),
+          QuantityInStock: parsedQuantity,
+          ImportPrice: giaNhap || null,
+          Status: 1,
         });
       } else {
-        // If batch exists and this is import, increment its SoLuongTon
-        batch.SoLuongTon = Number(batch.SoLuongTon || 0) + parsedQuantity;
+        // If batch exists and this is import, increment its QuantityInStock
+        batch.QuantityInStock = Number(batch.QuantityInStock || 0) + parsedQuantity;
         await batch.save();
       }
     } else {
       // Default behavior: try to find any batch for this medicine
-      batch = await sequelize.models.QuanLyLoThuoc.findOne({ where: { MaThuoc: medicine.id } });
+      batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id } });
     }
   } catch (err) {
-    if (err && err.message && err.message.includes('Invalid object name')) {
-      // QuanLyLoThuoc missing — continue with null batch
-      batch = null;
-    } else {
-      throw err;
-    }
+    // If any error occurs during batch ops, surface it
+    throw err;
   }
 
   const mapTypeToLoai = (t) => {
@@ -452,26 +430,22 @@ const adjustInventory = asyncHandler(async (req, res) => {
   }
 
   const created = await InventoryTransaction.create({
-    MaLoThuoc: batch ? batch.Id : null,
-    MaThuoc: medicine.id,  // Add direct medicine ID for easier querying
-    LoaiGiaoDich: mapTypeToLoai(type),
-    SoLuong: parsedQuantity,
-    SoLuongTruoc: previousQuantity,
-    SoLuongSau: newQuantity,
-    LyDo: reason,
-    LoaiThamChieu: mapRefType(referenceType),
-    // MaThamChieu is a UNIQUEIDENTIFIER. Only set it when referenceId is a valid GUID.
-    // If referenceId is not a GUID, embed it in the notes JSON under `referenceText` so
-    // frontend can still read metadata (expiryDate, minThreshold) without JSON parsing errors.
-    MaThamChieu: (() => {
+    MedicineBatchId: batch ? batch.Id : null,
+    MedicineId: medicine.Id,
+    TransactionType: mapTypeToLoai(type),
+    Quantity: parsedQuantity,
+    QuantityBefore: previousQuantity,
+    QuantityAfter: newQuantity,
+    Reason: reason,
+    ReferenceType: mapRefType(referenceType),
+    ReferenceId: (() => {
       const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
       return isGuid(referenceId) ? referenceId : null;
     })(),
-    NguoiThucHienId: req.user.id,
-    GhiChu: (() => {
+    PerformedByUserId: req.user.id,
+    Note: (() => {
       if (!notes && !referenceId) return null;
       const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
-      // Try to parse incoming notes as JSON; if not JSON, keep raw text under _raw
       let base = {};
       if (notes) {
         try {
@@ -482,13 +456,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
           base._raw = String(notes);
         }
       }
-
-      // If referenceId is non-GUID, attach it to the JSON so we don't corrupt the JSON string
-      if (referenceId && !isGuid(referenceId)) {
-        base.referenceText = String(referenceId);
-      }
-
-      // If base contains only raw text, return the raw text; otherwise return JSON string
+      if (referenceId && !isGuid(referenceId)) base.referenceText = String(referenceId);
       const keys = Object.keys(base);
       if (keys.length === 1 && keys[0] === '_raw') return base._raw || null;
       try {
@@ -497,37 +465,33 @@ const adjustInventory = asyncHandler(async (req, res) => {
         return notes || null;
       }
     })(),
-    // Omit ThoiGianTao to use DB DEFAULT GETDATE() and avoid date conversion issues
   });
 
   // Reload the created record to get the server-generated ThoiGianTao timestamp
   await created.reload();
 
   // Normalize created transaction to API shape expected by frontend
-  const performerLookup = await buildPerformerLookup([created.NguoiThucHienId, req.user?.id]);
-  const performerKey = normalizeIdKey(created.NguoiThucHienId || req.user?.id);
+  const performerLookup = await buildPerformerLookup([created.PerformedByUserId, req.user?.id]);
+  const performerKey = normalizeIdKey(created.PerformedByUserId || req.user?.id);
   const performer = performerLookup.get(performerKey) || {};
 
   const transaction = {
     id: created.Id,
-    medicineId: medicine.id,
-    medicineName: medicine.name,
+    medicineId: medicine.Id,
+    medicineName: medicine.Name,
     type,
-    quantity: created.SoLuong,
-    previousQuantity: created.SoLuongTruoc,
-    newQuantity: created.SoLuongSau,
-    reason: created.LyDo,
-    referenceType: referenceType || null,
-    // Prefer returning the original referenceId provided by the API caller when present;
-    // fallback to the stored MaThamChieu (GUID) otherwise.
-    referenceId: referenceId || created.MaThamChieu,
-    performedById: created.NguoiThucHienId,
+    quantity: created.Quantity,
+    previousQuantity: created.QuantityBefore,
+    newQuantity: created.QuantityAfter,
+    reason: created.Reason,
+    referenceType: referenceType || created.ReferenceType || null,
+    referenceId: referenceId || created.ReferenceId || null,
+    performedById: created.PerformedByUserId,
     performedBy: performer.name || req.user.fullName,
     performerCode: performer.code || null,
     performerDisplay: performer.display || formatPerformerDisplay(performer.name || req.user.fullName, performer.code),
-    notes: created.GhiChu,
-    // Use the timestamp from the database (now populated after reload)
-    createdAt: created.ThoiGianTao,
+    notes: created.Note,
+    createdAt: created.CreatedAt,
     updatedAt: null,
   };
 
@@ -550,8 +514,8 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const { type, fromDate, toDate } = req.query;
 
-  // Build where clause to filter by medicine directly
-  const where = { MaThuoc: id };
+  // Build where clause to filter by medicine directly (new schema)
+  const where = { MedicineId: id };
   
   if (type) {
     // map API type string to numeric LoaiGiaoDich where possible
@@ -567,11 +531,11 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
           return null;
       }
     };
-    where.LoaiGiaoDich = mapType(type);
+    where.TransactionType = mapType(type);
   }
 
   if (fromDate && toDate) {
-    where.ThoiGianTao = {
+    where.CreatedAt = {
       [Op.between]: [new Date(fromDate), new Date(toDate)],
     };
   }
@@ -579,46 +543,46 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
   // Optional: include batch and medicine details for display
   const include = [
     {
-      model: sequelize.models.QuanLyLoThuoc,
-      as: 'LoThuoc',
-      required: false,  // LEFT JOIN - even transactions without batch will be returned
-      include: [{ model: sequelize.models.Thuoc, as: 'Thuoc', required: false }],
+      model: sequelize.models.MedicineBatch,
+      as: 'batch',
+      required: false,
+      include: [{ model: sequelize.models.Medicine, as: 'medicine', required: false }],
     },
-    { model: sequelize.models.NguoiDung, as: 'NguoiThucHien', required: false },
+    { model: sequelize.models.User, as: 'performedBy', required: false },
   ];
 
   try {
     const { count, rows } = await InventoryTransaction.findAndCountAll({
       where,
       include,
-      order: [['ThoiGianTao', 'DESC']],
+      order: [['CreatedAt', 'DESC']],
       limit,
       offset,
     });
 
-    const performerIds = [...new Set((rows || []).map((r) => r.NguoiThucHienId).filter(Boolean))];
+    const performerIds = [...new Set((rows || []).map((r) => r.PerformedByUserId).filter(Boolean))];
     const performerLookup = await buildPerformerLookup(performerIds);
 
     const mapped = (rows || []).map((r) => {
-      const key = normalizeIdKey(r.NguoiThucHienId);
+      const key = normalizeIdKey(r.PerformedByUserId);
       const perf = performerLookup.get(key) || {};
       return {
         id: r.Id,
-        medicineId: r.MaThuoc ?? id,
-        medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
-        type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
-        quantity: r.SoLuong,
-        previousQuantity: r.SoLuongTruoc,
-        newQuantity: r.SoLuongSau,
-        reason: r.LyDo,
-        referenceType: r.LoaiThamChieu,
-        referenceId: r.MaThamChieu,
-        performedById: r.NguoiThucHienId,
-        performedBy: perf.name || r.NguoiThucHien?.HoTen || null,
+        medicineId: r.MedicineId ?? id,
+        medicineName: r.batch?.medicine?.Name ?? r.medicine?.Name ?? '',
+        type: r.TransactionType === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.TransactionType === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+        quantity: r.Quantity,
+        previousQuantity: r.QuantityBefore,
+        newQuantity: r.QuantityAfter,
+        reason: r.Reason,
+        referenceType: r.ReferenceType,
+        referenceId: r.ReferenceId,
+        performedById: r.PerformedByUserId,
+        performedBy: perf.name || r.performedBy?.fullName || null,
         performerCode: perf.code || null,
-        performerDisplay: perf.display || formatPerformerDisplay(perf.name || r.NguoiThucHien?.HoTen, perf.code),
-        notes: r.GhiChu,
-        createdAt: r.ThoiGianTao,
+        performerDisplay: perf.display || formatPerformerDisplay(perf.name || r.performedBy?.fullName, perf.code),
+        notes: r.Note,
+        createdAt: r.CreatedAt,
         updatedAt: null,
       };
     });
@@ -648,16 +612,19 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
 const getLowStockMedicines = asyncHandler(async (req, res) => {
   try {
     const medicines = await Medicine.findAll({
-      where: {
-        isActive: true,
-        quantity: {
-          [Op.lte]: sequelize.col('min_quantity'),
-        },
-      },
-      order: [['quantity', 'ASC']],
+      where: { IsActive: true },
+      attributes: ['Id', 'Name', 'Unit', 'Category', 'Price', 'IsActive'],
+      order: [['Name', 'ASC']],
     });
 
-    return successResponse(res, medicines);
+    return successResponse(res, (medicines || []).map((m) => ({
+      id: m.Id,
+      name: m.Name,
+      unit: m.Unit,
+      category: m.Category,
+      price: m.Price,
+      isActive: m.IsActive,
+    })));
   } catch (err) {
     console.error('getLowStockMedicines: DB error', err.message || err);
     return successResponse(res, []);
@@ -675,18 +642,28 @@ const getExpiringMedicines = asyncHandler(async (req, res) => {
   futureDate.setDate(futureDate.getDate() + parseInt(days, 10));
 
   try {
-    const medicines = await Medicine.findAll({
+    const batches = await sequelize.models.MedicineBatch.findAll({
       where: {
-        isActive: true,
-        expiryDate: {
+        ExpiryDate: {
           [Op.lte]: futureDate,
           [Op.gte]: new Date(),
         },
       },
-      order: [['expiryDate', 'ASC']],
+      include: [{ model: sequelize.models.Medicine, as: 'medicine', required: false }],
+      order: [['ExpiryDate', 'ASC']],
+      raw: false,
     });
 
-    return successResponse(res, medicines);
+    const data = (batches || []).map((b) => ({
+      id: b.Id,
+      medicineId: b.MedicineId,
+      medicineName: b.medicine?.Name || null,
+      batchNumber: b.BatchNumber,
+      expiryDate: b.ExpiryDate,
+      quantityInStock: b.QuantityInStock,
+    }));
+
+    return successResponse(res, data);
   } catch (err) {
     console.error('getExpiringMedicines: DB error', err.message || err);
     return successResponse(res, []);
@@ -707,22 +684,24 @@ const searchMedicines = asyncHandler(async (req, res) => {
   try {
     const isNumeric = /^\d+$/.test(q);
     const orClauses = [];
-    orClauses.push({ name: { [Op.like]: `%${q}%` } });
+    orClauses.push({ Name: { [Op.like]: `%${q}%` } });
     if (isNumeric) {
-      orClauses.push({ id: parseInt(q, 10) });
+      orClauses.push({ Id: parseInt(q, 10) });
     }
 
     const medicines = await Medicine.findAll({
       where: {
-        isActive: true,
+        IsActive: true,
         [Op.or]: orClauses,
       },
-      attributes: ['id', 'name', 'unit'],
+      attributes: ['Id', 'Name', 'Unit'],
       limit: parseInt(limit, 10),
-      order: [['name', 'ASC']],
+      order: [['Name', 'ASC']],
     });
 
-    return successResponse(res, medicines);
+    const data = (medicines || []).map((r) => ({ id: r.Id, name: r.Name, unit: r.Unit }));
+
+    return successResponse(res, data);
   } catch (err) {
     console.error('searchMedicines: DB error', err.message || err);
     return successResponse(res, []);
@@ -736,11 +715,11 @@ const searchMedicines = asyncHandler(async (req, res) => {
 const getMedicineCategories = asyncHandler(async (req, res) => {
   try {
     const rows = await Medicine.findAll({
-      attributes: [[sequelize.fn('DISTINCT', sequelize.col('NhomThuoc')), 'category']],
+      attributes: [[sequelize.fn('DISTINCT', sequelize.col('Category')), 'category']],
       where: {
-        isActive: true,
+        IsActive: true,
       },
-      order: [[sequelize.col('NhomThuoc'), 'ASC']],
+      order: [[sequelize.col('Category'), 'ASC']],
       raw: true,
     });
 
@@ -779,35 +758,35 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
           return null;
       }
     };
-    where.LoaiGiaoDich = mapType(type);
+    where.TransactionType = mapType(type);
   }
 
   // Filter by medicine ID (MaThuoc field)
   if (medicineId) {
-    where.MaThuoc = medicineId;
+    where.MedicineId = medicineId;
   }
 
   // Filter by date range (ThoiGianTao field)
   if (fromDate && toDate) {
-    where.ThoiGianTao = {
+    where.CreatedAt = {
       [Op.between]: [new Date(fromDate), new Date(toDate)],
     };
   }
 
-  // Parse sort parameter - use ThoiGianTao as the allowed column for sorting
-  // If client sends 'createdAt' it will be ignored and ThoiGianTao will be used as fallback
-  const order = parseSort(sort, ['ThoiGianTao'], 'ThoiGianTao:desc');
+  // Parse sort parameter - use CreatedAt as the allowed column for sorting
+  // If client sends 'createdAt' it will be respected via the allowed fields
+  const order = parseSort(sort, ['CreatedAt'], 'CreatedAt:desc');
 
   try {
     // Build include to optionally join to batches/medicine for display details
     const include = [
       {
-        model: sequelize.models.QuanLyLoThuoc,
-        as: 'LoThuoc',
-        required: false,  // LEFT JOIN even if no batch linked
-        include: [{ model: sequelize.models.Thuoc, as: 'Thuoc', required: false }],
+        model: sequelize.models.MedicineBatch,
+        as: 'batch',
+        required: false,
+        include: [{ model: sequelize.models.Medicine, as: 'medicine', required: false }],
       },
-      { model: sequelize.models.NguoiDung, as: 'NguoiThucHien', required: false },
+      { model: sequelize.models.User, as: 'performedBy', required: false },
     ];
 
     const { count, rows } = await InventoryTransaction.findAndCountAll({
@@ -820,29 +799,29 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
 
     console.log(`[getAllInventoryTransactions] where=${JSON.stringify(where)}, found=${rows.length} transactions`);
 
-    const performerIds = [...new Set((rows || []).map((r) => r.NguoiThucHienId).filter(Boolean))];
+    const performerIds = [...new Set((rows || []).map((r) => r.PerformedByUserId).filter(Boolean))];
     const performerLookup = await buildPerformerLookup(performerIds);
 
     const mapped = (rows || []).map((r) => {
-      const key = normalizeIdKey(r.NguoiThucHienId);
+      const key = normalizeIdKey(r.PerformedByUserId);
       const perf = performerLookup.get(key) || {};
       return {
         id: r.Id,
-        medicineId: r.MaThuoc ?? null,  // Use MaThuoc field directly from transaction record
-        medicineName: r.LoThuoc?.Thuoc?.TenThuoc ?? '',
-        type: r.LoaiGiaoDich === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.LoaiGiaoDich === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
-        quantity: r.SoLuong,
-        previousQuantity: r.SoLuongTruoc,
-        newQuantity: r.SoLuongSau,
-        reason: r.LyDo,
-        referenceType: r.LoaiThamChieu,
-        referenceId: r.MaThamChieu,
-        performedById: r.NguoiThucHienId,
-        performedBy: perf.name || r.NguoiThucHien?.HoTen || null,
+        medicineId: r.MedicineId ?? null,
+        medicineName: r.batch?.medicine?.Name ?? r.medicine?.Name ?? '',
+        type: r.TransactionType === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.TransactionType === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+        quantity: r.Quantity,
+        previousQuantity: r.QuantityBefore,
+        newQuantity: r.QuantityAfter,
+        reason: r.Reason,
+        referenceType: r.ReferenceType,
+        referenceId: r.ReferenceId,
+        performedById: r.PerformedByUserId,
+        performedBy: perf.name || r.performedBy?.fullName || null,
         performerCode: perf.code || null,
-        performerDisplay: perf.display || formatPerformerDisplay(perf.name || r.NguoiThucHien?.HoTen, perf.code),
-        notes: r.GhiChu,
-        createdAt: r.ThoiGianTao,
+        performerDisplay: perf.display || formatPerformerDisplay(perf.name || r.performedBy?.fullName, perf.code),
+        notes: r.Note,
+        createdAt: r.CreatedAt,
         updatedAt: null,
       };
     });
@@ -873,36 +852,36 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
 const getAllMedicinesUnpaginated = asyncHandler(async (req, res) => {
   const { category, search, isActive, sort } = req.query;
   const where = {};
-  if (isActive !== undefined) where.isActive = isActive === 'true';
-  else where.isActive = true;
-  if (category) where.category = category;
+  if (isActive !== undefined) where.IsActive = isActive === 'true';
+  else where.IsActive = true;
+  if (category) where.Category = category;
   if (search) {
     const isNumeric = /^\d+$/.test(search);
     if (isNumeric) {
       where[Op.or] = [
-        { id: parseInt(search, 10) },
-        { name: { [Op.like]: `%${search}%` } },
+        { Id: parseInt(search, 10) },
+        { Name: { [Op.like]: `%${search}%` } },
       ];
     } else {
-      where[Op.or] = [{ name: { [Op.like]: `%${search}%` } }];
+      where[Op.or] = [{ Name: { [Op.like]: `%${search}%` } }];
     }
   }
 
   try {
     const rows = await Medicine.findAll({
       where,
-      order: parseSort(sort || 'id:desc', ['id', 'name', 'category', 'unit', 'price']),
-      attributes: ['id', 'name', 'unit', 'category', 'price', 'isActive'],
+      order: parseSort(sort || 'Id:desc', ['Id', 'Name', 'Category', 'Unit', 'Price']),
+      attributes: ['Id', 'Name', 'Unit', 'Category', 'Price', 'IsActive'],
       raw: true,
     });
 
     const data = (rows || []).map(r => ({
-      id: r.id,
-      name: r.name,
-      category: r.category,
-      unit: r.unit,
-      price: r.price,
-      isActive: r.isActive,
+      id: r.Id,
+      name: r.Name,
+      category: r.Category,
+      unit: r.Unit,
+      price: r.Price,
+      isActive: r.IsActive,
     }));
 
     return successResponse(res, data);

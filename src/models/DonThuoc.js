@@ -118,9 +118,11 @@ module.exports = (sequelize, DataTypes) => {
       });
     }
 
-    // Đơn thuốc có nhiều chi tiết
-    if (models && models.ChiTietDonThuoc) {
-      DonThuoc.hasMany(models.ChiTietDonThuoc, {
+    // Đơn thuốc có nhiều chi tiết - ưu tiên model mới `PrescriptionItem`,
+    // fallback về `ChiTietDonThuoc` để tương thích ngược.
+    const DetailModel = (models && (models.PrescriptionItem || models.ChiTietDonThuoc));
+    if (DetailModel) {
+      DonThuoc.hasMany(DetailModel, {
         foreignKey: 'MaDonThuoc',
         as: 'ChiTietDonThuoc'
       });
