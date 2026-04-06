@@ -24,7 +24,7 @@ const ROLE_LABELS = {
 const APPOINTMENT_STATUS = {
   SCHEDULED: 'Đã đặt lịch',
   CONFIRMED: 'Đã xác nhận',
-  WAITING: 'Đã đặt lịch',
+  WAITING: 'Chờ khám',
   IN_PROGRESS: 'Đang khám',
   COMPLETED: 'Đã hoàn thành',
   CANCELLED: 'Đã hủy',
@@ -32,7 +32,7 @@ const APPOINTMENT_STATUS = {
 
 // Medical Record Status
 const MEDICAL_RECORD_STATUS = {
-  WAITING: 'Đã đặt lịch',
+  WAITING: 'Chờ khám',
   IN_PROGRESS: 'Đang khám',
   COMPLETED: 'Hoàn thành',
 };

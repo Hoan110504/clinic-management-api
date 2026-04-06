@@ -84,8 +84,16 @@ const updateAppointmentValidator = [
     .withMessage('Khung giờ không hợp lệ'),
   body('status')
     .optional()
-    .isIn(Object.values(APPOINTMENT_STATUS))
-    .withMessage('Trạng thái không hợp lệ'),
+    .custom((value) => {
+      if (value === undefined || value === null) return true;
+      const codes = [1, 2, 3, 4];
+      const labels = Object.values(APPOINTMENT_STATUS);
+      let v = value;
+      if (typeof v === 'string' && /^[0-9]+$/.test(v)) v = parseInt(v, 10);
+      if (codes.includes(v)) return true;
+      if (labels.includes(v)) return true;
+      throw new Error('Trạng thái không hợp lệ');
+    }),
   body('assignedDoctorId')
     .optional()
     .isUUID()
@@ -109,8 +117,14 @@ const listAppointmentsValidator = [
     .withMessage('Số lượng mỗi trang phải từ 1-100'),
   query('status')
     .optional()
-    .isIn(Object.values(APPOINTMENT_STATUS))
-    .withMessage('Trạng thái không hợp lệ'),
+    .custom((value) => {
+      if (value === undefined || value === null) return true;
+      const codes = ['1', '2', '3', '4'];
+      const labels = Object.values(APPOINTMENT_STATUS);
+      if (codes.includes(String(value))) return true;
+      if (labels.includes(value)) return true;
+      throw new Error('Trạng thái không hợp lệ');
+    }),
   query('date')
     .optional()
     .isISO8601()

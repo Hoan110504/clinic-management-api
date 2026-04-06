@@ -24,6 +24,7 @@ import {
   LAB_STATUS,
   ROLES,
 } from '../config/constants.js';
+import { labelToCode } from '../utils/statusHelpers.js';
 
 /**
  * Dashboard Admin - tổng quan toàn hệ thống
@@ -167,7 +168,7 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
         [Op.lt]: tomorrow,
       },
       status: {
-        [Op.notIn]: [APPOINTMENT_STATUS.CANCELLED],
+        [Op.notIn]: [labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED],
       },
     },
     order: [['timeSlot', 'ASC']],
@@ -280,7 +281,10 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
         [Op.lt]: tomorrow,
       },
       status: {
-        [Op.in]: [APPOINTMENT_STATUS.SCHEDULED, APPOINTMENT_STATUS.CONFIRMED],
+        [Op.in]: [
+          labelToCode(APPOINTMENT_STATUS.SCHEDULED) || APPOINTMENT_STATUS.SCHEDULED,
+          labelToCode(APPOINTMENT_STATUS.CONFIRMED) || APPOINTMENT_STATUS.CONFIRMED,
+        ],
       },
     },
     order: [['timeSlot', 'ASC']],
@@ -430,7 +434,10 @@ const getPatientDashboard = asyncHandler(async (req, res) => {
         [Op.gte]: new Date(),
       },
       status: {
-        [Op.notIn]: [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED],
+        [Op.notIn]: [
+          labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED,
+          labelToCode(APPOINTMENT_STATUS.COMPLETED) || APPOINTMENT_STATUS.COMPLETED,
+        ],
       },
     },
     order: [['appointmentDate', 'ASC'], ['timeSlot', 'ASC']],

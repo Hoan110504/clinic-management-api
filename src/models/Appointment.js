@@ -127,12 +127,13 @@ export default (sequelize) => {
       },
       // Status and notes
       status: {
-        type: DataTypes.STRING(255),
+        // Persist numeric codes in DB: 1=Đã đặt lịch, 2=Chờ khám, 3=Hoàn thành, 4=Đã hủy
+        type: DataTypes.INTEGER,
         allowNull: false,
-        defaultValue: APPOINTMENT_STATUS.SCHEDULED,
+        defaultValue: 1,
         validate: {
           isIn: {
-            args: [Object.values(APPOINTMENT_STATUS)],
+            args: [[1, 2, 3, 4]],
             msg: 'Trạng thái lịch hẹn không hợp lệ'
           }
         }

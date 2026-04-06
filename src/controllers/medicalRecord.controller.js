@@ -7,6 +7,7 @@ import models from '../models/index.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { successResponse, createdResponse } from '../utils/response.js';
 import { APPOINTMENT_STATUS, MEDICAL_RECORD_STATUS } from '../config/constants.js';
+import { labelToCode, codeToLabel, normalizeStatus } from '../utils/statusHelpers.js';
 import { parsePagination, parseSort, buildWhereClause } from '../utils/helpers.js';
 import { paginatedResponse } from '../utils/response.js';
 
@@ -41,9 +42,15 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   }
 
   // 2) Load today's appointments (scheduled/confirmed/waiting)
+  const notInStatuses = [];
+  const cancelledCode = labelToCode(APPOINTMENT_STATUS.CANCELLED);
+  const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED);
+  if (cancelledCode != null) notInStatuses.push(cancelledCode);
+  if (completedCode != null) notInStatuses.push(completedCode);
+
   const apptWhere = {
     appointmentDate: { [Op.gte]: today, [Op.lt]: tomorrow },
-    status: { [Op.notIn]: [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED] },
+    status: { [Op.notIn]: notInStatuses.length ? notInStatuses : [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED] },
   };
   // If doctor role, scope to that doctor
   if (req.user && req.user.role === 'doctor') {

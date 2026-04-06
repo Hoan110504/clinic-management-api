@@ -11,6 +11,8 @@ import {
   paginatedResponse,
   noContentResponse,
 } from '../utils/response.js';
+import { normalizeStatus, labelToCode, codeToLabel } from '../utils/statusHelpers.js';
+import { sequelize } from '../models/database.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
 import { APPOINTMENT_STATUS, ROLES, TIME_SLOTS } from '../config/constants.js';
 
@@ -53,7 +55,11 @@ const getAllAppointments = asyncHandler(async (req, res) => {
   const where = {};
 
   if (status) {
-    where.status = status;
+    // Convert status label to numeric code if needed (DB stores INTEGER)
+    const statusCode = labelToCode(status) || (Number.isNaN(Number(status)) ? null : Number(status));
+    if (statusCode != null) {
+      where.status = statusCode;
+    }
   }
 
   if (date) {
@@ -126,11 +132,18 @@ const getAllAppointments = asyncHandler(async (req, res) => {
     try {
       const obj = r && r.get ? r.get({ plain: true }) : r;
       if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+      // attach normalized status code/label
+      const norm = normalizeStatus(obj.status);
+      obj.statusCode = norm.code;
+      obj.statusLabel = norm.label;
       return obj;
     } catch (e) {
       if (r && r.dataValues) {
         const obj = { ...r.dataValues };
         if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+        const norm = normalizeStatus(obj.status);
+        obj.statusCode = norm.code;
+        obj.statusLabel = norm.label;
         return obj;
       }
       return r;
@@ -152,38 +165,27 @@ const getAllAppointments = asyncHandler(async (req, res) => {
 const getAppointmentById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const appointment = await Appointment.findByPk(id, {
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        required: false,
-      },
-      {
-        model: User,
-        as: 'assignedDoctor',
-        attributes: ['id', 'fullName', 'phone', 'email', 'signature'],
-        required: false,
-      },
-      {
-        model: User,
-        as: 'preferredDoctor',
-        attributes: ['id', 'fullName'],
-        required: false,
-      },
-      {
-        model: MedicalRecord,
-        as: 'medicalRecord',
-        required: false,
-      },
-    ],
-  });
+  // Build includes defensively in case some models are not present in this deployment
+  const includes = [];
+  if (typeof Patient !== 'undefined' && Patient) includes.push({ model: Patient, as: 'patient', required: false });
+  if (typeof User !== 'undefined' && User) {
+    includes.push({ model: User, as: 'assignedDoctor', attributes: ['id', 'fullName', 'phone', 'email', 'signature'], required: false });
+    includes.push({ model: User, as: 'preferredDoctor', attributes: ['id', 'fullName'], required: false });
+  }
+  if (typeof MedicalRecord !== 'undefined' && MedicalRecord) includes.push({ model: MedicalRecord, as: 'medicalRecord', required: false });
+
+  const appointment = await Appointment.findByPk(id, { include: includes });
 
   if (!appointment) {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
   }
+  // normalize status fields for response
+  const plain = appointment.get ? appointment.get({ plain: true }) : appointment;
+  const norm = normalizeStatus(plain.status);
+  plain.statusCode = norm.code;
+  plain.statusLabel = norm.label;
 
-  return successResponse(res, appointment);
+  return successResponse(res, plain);
 });
 
 /**
@@ -215,14 +217,18 @@ const createAppointment = asyncHandler(async (req, res) => {
 
   // Kiểm tra trùng lịch: cùng bác sĩ, cùng ngày, cùng khung giờ
   // Chỉ đếm các lịch hẹn chưa hủy và chưa hoàn thành
+  const cancelledCode = labelToCode(APPOINTMENT_STATUS.CANCELLED);
+  const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED);
+  const notInStatusCodes = [];
+  if (cancelledCode != null) notInStatusCodes.push(cancelledCode);
+  if (completedCode != null) notInStatusCodes.push(completedCode);
+
   const existingAppointment = await Appointment.findOne({
     where: {
       appointmentDate,
       timeSlot,
       assignedDoctorId: assignedDoctorId || preferredDoctorId,
-      status: {
-        [Op.notIn]: [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED],
-      },
+      status: { [Op.notIn]: notInStatusCodes.length ? notInStatusCodes : [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED] },
     },
   });
 
@@ -260,9 +266,18 @@ const createAppointment = asyncHandler(async (req, res) => {
     patientNotes,
     internalNotes,
   };
-  // Ensure status is present and DB-safe before creating to avoid NULL insert errors
-  const scheduledStatus = resolveStatus(APPOINTMENT_STATUS.SCHEDULED) || APPOINTMENT_STATUS.SCHEDULED;
-  createData.status = scheduledStatus;
+  // Determine status code: prefer explicit `status` from request if valid, otherwise default to SCHEDULED
+  let statusCode = null;
+  if (req.body.status != null) {
+    // labelToCode handles numeric strings and known labels
+    const providedCode = labelToCode(req.body.status);
+    if (providedCode != null) statusCode = providedCode;
+  }
+  if (statusCode == null) {
+    const scheduledResolved = resolveStatus(APPOINTMENT_STATUS.SCHEDULED) || APPOINTMENT_STATUS.SCHEDULED;
+    statusCode = labelToCode(scheduledResolved) || labelToCode(APPOINTMENT_STATUS.SCHEDULED) || 1;
+  }
+  createData.status = statusCode;
 
   // Create appointment (include status explicitly so DB constraint/default is not relied on)
   let appointment = await Appointment.create(createData);
@@ -289,7 +304,8 @@ const updateAppointment = asyncHandler(async (req, res) => {
   }
 
   // Kiểm tra không cho sửa lịch đã hủy hoặc hoàn thành
-  if ([APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED].includes(appointment.status)) {
+  const currentNorm = normalizeStatus(appointment.status);
+  if ([labelToCode(APPOINTMENT_STATUS.CANCELLED), labelToCode(APPOINTMENT_STATUS.COMPLETED)].includes(currentNorm.code)) {
     throw new BadRequestError('Không thể cập nhật lịch hẹn đã hủy hoặc hoàn thành');
   }
 
@@ -305,9 +321,7 @@ const updateAppointment = asyncHandler(async (req, res) => {
       appointmentDate: updateData.appointmentDate || appointment.appointmentDate,
       timeSlot: updateData.timeSlot || appointment.timeSlot,
       assignedDoctorId: updateData.assignedDoctorId || appointment.assignedDoctorId,
-      status: {
-        [Op.notIn]: [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED],
-      },
+      status: { [Op.notIn]: notInStatusCodes.length ? notInStatusCodes : [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED] },
     };
 
     const existingAppointment = await Appointment.findOne({ where: conflictWhere });
@@ -330,7 +344,9 @@ const updateAppointment = asyncHandler(async (req, res) => {
     if (!resolved) {
       throw new BadRequestError(`Giá trị trạng thái không hợp lệ: ${updateData.status}`);
     }
-    updateData.status = resolved;
+    // If DB stores numeric codes for status, convert known labels to codes
+    // Convert label to numeric code for DB storage
+    updateData.status = labelToCode(resolved) || labelToCode(APPOINTMENT_STATUS.SCHEDULED) || 1;
     console.debug('updateAppointment: resolved status ->', updateData.status);
   }
 
@@ -352,11 +368,12 @@ const cancelAppointment = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
   }
 
-  if (appointment.status === APPOINTMENT_STATUS.CANCELLED) {
+  const apptNorm = normalizeStatus(appointment.status);
+  if (apptNorm.code === labelToCode(APPOINTMENT_STATUS.CANCELLED)) {
     throw new BadRequestError('Lịch hẹn đã bị hủy trước đó');
   }
 
-  if (appointment.status === APPOINTMENT_STATUS.COMPLETED) {
+  if (apptNorm.code === labelToCode(APPOINTMENT_STATUS.COMPLETED)) {
     throw new BadRequestError('Không thể hủy lịch hẹn đã hoàn thành');
   }
 
@@ -366,9 +383,11 @@ const cancelAppointment = asyncHandler(async (req, res) => {
     console.error('cancelAppointment: resolved status not in allowed list', { cancelStatus, allowed: VALID_APPOINTMENT_STATUSES });
   }
   try {
-    console.error('cancelAppointment: attempting update', { id: appointment.id, status: cancelStatus });
+    // Convert label to numeric code for DB storage
+    const cancelStatusCode = labelToCode(cancelStatus) || labelToCode(APPOINTMENT_STATUS.CANCELLED) || 4;
+    console.error('cancelAppointment: attempting update', { id: appointment.id, status: cancelStatusCode });
     await appointment.update({
-      status: cancelStatus,
+      status: cancelStatusCode,
       cancelledAt: new Date(),
       cancelReason: reason,
     });
@@ -392,7 +411,8 @@ const confirmAppointment = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
   }
 
-  if (appointment.status !== APPOINTMENT_STATUS.SCHEDULED) {
+  const apptNorm2 = normalizeStatus(appointment.status);
+  if (apptNorm2.code !== labelToCode(APPOINTMENT_STATUS.SCHEDULED)) {
     throw new BadRequestError('Chỉ có thể xác nhận lịch hẹn đang ở trạng thái đã đặt');
   }
 
@@ -405,9 +425,11 @@ const confirmAppointment = asyncHandler(async (req, res) => {
     if (!VALID_APPOINTMENT_STATUSES.includes(confirmedStatus)) {
       console.error('confirmAppointment: resolved status not in allowed list', { confirmedStatus, allowed: VALID_APPOINTMENT_STATUSES });
     }
-    console.error('confirmAppointment: attempting update', { id: appointment.id, status: confirmedStatus });
+    // Convert label to numeric code for DB storage
+    const confirmedStatusCode = labelToCode(confirmedStatus) || labelToCode(APPOINTMENT_STATUS.CONFIRMED) || 1;
+    console.error('confirmAppointment: attempting update', { id: appointment.id, status: confirmedStatusCode });
     await appointment.update({
-      status: confirmedStatus,
+      status: confirmedStatusCode,
       confirmedAt: new Date(),
     });
   } catch (e) {
@@ -431,11 +453,16 @@ const checkInAppointment = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
   }
 
-  if (![APPOINTMENT_STATUS.SCHEDULED, APPOINTMENT_STATUS.CONFIRMED].includes(appointment.status)) {
+  const apptNorm3 = normalizeStatus(appointment.status);
+  const schedCode = labelToCode(APPOINTMENT_STATUS.SCHEDULED);
+  const confCode = labelToCode(APPOINTMENT_STATUS.CONFIRMED);
+  if (![schedCode, confCode].includes(apptNorm3.code)) {
     throw new BadRequestError('Không thể check-in lịch hẹn này');
   }
 
-  const waitingStatus = resolveStatus(APPOINTMENT_STATUS.SCHEDULED);
+  const waitingStatus = resolveStatus(APPOINTMENT_STATUS.WAITING);
+  console.error('[checkInAppointment] APPOINTMENT_STATUS.WAITING value:', APPOINTMENT_STATUS.WAITING);
+  console.error('[checkInAppointment] resolved waitingStatus:', waitingStatus);
   if (!waitingStatus) {
     throw new BadRequestError('Giá trị trạng thái không hợp lệ');
   }
@@ -443,10 +470,25 @@ const checkInAppointment = asyncHandler(async (req, res) => {
     console.error('checkInAppointment: resolved status not in allowed list', { waitingStatus, allowed: VALID_APPOINTMENT_STATUSES });
   }
   try {
-    console.error('checkInAppointment: attempting update', { id: appointment.id, status: waitingStatus });
-    await appointment.update({
-      status: waitingStatus,
-    });
+    // Convert label to numeric code for DB storage
+    const waitingStatusCode = labelToCode(waitingStatus) || labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
+    console.error('checkInAppointment: before update - appointment (plain):', appointment && appointment.get ? appointment.get({ plain: true }) : appointment);
+    console.error('checkInAppointment: attempting update', { id: appointment.id, status: waitingStatusCode });
+
+    const updated = await appointment.update({ status: waitingStatusCode }, { returning: true });
+    console.error('checkInAppointment: update returned (updated instance):', updated && updated.get ? updated.get({ plain: true }) : updated);
+
+    // Fetch fresh row directly from DB to confirm persisted value (raw query to avoid include issues)
+    try {
+      const [rows] = await sequelize.query("SELECT * FROM appointments WHERE id = :id", { replacements: { id }, type: sequelize.QueryTypes.SELECT });
+      console.error('checkInAppointment: fresh from DB (raw query):', rows);
+    } catch (qerr) {
+      console.error('checkInAppointment: failed to fetch raw row from DB:', qerr?.message || qerr);
+    }
+
+    // Reload the original instance and log final state
+    await appointment.reload();
+    console.error('checkInAppointment: after reload appointment.status:', appointment.status);
   } catch (e) {
     console.error('checkInAppointment: DB update failed. attempted status=', waitingStatus, e?.message || e);
     throw e;
@@ -513,11 +555,17 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
     try {
       const obj = a && a.get ? a.get({ plain: true }) : a;
       if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+      const norm = normalizeStatus(obj.status);
+      obj.statusCode = norm.code;
+      obj.statusLabel = norm.label;
       return obj;
     } catch (e) {
       if (a && a.dataValues) {
         const obj = { ...a.dataValues };
         if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+        const norm = normalizeStatus(obj.status);
+        obj.statusCode = norm.code;
+        obj.statusLabel = norm.label;
         return obj;
       }
       return a;
@@ -544,7 +592,7 @@ const getAvailableSlots = asyncHandler(async (req, res) => {
       appointmentDate: date,
       ...(doctorId && { assignedDoctorId: doctorId }),
       status: {
-        [Op.notIn]: [APPOINTMENT_STATUS.CANCELLED],
+        [Op.notIn]: [labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED],
       },
     },
     attributes: ['timeSlot', 'assignedDoctorId'],
