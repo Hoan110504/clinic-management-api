@@ -106,26 +106,39 @@ const getAllAppointments = asyncHandler(async (req, res) => {
   // Parse sort
   const order = parseSort(sort, ['appointmentDate', 'createdAt', 'timeSlot']);
 
-  const { count, rows } = await Appointment.findAndCountAll({
-    where,
-    order,
-    limit,
-    offset,
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
-        required: false,
-      },
-      {
-        model: User,
-        as: 'assignedDoctor',
-        attributes: ['id', 'fullName'],
-        required: false,
-      },
-    ],
-  });
+  let count, rows;
+  try {
+    ({ count, rows } = await Appointment.findAndCountAll({
+      where,
+      order,
+      limit,
+      offset,
+      include: [
+        {
+          model: Patient,
+          as: 'patient',
+          attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'assignedDoctor',
+          attributes: ['id', 'fullName'],
+          required: false,
+        },
+      ],
+    }));
+  } catch (e) {
+    // If DB schema mismatch causes conversion errors when joining (e.g. varchar vs bigint),
+    // retry without includes so appointments listing remains available.
+    const msg = String(e && (e.message || e.original && e.original.message || ''));
+    console.warn('Appointment.findAndCountAll with includes failed, retrying without joins:', msg);
+    if (msg.toLowerCase().includes('converting data type') || msg.toLowerCase().includes('invalid column') || msg.toLowerCase().includes('cannot convert')) {
+      ({ count, rows } = await Appointment.findAndCountAll({ where, order, limit, offset }));
+    } else {
+      throw e;
+    }
+  }
 
   // Normalize rows to plain objects and ensure status is present
   const plainRows = (rows || []).map((r) => {

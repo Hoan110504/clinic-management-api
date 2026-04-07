@@ -55,23 +55,23 @@ export { sequelize, Sequelize, connectDatabase, syncDatabase };
 
 // Đồng thời export tên phổ biến nếu tồn tại để tiện import riêng lẻ
 export const User = models.User;
-export const Patient = models.Patient || models.BenhNhan;
+export const Patient = models.Patient;
 export const Appointment = models.Appointment;
 // MedicalRecord uses the English model (STRING PK, patient_id / doctor_id columns)
 // If the project has the legacy Vietnamese models (HoSoKham), prefer exporting that
 // as the primary `MedicalRecord` export so existing DB schema (HoSoKham table)
 // continues to work. If there is an English `MedicalRecord` model, it will
 // still be available in `models.MedicalRecord`.
-export const MedicalRecord = models.HoSoKham || models.MedicalRecord;
+export const MedicalRecord = models.MedicalRecord;
 // Keep a dedicated alias for the legacy model name
-export const HoSoKham = models.HoSoKham;
+
 export const Medicine = models.Medicine;
 export const LabService = models.LabService;
 export const LabTest = models.LabTest;
 export const Prescription = models.Prescription || models.DonThuoc;
 // Also export legacy model names for direct access
 export const DonThuoc = models.DonThuoc;
-export const BenhNhan = models.BenhNhan;
+
 export const Payment = models.Payment;
 export const HoaDon = models.HoaDon;
 export const ServiceOrder = models.ServiceOrder;

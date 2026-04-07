@@ -151,4 +151,15 @@ router.get(
   medicineController.getInventoryTransactions
 );
 
+/**
+ * @route GET /api/medicines/:id/batches
+ * @desc Get batches for a specific medicine
+ * @access Admin, Pharmacist
+ */
+router.get(
+  '/:id/batches',
+  authorize(ROLES.ADMIN, ROLES.PHARMACIST),
+  medicineController.getMedicineBatches
+);
+
 export default router;

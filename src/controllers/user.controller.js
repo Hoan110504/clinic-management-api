@@ -93,14 +93,43 @@ const getAllUsers = asyncHandler(async (req, res) => {
     });
   }
 
-  const { count, rows } = await User.findAndCountAll({
-    where,
-    order,
-    limit,
-    offset,
-    attributes: { exclude: ['password', 'refreshToken'] },
-    include: include.length > 0 ? include : undefined,
-  });
+  let count, rows;
+  try {
+    const result = await User.findAndCountAll({
+      where,
+      order,
+      limit,
+      offset,
+      attributes: { exclude: ['password', 'refreshToken'] },
+      include: include.length > 0 ? include : undefined,
+    });
+    count = result.count;
+    rows = result.rows;
+  } catch (err) {
+    // Detect MSSQL conversion errors (e.g. varchar -> bigint) and retry without includes
+    const parentMsg = err && err.parent && err.parent.message ? String(err.parent.message).toLowerCase() : (err && err.message ? String(err.message).toLowerCase() : '');
+    if (parentMsg.includes('varchar to bigint') || parentMsg.includes('convert') || parentMsg.includes('data type varchar') || err && err.name === 'SequelizeDatabaseError') {
+      try {
+        logger.warn('findAndCountAll failed with type conversion error; retrying without includes', { err: err.message, query: { where, order, limit, offset } });
+        const fallback = await User.findAndCountAll({
+          where,
+          order,
+          limit,
+          offset,
+          attributes: { exclude: ['password', 'refreshToken'] },
+          // omit includes to avoid join-related type conversion failures
+        });
+        count = fallback.count;
+        rows = fallback.rows;
+      } catch (fallbackErr) {
+        // If fallback also fails, rethrow original error to preserve stack trace
+        logger.error('Retry without includes also failed in getAllUsers', { err: fallbackErr.message });
+        throw err;
+      }
+    } else {
+      throw err;
+    }
+  }
 
   return paginatedResponse(res, {
     data: rows,

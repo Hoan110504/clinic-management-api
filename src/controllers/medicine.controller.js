@@ -334,9 +334,23 @@ const adjustInventory = asyncHandler(async (req, res) => {
     latestTransaction = null;
   }
 
-  const previousQuantity = Number.isFinite(Number(latestTransaction?.QuantityAfter))
-    ? Number(latestTransaction.QuantityAfter)
-    : Number(medicine.quantity || 0);
+  let previousQuantity;
+  if (Number.isFinite(Number(latestTransaction?.QuantityAfter))) {
+    previousQuantity = Number(latestTransaction.QuantityAfter);
+  } else {
+    // If Medicine model has a `quantity` field use it, otherwise derive from batches
+    if (Object.prototype.hasOwnProperty.call(Medicine.rawAttributes, 'quantity')) {
+      previousQuantity = Number(medicine.quantity || 0);
+    } else {
+      try {
+        const batchTotal = await sequelize.models.MedicineBatch.sum('QuantityInStock', { where: { MedicineId: medicine.Id } });
+        previousQuantity = Number.isFinite(Number(batchTotal)) ? Number(batchTotal) : 0;
+      } catch (sumErr) {
+        console.warn('Failed to compute batch total for previousQuantity fallback', sumErr?.message || sumErr);
+        previousQuantity = 0;
+      }
+    }
+  }
   let newQuantity;
 
   switch (type) {
@@ -365,34 +379,82 @@ const adjustInventory = asyncHandler(async (req, res) => {
   // Determine or create a batch (MaLoThuoc) to associate the transaction with.
   let batch = null;
   try {
-    // If this is an import and a batch code (`soLo`) was provided, try to find or create that batch.
+    // Helper to safely parse dates
+    const parseDateSafe = (v) => {
+      if (!v) return null;
+      const d = new Date(v);
+      if (!Number.isFinite(d.getTime())) return null;
+      return d.toISOString().slice(0, 10);
+    };
+
+    // IMPORT: find or create target batch, increment its QuantityInStock
     if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && soLo) {
       batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
       if (!batch) {
-        // Parse incoming date strings safely into Date objects (or null) to avoid SQL conversion errors.
-        const parseDateSafe = (v) => {
-          if (!v) return null;
-          const d = new Date(v);
-          if (!Number.isFinite(d.getTime())) return null;
-          // Return date-only string in ISO format to avoid SQL Server locale/format conversion issues
-          return d.toISOString().slice(0, 10);
-        };
-
-        // Create a new batch record. Set SoLuongTon to parsedQuantity by default.
-        batch = await sequelize.models.MedicineBatch.create({
-          MedicineId: medicine.Id,
-          BatchNumber: soLo,
-          ExpiryDate: parseDateSafe(hanSuDung),
-          ManufactureDate: parseDateSafe(ngaySanXuat),
-          QuantityInStock: parsedQuantity,
-          ImportPrice: giaNhap || null,
-          Status: 1,
-        });
+        try {
+          batch = await sequelize.models.MedicineBatch.create({
+            MedicineId: medicine.Id,
+            BatchNumber: soLo,
+            ExpiryDate: parseDateSafe(hanSuDung),
+            ManufactureDate: parseDateSafe(ngaySanXuat),
+            QuantityInStock: parsedQuantity,
+            ImportPrice: giaNhap || null,
+            Status: 1,
+          }, {
+            fields: ['MedicineId', 'BatchNumber', 'ExpiryDate', 'ManufactureDate', 'QuantityInStock', 'ImportPrice', 'Status'],
+          });
+        } catch (createErr) {
+          const msg = (createErr && createErr.parent && createErr.parent.message) ? String(createErr.parent.message).toLowerCase() : (createErr && createErr.message ? String(createErr.message).toLowerCase() : '');
+          if (msg.includes('identity_insert') || msg.includes('cannot insert explicit value for identity column') || msg.includes('insert explicit value for identity')) {
+            try {
+              const cols = ['MedicineId','BatchNumber','ExpiryDate','ManufactureDate','QuantityInStock','ImportPrice','Status'];
+              const values = [medicine.Id, soLo, parseDateSafe(hanSuDung), parseDateSafe(ngaySanXuat), parsedQuantity, giaNhap || null, 1];
+              const placeholders = cols.map((c, i) => `:p${i}`).join(',');
+              const colList = cols.map(c => `[${c}]`).join(',');
+              const replacements = {};
+              values.forEach((v, i) => { replacements[`p${i}`] = v; });
+              const sql = `INSERT INTO [MedicineBatch] (${colList}) VALUES (${placeholders});`;
+              await sequelize.query(sql, { replacements, type: sequelize.QueryTypes.INSERT });
+              batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
+            } catch (rawErr) {
+              console.error('Fallback raw INSERT for MedicineBatch failed', rawErr?.message || rawErr);
+              throw createErr;
+            }
+          } else {
+            throw createErr;
+          }
+        }
       } else {
-        // If batch exists and this is import, increment its QuantityInStock
         batch.QuantityInStock = Number(batch.QuantityInStock || 0) + parsedQuantity;
         await batch.save();
       }
+
+    // EXPORT: target a specific batch if provided, otherwise pick a batch with sufficient stock
+    } else if (type === INVENTORY_TRANSACTION_TYPES.EXPORT) {
+      if (soLo) {
+        batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
+        if (!batch) {
+          throw new BadRequestError('Không tìm thấy lô thuốc tương ứng với soLo đã cung cấp');
+        }
+        const available = Number(batch.QuantityInStock || 0);
+        if (available < parsedQuantity) {
+          throw new BadRequestError('Số lượng xuất vượt quá số lượng tồn trong lô thuốc');
+        }
+        batch.QuantityInStock = available - parsedQuantity;
+        await batch.save();
+      } else {
+        // find any batch with enough stock, prefer earliest expiry
+        batch = await sequelize.models.MedicineBatch.findOne({
+          where: { MedicineId: medicine.Id, QuantityInStock: { [Op.gte]: parsedQuantity } },
+          order: [['ExpiryDate', 'ASC']],
+        });
+        if (!batch) {
+          throw new BadRequestError('Không đủ tồn kho để xuất');
+        }
+        batch.QuantityInStock = Number(batch.QuantityInStock || 0) - parsedQuantity;
+        await batch.save();
+      }
+
     } else {
       // Default behavior: try to find any batch for this medicine
       batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id } });
@@ -836,12 +898,126 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
     });
   } catch (err) {
     console.error('getAllInventoryTransactions: DB error', err.message || err);
-    return paginatedResponse(res, {
-      data: [],
-      page,
-      limit,
-      total: 0,
+
+    // Fallback: try raw SQL directly against dbo.InventoryTransaction table
+    try {
+      console.warn('[getAllInventoryTransactions] falling back to raw SQL query on dbo.InventoryTransaction');
+
+      const replacements = {};
+      const whereClauses = [];
+
+      if (medicineId) {
+        whereClauses.push('MedicineId = :medicineId');
+        replacements.medicineId = medicineId;
+      }
+
+      if (type) {
+        const mapType = (t) => {
+          switch (t) {
+            case INVENTORY_TRANSACTION_TYPES.IMPORT:
+              return 1;
+            case INVENTORY_TRANSACTION_TYPES.EXPORT:
+              return 2;
+            case INVENTORY_TRANSACTION_TYPES.ADJUSTMENT:
+              return 3;
+            default:
+              return null;
+          }
+        };
+        const tnum = mapType(type);
+        if (tnum) {
+          whereClauses.push('TransactionType = :ttype');
+          replacements.ttype = tnum;
+        }
+      }
+
+      if (fromDate && toDate) {
+        whereClauses.push('CreatedAt BETWEEN :fromDate AND :toDate');
+        replacements.fromDate = new Date(fromDate);
+        replacements.toDate = new Date(toDate);
+      }
+
+      const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+      // Build order/limit/offset
+      const orderSql = Array.isArray(order) && order.length > 0 ? `ORDER BY ${order.map(o=>`${o[0]} ${o[1]}`).join(',')}` : 'ORDER BY CreatedAt DESC';
+      const limitSql = limit ? `OFFSET ${offset || 0} ROWS FETCH NEXT ${limit} ROWS ONLY` : '';
+
+      const sql = `SELECT * FROM dbo.InventoryTransaction ${whereSql} ${orderSql} ${limitSql}`;
+
+      const rawRows = await sequelize.query(sql, { replacements, type: sequelize.QueryTypes.SELECT });
+
+      // Map raw rows to the same shape as the model mapping above
+      const mapped = (rawRows || []).map((r) => ({
+        id: r.Id,
+        medicineId: r.MedicineId ?? null,
+        medicineName: r.MedicineName || '',
+        type: r.TransactionType === 1 ? INVENTORY_TRANSACTION_TYPES.IMPORT : r.TransactionType === 2 ? INVENTORY_TRANSACTION_TYPES.EXPORT : INVENTORY_TRANSACTION_TYPES.ADJUSTMENT,
+        quantity: r.Quantity,
+        previousQuantity: r.QuantityBefore,
+        newQuantity: r.QuantityAfter,
+        reason: r.Reason,
+        referenceType: r.ReferenceType,
+        referenceId: r.ReferenceId,
+        performedById: r.PerformedByUserId,
+        performedBy: r.PerformedByName || null,
+        performerCode: r.PerformedByCode || null,
+        performerDisplay: r.PerformedByDisplay || null,
+        notes: r.Note,
+        createdAt: r.CreatedAt,
+        updatedAt: r.UpdatedAt || null,
+      }));
+
+      // Count fallback - try a simple count query
+      const countSql = `SELECT COUNT(1) as cnt FROM dbo.InventoryTransaction ${whereSql}`;
+      const countResult = await sequelize.query(countSql, { replacements, type: sequelize.QueryTypes.SELECT });
+      const totalCount = Array.isArray(countResult) && countResult[0] ? Number(countResult[0].cnt || 0) : mapped.length;
+
+      return paginatedResponse(res, {
+        data: mapped,
+        page,
+        limit,
+        total: totalCount,
+      });
+    } catch (rawErr) {
+      console.error('getAllInventoryTransactions raw SQL fallback failed:', rawErr.message || rawErr);
+      return paginatedResponse(res, {
+        data: [],
+        page,
+        limit,
+        total: 0,
+      });
+    }
+  }
+});
+
+/**
+ * Get batches for a specific medicine
+ * GET /api/medicines/:id/batches
+ */
+const getMedicineBatches = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const batches = await sequelize.models.MedicineBatch.findAll({
+      where: { MedicineId: id },
+      order: [['ExpiryDate', 'ASC']],
+      attributes: ['Id', 'MedicineId', 'BatchNumber', 'ExpiryDate', 'QuantityInStock'],
+      raw: true,
     });
+
+    const data = (batches || []).map((b) => ({
+      id: b.Id,
+      medicineId: b.MedicineId,
+      batchNumber: b.BatchNumber,
+      expiryDate: b.ExpiryDate,
+      quantityInStock: b.QuantityInStock,
+    }));
+
+    return successResponse(res, data);
+  } catch (err) {
+    console.error('getMedicineBatches: DB error', err.message || err);
+    return successResponse(res, []);
   }
 });
 
@@ -903,6 +1079,7 @@ export {
   getExpiringMedicines,
   searchMedicines,
   getAllInventoryTransactions,
+  getMedicineBatches,
   getMedicineCategories,
   getAllMedicinesUnpaginated,
 };

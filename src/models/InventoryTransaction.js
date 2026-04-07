@@ -10,9 +10,10 @@ export default (sequelize) => {
     'InventoryTransaction',
     {
       Id: {
-        type: DataTypes.UUID,
-        defaultValue: DataTypes.UUIDV4,
+        type: DataTypes.INTEGER,
+        autoIncrement: true,
         primaryKey: true,
+        allowNull: false,
         field: 'Id',
       },
 
@@ -68,7 +69,9 @@ export default (sequelize) => {
       },
 
       ReferenceId: {
-        type: DataTypes.UUID,
+        // ReferenceId may be either a UUID (legacy) or a simple string/number id
+        // keep flexible by using STRING so it can hold both GUIDs and numeric refs
+        type: DataTypes.STRING(100),
         field: 'ReferenceId',
       },
 

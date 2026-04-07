@@ -155,32 +155,41 @@ const getAllRecords = asyncHandler(async (req, res) => {
   const PatientModelForList = sequelizeModelsForList.Patient || sequelizeModelsForList.BenhNhan || Patient;
   const UserModelForList = sequelizeModelsForList.User || sequelizeModelsForList.NguoiDung || User;
 
-  const result = await PreferredRecordForList.findAndCountAll({
-    where,
-    include: [
-      { model: PatientModelForList, as: 'patient', required: false },
-      { model: UserModelForList, as: 'doctor', required: false },
-    ],
-    order: (function mapOrderForModel(o) {
-      try {
-        const usingMedModel = Boolean(models && models.MedicalExamination && PreferredRecordForList === models.MedicalExamination);
-        if (!usingMedModel) return o;
-        if (!Array.isArray(o)) return o;
-        return o.map(([fld, dir]) => {
-          const f = String(fld || '');
-          if (f === 'id') return ['ExaminationID', dir];
-          if (f === 'createdAt') return ['CreatedAt', dir];
-          if (f === 'completedAt') return ['UpdatedAt', dir];
-          // preserve other fields
-          return [fld, dir];
-        });
-      } catch (e) {
-        return o;
-      }
-    })(order),
-    limit,
-    offset,
-  });
+  let result;
+  try {
+    result = await PreferredRecordForList.findAndCountAll({
+      where,
+      include: [
+        { model: PatientModelForList, as: 'patient', required: false },
+        { model: UserModelForList, as: 'doctor', required: false },
+      ],
+      order: (function mapOrderForModel(o) {
+        try {
+          const usingMedModel = Boolean(models && models.MedicalExamination && PreferredRecordForList === models.MedicalExamination);
+          if (!usingMedModel) return o;
+          if (!Array.isArray(o)) return o;
+          return o.map(([fld, dir]) => {
+            const f = String(fld || '');
+            if (f === 'id') return ['ExaminationID', dir];
+            if (f === 'createdAt') return ['CreatedAt', dir];
+            if (f === 'completedAt') return ['UpdatedAt', dir];
+            // preserve other fields
+            return [fld, dir];
+          });
+        } catch (e) {
+          return o;
+        }
+      })(order),
+      limit,
+      offset,
+    });
+  } catch (dbErr) {
+    console.error('getAllRecords: DB error during findAndCountAll', dbErr && dbErr.message);
+    console.error('getAllRecords: DB error original:', dbErr && dbErr.original && dbErr.original.message);
+    console.error('getAllRecords: DB error sql:', dbErr && dbErr.sql);
+    // Return empty paginated result instead of throwing to keep frontend usable
+    return paginatedResponse(res, { data: [], page, limit, total: 0 });
+  }
 
   const rows = (result.rows || []).map(r => (r && r.get ? r.get({ plain: true }) : r));
   return paginatedResponse(res, { data: rows, page, limit, total: result.count || 0 });
@@ -284,7 +293,6 @@ const getRecordById = asyncHandler(async (req, res) => {
       };
 
       // MedicalExamination attributes
-      pushIfAttr('ExaminationCode', idText);
       pushIfAttr('AppointmentID', idText);
       pushIfAttr('PatientID', idText);
       if (derivedAppointmentId) pushIfAttr('AppointmentID', derivedAppointmentId);
@@ -320,20 +328,30 @@ const getRecordById = asyncHandler(async (req, res) => {
   const plain = rec.get ? rec.get({ plain: true }) : rec;
 
   // Keep a stable response shape for frontend resume flow.
-  if (usingMedicalExaminationModel) {
+    if (usingMedicalExaminationModel) {
+    const formatExaminationIDString = (seq, createdAt) => {
+      if (!seq) return null;
+      const d = createdAt ? new Date(createdAt) : new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `PK-${y}${m}${day}-${String(seq).padStart(6, '0')}`;
+    };
+
+    const computedCode = plain && (plain.ExaminationID || plain.id) ? formatExaminationIDString(plain.ExaminationID || plain.id, plain.CreatedAt || plain.ExaminationDate) : (plain && (plain.ExaminationCode || plain.examinationCode || plain.maPhieuKham)) || null;
     const normalized = {
       ...(rec.toJSON ? rec.toJSON() : {}),
       ...plain,
       id: plain.ExaminationID || plain.id,
       recordId: plain.ExaminationID || plain.id,
-      examinationCode: plain.ExaminationCode || plain.examinationCode,
+      examinationCode: computedCode,
       appointmentId: plain.AppointmentID || plain.appointmentId,
       patientId: plain.PatientID || plain.patientId,
       doctorId: plain.DoctorID || plain.doctorId,
       diagnosis: plain.Diagnosis || plain.diagnosis,
       treatment: plain.TreatmentAdvice || plain.treatment,
       notes: plain.Notes || plain.notes,
-      maPhieuKham: plain.ExaminationCode || plain.maPhieuKham,
+      maPhieuKham: computedCode,
     };
     return successResponse(res, normalized);
   }
@@ -363,7 +381,7 @@ const createRecord = asyncHandler(async (req, res) => {
     let toCreate = payload;
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
       toCreate = {};
-      toCreate.ExaminationCode = payload.maPhieuKham || payload.visitCode || payload.recordCode || payload.ExaminationCode;
+      // Do not persist ExaminationCode column (may have been removed). We'll compute maPhieuKham from ExaminationID after create.
       toCreate.AppointmentID = payload.appointmentId || payload.appointmentRef?.id || payload.AppointmentID;
       toCreate.PatientID = payload.patientId || payload.patient?.id || payload.PatientID;
       toCreate.DoctorID = payload.doctorId || payload.doctorId || payload.DoctorID;
@@ -403,8 +421,6 @@ const createRecord = asyncHandler(async (req, res) => {
         const sequelizeInstance = PreferredRecordForCreate.sequelize;
         const transaction = await sequelizeInstance.transaction();
         try {
-          if (!toCreate.ExaminationCode) toCreate.ExaminationCode = generateVisitCode();
-
           // Avoid MSSQL OUTPUT conflict on tables with triggers by using raw INSERT.
           const now = new Date();
           const createPayload = { ...toCreate };
@@ -432,32 +448,26 @@ const createRecord = asyncHandler(async (req, res) => {
           const seq = insertedRows && insertedRows[0] ? (insertedRows[0].ExaminationID || insertedRows[0].examinationid || insertedRows[0].ExaminationID) : null;
           if (!seq) throw new Error('Không lấy được ExaminationID sau khi tạo hồ sơ khám');
 
+          // Compute a client-visible visit code derived from ExaminationID and created date
           const y = now.getFullYear();
           const m = String(now.getMonth() + 1).padStart(2, '0');
           const d = String(now.getDate()).padStart(2, '0');
           const finalCode = `PK-${y}${m}${d}-${String(seq).padStart(6, '0')}`;
 
-          await sequelizeInstance.query(
-            'UPDATE [MedicalExamination] SET [ExaminationCode] = :code, [UpdatedAt] = :updatedAt WHERE [ExaminationID] = :id',
-            {
-              replacements: { code: finalCode, updatedAt: now, id: seq },
-              transaction,
-              type: QueryTypes.UPDATE,
-            }
-          );
-
+          // Read authoritative row from DB (we won't write ExaminationCode as column no longer exists)
           const rows = await sequelizeInstance.query(
             'SELECT * FROM [MedicalExamination] WHERE [ExaminationID] = :id',
             { replacements: { id: seq }, transaction, type: QueryTypes.SELECT }
           );
-          const plain = (rows && rows[0]) ? rows[0] : { ...createPayload, ExaminationID: seq, ExaminationCode: finalCode };
+          const plain = (rows && rows[0]) ? rows[0] : { ...createPayload, ExaminationID: seq };
 
           await transaction.commit();
 
           const normalized = { ...plain };
           if (!normalized.id) normalized.id = normalized.ExaminationID || normalized.Id || normalized.id;
           if (!normalized.recordId) normalized.recordId = normalized.id;
-          if (!normalized.maPhieuKham) normalized.maPhieuKham = normalized.ExaminationCode || normalized.maPhieuKham;
+          // surface the computed visit code to the client
+          normalized.maPhieuKham = finalCode;
           console.log('createRecord: successfully created (MedicalExamination raw), id=', normalized.id);
           return createdResponse(res, normalized, 'Đã tạo hồ sơ khám');
         } catch (eInner) {
@@ -472,7 +482,14 @@ const createRecord = asyncHandler(async (req, res) => {
       const normalized = { ...plain };
       if (!normalized.id) normalized.id = normalized.ExaminationID || normalized.Id || normalized.id;
       if (!normalized.recordId) normalized.recordId = normalized.id;
-      if (!normalized.maPhieuKham && (normalized.ExaminationCode || normalized.maPhieuKham)) normalized.maPhieuKham = normalized.ExaminationCode || normalized.maPhieuKham;
+      if (!normalized.maPhieuKham) {
+        if (normalized.ExaminationCode) normalized.maPhieuKham = normalized.ExaminationCode;
+        else if (normalized.ExaminationID) {
+          const d = normalized.CreatedAt ? new Date(normalized.CreatedAt) : new Date();
+          const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
+          normalized.maPhieuKham = `PK-${y}${m}${day}-${String(normalized.ExaminationID).padStart(6, '0')}`;
+        }
+      }
       console.log('createRecord: successfully created (legacy), id=', normalized.id);
       return createdResponse(res, normalized, 'Đã tạo hồ sơ khám');
     } catch (e) {

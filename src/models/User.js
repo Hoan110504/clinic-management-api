@@ -204,6 +204,14 @@ export default (sequelize) => {
     if (models && models.MedicalExamination) {
       User.hasMany(models.MedicalExamination, { foreignKey: 'DoctorID', as: 'medicalExaminations' });
     }
+    // Người dùng chỉ định dịch vụ (prefer modern LabOrderRequest)
+    if (models && (models.LabOrderRequest || models.YeuCauDichVu)) {
+      const OrderModel = models.LabOrderRequest || models.YeuCauDichVu;
+      User.hasMany(OrderModel, {
+        foreignKey: OrderModel.rawAttributes && ('OrderedByUserId' in OrderModel.rawAttributes) ? 'OrderedByUserId' : 'NguoiChiDinhId',
+        as: 'YeuCauDichVuChiDinh'
+      });
+    }
   };
 
   return User;

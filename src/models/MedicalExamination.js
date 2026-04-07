@@ -10,7 +10,6 @@ export default (sequelize) => {
     'MedicalExamination',
     {
       ExaminationID: { type: DataTypes.BIGINT, primaryKey: true, allowNull: false, autoIncrement: true, columnName: 'ExaminationID' },
-      ExaminationCode: { type: DataTypes.STRING(50), allowNull: false, columnName: 'ExaminationCode' },
       AppointmentID: { type: DataTypes.STRING(20), allowNull: false, columnName: 'AppointmentID' },
       PatientID: { type: DataTypes.STRING(50), allowNull: false, columnName: 'PatientID' },
       DoctorID: { type: DataTypes.CHAR(36), allowNull: true, columnName: 'DoctorID' },
@@ -58,12 +57,22 @@ export default (sequelize) => {
     }
   );
 
-  // Aliases camelCase
+  // Aliases camelCase - compute readable code from ExaminationID when DB column was removed
+  const formatExaminationIDString = (seq, createdAt) => {
+    if (!seq) return null;
+    const d = createdAt ? new Date(createdAt) : new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `PK-${y}${m}${day}-${String(seq).padStart(6, '0')}`;
+  };
+
   MedicalExamination.prototype.toJSON = function () {
     const raw = this.get ? this.get({ plain: true }) : this;
+    const computedCode = raw && (raw.ExaminationID || raw.id) ? formatExaminationIDString(raw.ExaminationID || raw.id, raw.CreatedAt || raw.ExaminationDate) : (raw && raw.ExaminationCode) || null;
     return {
       id: raw.ExaminationID,
-      examinationCode: raw.ExaminationCode,
+      examinationCode: computedCode,
       appointmentId: raw.AppointmentID,
       patientId: raw.PatientID,
       doctorId: raw.DoctorID,
