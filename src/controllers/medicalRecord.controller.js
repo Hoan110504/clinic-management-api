@@ -320,7 +320,9 @@ const getRecordById = asyncHandler(async (req, res) => {
       }
     } catch (e) {
       console.error('getRecordById (alt lookup) DB error -', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi đọc hồ sơ khám', 500, 'DATABASE_ERROR');
+      console.error('getRecordById (alt lookup) stack -', e && e.stack);
+      // Be forgiving: return null so frontend can continue with draft-only "Tiếp tục khám" flows
+      return successResponse(res, null);
     }
   }
 

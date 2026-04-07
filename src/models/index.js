@@ -68,12 +68,16 @@ export const MedicalRecord = models.MedicalRecord;
 export const Medicine = models.Medicine;
 export const LabService = models.LabService;
 export const LabTest = models.LabTest;
-export const Prescription = models.Prescription || models.DonThuoc;
+export const Prescription = models.Prescription;
+export const LabOrderRequest = models.LabOrderRequest;
+export const Invoice = models.Invoice;
+// Legacy Vietnamese alias
+export const HoaDon = models.Invoice;
 // Also export legacy model names for direct access
-export const DonThuoc = models.DonThuoc;
+
 
 export const Payment = models.Payment;
-export const HoaDon = models.HoaDon;
+
 export const ServiceOrder = models.ServiceOrder;
 // InventoryTransaction: prefer explicit InventoryTransaction model, fall back to legacy GiaoDichKho
 //export const GiaoDichKho = models.GiaoDichKho;

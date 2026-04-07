@@ -3,7 +3,7 @@
  * Handles prescription operations
  */
 import { Op, QueryTypes } from 'sequelize';
-import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction, DonThuoc } from '../models/index.js';
+import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction } from '../models/index.js';
 import { sequelize } from '../models/database.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import {
@@ -83,24 +83,36 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
     });
     ({ count, rows } = result);
   } catch (err) {
-    // Fallback for legacy DB schema where prescriptions table may not exist (use DonThuoc)
+    // Fallback for legacy DB schema where prescriptions table may not exist
     if (err.message && err.message.includes('Invalid object name')) {
-      const legacyWhere = {};
-      if (where.patientId) legacyWhere.MaBenhNhan = where.patientId;
-      if (where.doctorId) legacyWhere.MaBacSi = where.doctorId;
-      if (where.isDispensed !== undefined) {
-        // map boolean to TrangThai enum where possible
-        legacyWhere.TrangThai = where.isDispensed ? DonThuoc?.TRANG_THAI?.DA_CAP_PHAT : DonThuoc?.TRANG_THAI?.CHO_CAP_PHAT;
-      }
+      try {
+        const legacyTable = '[DonThuoc]';
+        const clauses = [];
+        const replacements = {};
+        if (where.patientId) { clauses.push('MaBenhNhan = :patientId'); replacements.patientId = where.patientId; }
+        if (where.doctorId) { clauses.push('MaBacSi = :doctorId'); replacements.doctorId = where.doctorId; }
+        if (where.isDispensed !== undefined) {
+          // map boolean to TrangThai: 0 = Chờ cấp phát, 1 = Đã cấp phát
+          const trangThai = where.isDispensed ? 1 : 0;
+          clauses.push('TrangThai = :trangThai'); replacements.trangThai = trangThai;
+        }
 
-      const legacyOrder = [['NgayKeDon', 'DESC']];
-      const result = await DonThuoc.findAndCountAll({
-        where: legacyWhere,
-        order: legacyOrder,
-        limit,
-        offset,
-      });
-      ({ count, rows } = result);
+        const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+        const orderSql = 'ORDER BY NgayKeDon DESC';
+
+        // Count
+        const countSql = `SELECT COUNT(*) AS cnt FROM ${legacyTable} ${whereSql}`;
+        const countRows = await sequelize.query(countSql, { replacements, type: QueryTypes.SELECT });
+        count = (countRows && countRows[0] && (countRows[0].cnt || countRows[0].CNT || countRows[0].Cnt)) ? Number(countRows[0].cnt || countRows[0].CNT || countRows[0].Cnt) : 0;
+
+        // Rows with pagination
+        const rowsSql = `SELECT * FROM ${legacyTable} ${whereSql} ${orderSql} OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY`;
+        const rowsRes = await sequelize.query(rowsSql, { replacements: { ...replacements, offset: Number(offset) || 0, limit: Number(limit) || 100 }, type: QueryTypes.SELECT });
+        rows = rowsRes || [];
+      } catch (e2) {
+        console.warn('prescription.controller: legacy DonThuoc fallback failed', e2 && e2.message);
+        throw err;
+      }
     } else {
       throw err;
     }
@@ -110,11 +122,15 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
   // return an empty result instead of propagating a DB error to the client.
   if (!rows) {
     try {
-      // Attempt once more to read legacy model; if it fails, return empty set
-      const legacyWhere = {};
-      if (where.patientId) legacyWhere.MaBenhNhan = where.patientId;
-      const result = await DonThuoc.findAndCountAll({ where: legacyWhere, limit, offset });
-      ({ count, rows } = result);
+      // Attempt once more to read legacy table directly; if it fails, return empty set
+      const legacyTable = '[DonThuoc]';
+      const legacyWhere = where.patientId ? `WHERE MaBenhNhan = :patientId` : '';
+      const countSql = `SELECT COUNT(*) AS cnt FROM ${legacyTable} ${legacyWhere}`;
+      const countRows = await sequelize.query(countSql, { replacements: { patientId: where.patientId }, type: QueryTypes.SELECT });
+      count = (countRows && countRows[0] && (countRows[0].cnt || countRows[0].CNT)) ? Number(countRows[0].cnt || countRows[0].CNT) : 0;
+      const rowsSql = `SELECT * FROM ${legacyTable} ${legacyWhere} ORDER BY NgayKeDon DESC OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY`;
+      const rowsRes = await sequelize.query(rowsSql, { replacements: { patientId: where.patientId, offset: Number(offset) || 0, limit: Number(limit) || 100 }, type: QueryTypes.SELECT });
+      rows = rowsRes || [];
     } catch (e) {
       count = 0;
       rows = [];
