@@ -103,8 +103,8 @@ const getAllAppointments = asyncHandler(async (req, res) => {
     where.assignedDoctorId = req.user.id;
   }
 
-  // Parse sort
-  const order = parseSort(sort, ['appointmentDate', 'createdAt', 'timeSlot']);
+  // Parse sort (use DB timestamp column names)
+  const order = parseSort(sort, ['appointment_date', 'created_at', 'time_slot'], 'created_at:desc');
 
   let count, rows;
   try {
@@ -292,7 +292,20 @@ const createAppointment = asyncHandler(async (req, res) => {
   }
   createData.status = statusCode;
 
-  // Create appointment (include status explicitly so DB constraint/default is not relied on)
+  // Generate human-friendly appointment code (stored in Appointment.AppointmentID)
+  try {
+  const last = await Appointment.findOne({ order: [['created_at', 'DESC']], paranoid: false });
+    let nextNum = 1;
+    if (last && last.appointmentId) {
+      const m = String(last.appointmentId).match(/APT(\d+)/);
+      if (m) nextNum = parseInt(m[1], 10) + 1;
+    }
+    createData.appointmentId = `APT${String(nextNum).padStart(3, '0')}`;
+  } catch (e) {
+    createData.appointmentId = `APT001`;
+  }
+
+  // Create appointment (DB will assign numeric identity PK)
   let appointment = await Appointment.create(createData);
 
   // Reload to include associations/fields

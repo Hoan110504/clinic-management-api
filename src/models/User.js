@@ -13,9 +13,11 @@ export default (sequelize) => {
     'User',
     {
       id: {
-        type: DataTypes.UUID,
-        defaultValue: DataTypes.UUIDV4,
+        type: DataTypes.BIGINT,
+        autoIncrement: true,
         primaryKey: true,
+        allowNull: false,
+        field: 'id',
       },
       username: {
         type: DataTypes.STRING(50),
@@ -55,9 +57,15 @@ export default (sequelize) => {
         field: 'full_name',
       },
       role: {
-        type: DataTypes.ENUM(...Object.values(ROLES)),
-        allowNull: false,
+        type: DataTypes.STRING(255),
+        allowNull: true,
         defaultValue: ROLES.PATIENT,
+        validate: {
+          isIn: {
+            args: [Object.values(ROLES)],
+            msg: 'Vai trò không hợp lệ',
+          },
+        },
       },
       phone: {
         type: DataTypes.STRING(15),
@@ -135,6 +143,9 @@ export default (sequelize) => {
       tableName: 'users',
       timestamps: true,
       paranoid: true, // Soft delete
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+      deletedAt: 'deleted_at',
       indexes: [
         { fields: ['username'] },
         { fields: ['email'] },

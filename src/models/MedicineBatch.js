@@ -10,14 +10,15 @@ export default (sequelize) => {
     'MedicineBatch',
     {
       Id: {
-        type: DataTypes.UUID,
-        defaultValue: DataTypes.UUIDV4,
+        type: DataTypes.BIGINT,
+        autoIncrement: true,
         primaryKey: true,
+        allowNull: false,
         field: 'Id',
       },
 
       MedicineId: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.BIGINT,
         allowNull: false,
         references: {
           model: 'Medicine',
@@ -58,6 +59,7 @@ export default (sequelize) => {
 
       Status: {
         type: DataTypes.TINYINT,
+        allowNull: false,
         defaultValue: 1,
         field: 'Status',
       },

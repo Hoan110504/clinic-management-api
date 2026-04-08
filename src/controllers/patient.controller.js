@@ -41,7 +41,7 @@ const getAllPatients = asyncHandler(async (req, res) => {
   }
 
   // Parse sort
-  const order = parseSort(sort, ['createdAt', 'fullName', 'dateOfBirth']);
+  const order = parseSort(sort, ['created_at', 'fullName', 'dateOfBirth'], 'created_at:desc');
 
   const include = [];
 
@@ -355,7 +355,7 @@ const getPatientMedicalRecords = asyncHandler(async (req, res) => {
 
   const { count, rows } = await MedicalRecord.findAndCountAll({
     where: { patientId: id },
-    order: [['createdAt', 'DESC']],
+    order: [['created_at', 'DESC']],
     limit,
     offset,
   });
@@ -435,7 +435,7 @@ const getPatientPayments = asyncHandler(async (req, res) => {
 
   const { count, rows } = await Payment.findAndCountAll({
     where: { patientId: id },
-    order: [['createdAt', 'DESC']],
+    order: [['created_at', 'DESC']],
     limit,
     offset,
   });

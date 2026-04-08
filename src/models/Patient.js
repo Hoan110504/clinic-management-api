@@ -10,18 +10,16 @@ export default (sequelize) => {
     'Patient',
     {
       id: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.BIGINT,
+        autoIncrement: true,
         primaryKey: true,
         allowNull: false,
+        field: 'id',
       },
       userId: {
-        type: DataTypes.UUID,
+        type: DataTypes.CHAR(36),
         allowNull: true,
         field: 'user_id',
-        references: {
-          model: 'users',
-          key: 'id',
-        },
       },
       fullName: {
         type: DataTypes.STRING(100),
@@ -58,7 +56,6 @@ export default (sequelize) => {
       idNumber: {
         type: DataTypes.STRING(20),
         allowNull: true,
-        unique: true,
         field: 'id_number',
       },
       medicalHistory: {
@@ -94,31 +91,16 @@ export default (sequelize) => {
       tableName: 'patients',
       timestamps: true,
       paranoid: true,
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+      deletedAt: 'deleted_at',
       indexes: [
         { fields: ['full_name'] },
         { fields: ['phone'] },
         { fields: ['id_number'] },
         { fields: ['user_id'] },
       ],
-      hooks: {
-        beforeValidate: async (patient) => {
-          if (!patient.id) {
-            const lastPatient = await Patient.findOne({
-              order: [['createdAt', 'DESC']],
-              paranoid: false,
-            });
-
-            let nextNum = 1;
-            if (lastPatient && lastPatient.id) {
-              const match = lastPatient.id.match(/BN(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
-              }
-            }
-            patient.id = `BN${String(nextNum).padStart(3, '0')}`;
-          }
-        },
-      },
+      // Model fields map directly to existing DB columns (SSMS schema).
     }
   );
 
@@ -137,7 +119,7 @@ export default (sequelize) => {
     }
     // Link to MedicalExamination when present
     if (models && models.MedicalExamination) {
-      Patient.hasMany(models.MedicalExamination, { foreignKey: 'PatientID', as: 'examinations' });
+      Patient.hasMany(models.MedicalExamination, { foreignKey: 'PatientId', as: 'examinations' });
     }
   };
 

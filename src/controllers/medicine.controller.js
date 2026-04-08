@@ -11,6 +11,7 @@ import {
   createdResponse,
   paginatedResponse,
   noContentResponse,
+  errorResponse,
 } from '../utils/response.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
@@ -48,7 +49,9 @@ const buildPerformerLookup = async (performerIds = []) => {
       console.error('buildPerformerLookup: failed to read users', err?.message || err);
       return [];
     }),
-    sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'HoTen', 'TenDangNhap', 'VaiTro', 'MaNguoiDung'], where: { Id: { [Op.in]: rawIds } }, raw: true }).catch(() => []),
+    (sequelize.models && sequelize.models.NguoiDung && typeof sequelize.models.NguoiDung.findAll === 'function'
+      ? sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'HoTen', 'TenDangNhap', 'VaiTro', 'MaNguoiDung'], where: { Id: { [Op.in]: rawIds } }, raw: true }).catch(() => [])
+      : Promise.resolve([])),
   ]);
 
   // Precompute dynamic codes only for those without stored code
@@ -60,7 +63,9 @@ const buildPerformerLookup = async (performerIds = []) => {
     : [];
 
   const allLegacyUsersInRoles = legacyRoles.length
-    ? await sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'VaiTro'], where: { VaiTro: { [Op.in]: legacyRoles } }, raw: true }).catch(() => [])
+    ? await (sequelize.models && sequelize.models.NguoiDung && typeof sequelize.models.NguoiDung.findAll === 'function'
+        ? sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'VaiTro'], where: { VaiTro: { [Op.in]: legacyRoles } }, raw: true }).catch(() => [])
+        : Promise.resolve([]))
     : [];
 
   const appCodeMap = new Map();
@@ -256,9 +261,31 @@ const updateMedicine = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const updateData = req.body;
 
-  const medicine = await Medicine.findByPk(id);
+  let medicine = await Medicine.findByPk(id);
   if (!medicine) {
-    throw new NotFoundError('Không tìm thấy thuốc');
+    // Try flexible lookups: numeric id, alternative keys (MaThuoc/Code/Name)
+    console.warn(`adjustInventory: Medicine.findByPk(${id}) returned null, attempting fallback lookups`);
+    const numId = Number(id);
+    if (!Number.isNaN(numId)) {
+      medicine = await Medicine.findByPk(numId).catch(() => null);
+    }
+    if (!medicine) {
+      const rawAttrs = Medicine.rawAttributes || {};
+      const altFields = ['Id', 'MaThuoc', 'Code', 'code', 'Name', 'name'];
+      const orClauses = [];
+      for (const f of altFields) {
+        if (Object.prototype.hasOwnProperty.call(rawAttrs, f)) {
+          orClauses.push({ [f]: id });
+        }
+      }
+      if (orClauses.length) {
+        medicine = await Medicine.findOne({ where: { [Op.or]: orClauses } }).catch(() => null);
+      }
+    }
+    if (!medicine) {
+      console.error(`adjustInventory: unable to resolve Medicine for id='${id}'`);
+      throw new NotFoundError('Không tìm thấy thuốc');
+    }
   }
 
   // Don't allow direct quantity update - stock is tracked by transactions
@@ -298,13 +325,45 @@ const deleteMedicine = asyncHandler(async (req, res) => {
  * POST /api/medicines/:id/inventory
  */
 const adjustInventory = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { type, quantity, reason, referenceType, referenceId, notes, soLo, batchNumber, hanSuDung, ngaySanXuat, giaNhap } = req.body;
+  // Accept medicine id from route param or from request body (some clients send it in body)
+  const medParam = (req.params && req.params.id) || req.body.medicineId || (req.body.medicine && req.body.medicine.id) || null;
+  const { type, quantity, reason, referenceType, referenceId, notes, soLo, batchNumber, hanSuXung, hanSuDung, ngaySanXuat, giaNhap } = req.body;
   const batchCode = soLo || batchNumber || null;
 
-  const medicine = await Medicine.findByPk(id);
+  // Resolve medicine using multiple fallbacks to avoid false 404s
+  let medicine = null;
+  if (medParam) medicine = await Medicine.findByPk(medParam).catch(() => null);
+  if (!medicine && medParam) {
+    const numId = Number(medParam);
+    if (!Number.isNaN(numId)) {
+      medicine = await Medicine.findByPk(numId).catch(() => null);
+    }
+  }
+  if (!medicine && medParam) {
+    const rawAttrs = Medicine.rawAttributes || {};
+    const altFields = ['Id', 'MaThuoc', 'Code', 'code', 'Name', 'name'];
+    const orClauses = [];
+    for (const f of altFields) {
+      if (Object.prototype.hasOwnProperty.call(rawAttrs, f)) {
+        orClauses.push({ [f]: medParam });
+      }
+    }
+    if (orClauses.length) {
+      medicine = await Medicine.findOne({ where: { [Op.or]: orClauses } }).catch(() => null);
+    }
+  }
+  if (!medicine && req.params && req.params.id) {
+    medicine = await Medicine.findByPk(req.params.id).catch(() => null);
+  }
   if (!medicine) {
-    throw new NotFoundError('Không tìm thấy thuốc');
+    console.error(`adjustInventory: unable to resolve Medicine for id param='${req.params?.id}', medParam='${medParam}'`);
+    // Provide a helpful 404 with diagnostic details to assist debugging client-server mismatch
+    const details = { medParam: medParam || null, paramsId: req.params?.id || null, bodyMedicineId: req.body?.medicineId || null };
+    try {
+      const total = await Medicine.count().catch(() => null);
+      if (total !== null) details.availableMedicines = total;
+    } catch {}
+    return errorResponse(res, 'Không tìm thấy thuốc', 404, 'NOT_FOUND', details);
   }
 
   const parsedQuantity = Number(quantity);
@@ -491,43 +550,120 @@ const adjustInventory = asyncHandler(async (req, res) => {
     throw new BadRequestError('Không tìm thấy lô thuốc tương ứng với soLo đã cung cấp');
   }
 
-  const created = await InventoryTransaction.create({
-    MedicineBatchId: batch ? batch.Id : null,
-    MedicineId: medicine.Id,
-    TransactionType: mapTypeToLoai(type),
-    Quantity: parsedQuantity,
-    QuantityBefore: previousQuantity,
-    QuantityAfter: newQuantity,
-    Reason: reason,
-    ReferenceType: mapRefType(referenceType),
-    ReferenceId: (() => {
-      const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
-      return isGuid(referenceId) ? referenceId : null;
-    })(),
-    PerformedByUserId: req.user.id,
-    Note: (() => {
-      if (!notes && !referenceId) return null;
-      const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
-      let base = {};
-      if (notes) {
-        try {
-          const parsed = JSON.parse(notes);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) base = parsed;
-          else base._raw = String(notes);
-        } catch {
-          base._raw = String(notes);
+  let created;
+  try {
+    created = await InventoryTransaction.create({
+      MedicineBatchId: batch ? batch.Id : null,
+      MedicineId: medicine.Id,
+      TransactionType: mapTypeToLoai(type),
+      Quantity: parsedQuantity,
+      QuantityBefore: previousQuantity,
+      QuantityAfter: newQuantity,
+      Reason: reason,
+      ReferenceType: mapRefType(referenceType),
+      PerformedByUserId: req.user.id,
+      // Use DB server timestamp to avoid timezone string conversion issues
+      CreatedAt: sequelize.literal('GETDATE()'),
+      Note: (() => {
+        if (!notes && !referenceId) return null;
+        const isGuid = (s) => typeof s === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
+        let base = {};
+        if (notes) {
+          try {
+            const parsed = JSON.parse(notes);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) base = parsed;
+            else base._raw = String(notes);
+          } catch {
+            base._raw = String(notes);
+          }
         }
-      }
-      if (referenceId && !isGuid(referenceId)) base.referenceText = String(referenceId);
-      const keys = Object.keys(base);
-      if (keys.length === 1 && keys[0] === '_raw') return base._raw || null;
+        if (referenceId && !isGuid(referenceId)) base.referenceText = String(referenceId);
+        const keys = Object.keys(base);
+        if (keys.length === 1 && keys[0] === '_raw') return base._raw || null;
+        try {
+          return Object.keys(base).length ? JSON.stringify(base) : null;
+        } catch {
+          return notes || null;
+        }
+      })(),
+    });
+  } catch (err) {
+    console.error('InventoryTransaction.create failed:', err);
+    // Return detailed DB error for debugging (remove or sanitize in production)
+    const dbMsg = err && err.original && err.original.message ? err.original.message : (err && err.message) || 'unknown db error';
+    const payload = {
+      message: dbMsg,
+      original: err && err.original ? err.original : null,
+      sql: err && err.sql ? err.sql : null,
+      stack: err && err.stack ? err.stack : null,
+    };
+      // Try fallback: raw INSERT without OUTPUT (some SQL Server setups fail with OUTPUT)
       try {
-        return Object.keys(base).length ? JSON.stringify(base) : null;
-      } catch {
-        return notes || null;
+        const intendedCols = ['MedicineBatchId','MedicineId','TransactionType','Quantity','QuantityBefore','QuantityAfter','Reason','ReferenceType','ReferenceId','PerformedByUserId','CreatedAt','Note'];
+
+        // Fetch actual columns from the DB for InventoryTransaction and only use existing ones
+        const colRows = await sequelize.query(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'InventoryTransaction' AND TABLE_SCHEMA = 'dbo'`,
+          { type: sequelize.QueryTypes.SELECT }
+        );
+        const existingColsSet = new Set(colRows.map(r => r.COLUMN_NAME));
+        const cols = intendedCols.filter(c => existingColsSet.has(c));
+
+        const placeholders = cols.map((c, i) => `:p${i}`).join(',');
+        const colList = cols.map(c => `[${c}]`).join(',');
+
+        const valuesMap = {
+          MedicineBatchId: batch ? batch.Id : null,
+          MedicineId: medicine.Id,
+          TransactionType: mapTypeToLoai(type),
+          Quantity: parsedQuantity,
+          QuantityBefore: previousQuantity,
+          QuantityAfter: newQuantity,
+          Reason: reason,
+          ReferenceType: mapRefType(referenceType),
+          ReferenceId: null,
+          PerformedByUserId: req.user && req.user.id ? req.user.id : null,
+          // CreatedAt: use GETDATE() in raw SQL below instead of sending a timezone string
+          CreatedAt: null,
+          Note: (() => {
+            if (!notes && !referenceId) return null;
+            let base = {};
+            if (notes) {
+              try {
+                const parsed = JSON.parse(notes);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) base = parsed;
+                else base._raw = String(notes);
+              } catch { base._raw = String(notes); }
+            }
+            if (referenceId) base.referenceText = String(referenceId);
+            try { return Object.keys(base).length ? JSON.stringify(base) : null; } catch { return notes || null; }
+          })(),
+        };
+
+        // Build replacements but substitute GETDATE() for CreatedAt when present
+        const replacements = {};
+        const finalPlaceholders = cols.map((c, i) => {
+          if (c === 'CreatedAt') return 'GETDATE()';
+          replacements[`p${i}`] = valuesMap[c];
+          return `:p${i}`;
+        }).join(',');
+
+        const insertSql = `INSERT INTO [InventoryTransaction] (${colList}) VALUES (${finalPlaceholders}); SELECT CAST(SCOPE_IDENTITY() AS BIGINT) AS Id;`;
+        const inserted = await sequelize.query(insertSql, { replacements, type: sequelize.QueryTypes.SELECT });
+        const newId = inserted && inserted[0] && inserted[0].Id ? inserted[0].Id : null;
+        if (newId) {
+          const createdRow = await InventoryTransaction.findByPk(newId);
+          if (createdRow) {
+            created = createdRow;
+          }
+        }
+        if (!created) return res.status(500).json({ success: false, error: { code: 'DATABASE_ERROR', message: 'Fallback insert failed', detail: payload } });
+      } catch (rawErr) {
+        console.error('Fallback raw INSERT failed:', rawErr);
+        return res.status(500).json({ success: false, error: { code: 'DATABASE_ERROR', message: 'DB insert failed', detail: payload } });
       }
-    })(),
-  });
+      // continue with created if fallback succeeded
+  }
 
   // Reload the created record to get the server-generated ThoiGianTao timestamp
   await created.reload();

@@ -9,23 +9,25 @@ export default (sequelize) => {
     'Prescription',
     {
       id: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.BIGINT,
+        autoIncrement: true,
         primaryKey: true,
         allowNull: false,
+        field: 'Id',
       },
       medicalRecordId: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.BIGINT,
         allowNull: false,
-        field: 'medical_record_id',
+        field: 'MedicalRecordId',
         references: {
-          model: 'medical_records',
-          key: 'id',
+          model: 'MedicalExamination',
+          key: 'ExaminationID',
         },
       },
       patientId: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.BIGINT,
         allowNull: false,
-        field: 'patient_id',
+        field: 'PatientId',
         references: {
           model: 'patients',
           key: 'id',
@@ -34,12 +36,12 @@ export default (sequelize) => {
       patientName: {
         type: DataTypes.STRING(100),
         allowNull: false,
-        field: 'patient_name',
+        field: 'PatientName',
       },
       doctorId: {
-        type: DataTypes.UUID,
+        type: DataTypes.BIGINT,
         allowNull: false,
-        field: 'doctor_id',
+        field: 'DoctorId',
         references: {
           model: 'users',
           key: 'id',
@@ -48,18 +50,19 @@ export default (sequelize) => {
       doctorName: {
         type: DataTypes.STRING(100),
         allowNull: false,
-        field: 'doctor_name',
+        field: 'DoctorName',
       },
       prescriptionDate: {
         type: DataTypes.DATE,
         allowNull: false,
         defaultValue: DataTypes.NOW,
-        field: 'prescription_date',
+        field: 'PrescriptionDate',
       },
       // Items - stored as JSON array
       items: {
-        type: DataTypes.TEXT,
+        type: DataTypes.TEXT('long'),
         allowNull: false,
+        field: 'Items',
         get() {
           const rawValue = this.getDataValue('items');
           return rawValue ? JSON.parse(rawValue) : [];
@@ -69,28 +72,30 @@ export default (sequelize) => {
         },
       },
       diagnosis: {
-        type: DataTypes.TEXT,
+        type: DataTypes.TEXT('long'),
         allowNull: true,
+        field: 'Diagnosis',
       },
       notes: {
-        type: DataTypes.TEXT,
+        type: DataTypes.TEXT('long'),
         allowNull: true,
+        field: 'Notes',
       },
       // Dispensing status
       isDispensed: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,
-        field: 'is_dispensed',
+        field: 'IsDispensed',
       },
       dispensedAt: {
         type: DataTypes.DATE,
         allowNull: true,
-        field: 'dispensed_at',
+        field: 'DispensedAt',
       },
       dispensedById: {
-        type: DataTypes.UUID,
+        type: DataTypes.BIGINT,
         allowNull: true,
-        field: 'dispensed_by_id',
+        field: 'DispensedById',
         references: {
           model: 'users',
           key: 'id',
@@ -99,41 +104,23 @@ export default (sequelize) => {
       dispensedByName: {
         type: DataTypes.STRING(100),
         allowNull: true,
-        field: 'dispensed_by_name',
+        field: 'DispensedByName',
       },
     },
     {
-      tableName: 'prescriptions',
+      tableName: 'Prescriptions',
       timestamps: true,
+      createdAt: 'CreatedAt',
+      updatedAt: 'UpdatedAt',
       paranoid: true,
+      deletedAt: 'DeletedAt',
       indexes: [
-        { fields: ['medical_record_id'] },
-        { fields: ['patient_id'] },
-        { fields: ['doctor_id'] },
-        { fields: ['prescription_date'] },
-        { fields: ['is_dispensed'] },
+        { fields: ['MedicalRecordId'] },
+        { fields: ['PatientId'] },
+        { fields: ['DoctorId'] },
+        { fields: ['PrescriptionDate'] },
+        { fields: ['IsDispensed'] },
       ],
-      hooks: {
-        beforeCreate: async (prescription) => {
-          if (!prescription.id) {
-            const PrescriptionModel = sequelize.models.Prescription;
-            const lastPrescription = await PrescriptionModel.findOne({
-              order: [['createdAt', 'DESC']],
-              paranoid: false,
-            });
-
-            let nextNum = 1;
-            if (lastPrescription && lastPrescription.id) {
-              const match = lastPrescription.id.match(/DT(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
-              }
-            }
-
-            prescription.id = `DT${String(nextNum).padStart(3, '0')}`;
-          }
-        },
-      },
     }
   );
 
@@ -153,8 +140,8 @@ export default (sequelize) => {
       });
     }
 
-    if (models && models.MedicalRecord) {
-      Prescription.belongsTo(models.MedicalRecord, {
+    if (models && models.MedicalExamination) {
+      Prescription.belongsTo(models.MedicalExamination, {
         foreignKey: 'medicalRecordId',
         as: 'medicalRecord',
       });

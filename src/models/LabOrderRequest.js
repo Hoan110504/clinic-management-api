@@ -2,38 +2,37 @@
  * LabOrderRequest Model
  * Manage clinical service requests
  */
+import { DataTypes } from 'sequelize';
 
-module.exports = (sequelize, DataTypes) => {
+export default (sequelize) => {
   const LabOrderRequest = sequelize.define('LabOrderRequest', {
     Id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
       primaryKey: true,
-      field: 'Id'
+      field: 'Id',
+      allowNull: false
     },
-
-    MedicalRecordId: {           // MaHoSoKham
-      type: DataTypes.UUID,
+    MedicalRecordId: {
+      type: DataTypes.BIGINT,
       allowNull: false,
       field: 'MedicalRecordId',
       references: {
-        model: 'MedicalExamination', // or table where medical records are stored
+        model: 'MedicalExamination',
         key: 'ExaminationID'
       }
     },
-
-    PatientId: {                 // MaBenhNhan
-      type: DataTypes.UUID,
+    PatientId: {
+      type: DataTypes.BIGINT,
       allowNull: false,
       field: 'PatientId',
       references: {
-        model: 'Patients',
+        model: 'patients',
         key: 'id'
       }
     },
-
-    OrderedByUserId: {           // NguoiChiDinhId
-      type: DataTypes.UUID,
+    OrderedByUserId: {
+      type: DataTypes.BIGINT,
       allowNull: false,
       field: 'OrderedByUserId',
       references: {
@@ -44,17 +43,21 @@ module.exports = (sequelize, DataTypes) => {
 
     Status: {                    // TrangThai
       type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 0,
       field: 'Status'
     },
 
     OrderedAt: {                 // NgayChiDinh
       type: DataTypes.DATE,
+      allowNull: false,
       defaultValue: DataTypes.NOW,
       field: 'OrderedAt'
     },
 
     DoctorNotes: {               // GhiChuBacSi
-      type: DataTypes.TEXT,
+      type: DataTypes.TEXT('long'),
+      allowNull: true,
       field: 'DoctorNotes'
     }
   }, {
@@ -85,16 +88,16 @@ module.exports = (sequelize, DataTypes) => {
     }
 
     // Belongs to Patient
-    if (models && models.Patients) {
-      LabOrderRequest.belongsTo(models.Patients, {
+    if (models && models.Patient) {
+      LabOrderRequest.belongsTo(models.Patient, {
         foreignKey: 'PatientId',
         as: 'Patient'
       });
     }
 
     // Ordered by User
-    if (models && models.users) {
-      LabOrderRequest.belongsTo(models.users, {
+    if (models && models.User) {
+      LabOrderRequest.belongsTo(models.User, {
         foreignKey: 'OrderedByUserId',
         as: 'OrderedBy'
       });
@@ -105,14 +108,6 @@ module.exports = (sequelize, DataTypes) => {
       LabOrderRequest.hasMany(models.LabOrderRequestDetail, {
         foreignKey: 'LabOrderRequestId',
         as: 'OrderDetails'
-      });
-    }
-
-    // Has many LabResults
-    if (models && models.LabOrder) {
-      LabOrderRequest.hasMany(models.LabOrder, {
-        foreignKey: 'LabOrderID',
-        as: 'LabResults'
       });
     }
   };

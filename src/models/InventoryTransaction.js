@@ -10,7 +10,7 @@ export default (sequelize) => {
     'InventoryTransaction',
     {
       Id: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.BIGINT,
         autoIncrement: true,
         primaryKey: true,
         allowNull: false,
@@ -18,7 +18,7 @@ export default (sequelize) => {
       },
 
       MedicineBatchId: {
-        type: DataTypes.UUID,
+        type: DataTypes.BIGINT,
         allowNull: true,
         references: {
           model: 'MedicineBatch',
@@ -28,7 +28,7 @@ export default (sequelize) => {
       },
 
       MedicineId: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.BIGINT,
         allowNull: true,
         references: {
           model: 'Medicine',
@@ -39,6 +39,7 @@ export default (sequelize) => {
 
       TransactionType: {
         type: DataTypes.TINYINT,
+        allowNull: true,
         field: 'TransactionType',
       },
 
@@ -50,11 +51,13 @@ export default (sequelize) => {
 
       QuantityBefore: {
         type: DataTypes.INTEGER,
+        allowNull: true,
         field: 'QuantityBefore',
       },
 
       QuantityAfter: {
         type: DataTypes.INTEGER,
+        allowNull: true,
         field: 'QuantityAfter',
       },
 
@@ -65,33 +68,30 @@ export default (sequelize) => {
 
       ReferenceType: {
         type: DataTypes.TINYINT,
+        allowNull: true,
         field: 'ReferenceType',
       },
 
-      ReferenceId: {
-        // ReferenceId may be either a UUID (legacy) or a simple string/number id
-        // keep flexible by using STRING so it can hold both GUIDs and numeric refs
-        type: DataTypes.STRING(100),
-        field: 'ReferenceId',
-      },
+      // Note: legacy schema does not include a separate ReferenceId column.
+      // Reference information is captured via `ReferenceType` and `Note`.
 
       PerformedByUserId: {
-        type: DataTypes.CHAR(36), // vì bảng users.id của bạn là char(36)
-        references: {
-          model: 'users',
-          key: 'id',
-        },
+        // legacy column stores GUIDs (char(36)) in some deployments; keep flexible
+        type: DataTypes.CHAR(36),
+        allowNull: true,
         field: 'PerformedByUserId',
       },
 
       CreatedAt: {
         type: DataTypes.DATE,
-        defaultValue: sequelize.literal('GETDATE()'),
+        allowNull: true,
+        defaultValue: DataTypes.NOW,
         field: 'CreatedAt',
       },
 
       Note: {
-        type: DataTypes.TEXT,
+        type: DataTypes.TEXT('long'),
+        allowNull: true,
         field: 'Note',
       },
     },

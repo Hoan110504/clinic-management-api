@@ -2,28 +2,30 @@
  * PrescriptionItem Model
  * Details of medicines in a prescription
  */
+import { DataTypes } from 'sequelize';
 
-module.exports = (sequelize, DataTypes) => {
+export default (sequelize) => {
   const PrescriptionItem = sequelize.define('PrescriptionItem', {
     Id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
       primaryKey: true,
+      allowNull: false,
       field: 'Id'
     },
 
     PrescriptionId: {
-      type: DataTypes.UUID,
+      type: DataTypes.BIGINT,
       allowNull: false,
       field: 'PrescriptionId',
       references: {
-        model: 'Prescription',
+        model: 'Prescriptions',
         key: 'Id'
       }
     },
 
     MedicineId: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.BIGINT,
       allowNull: false,
       field: 'MedicineId',
       references: {
@@ -46,14 +48,15 @@ module.exports = (sequelize, DataTypes) => {
 
     Dosage: {
       type: DataTypes.STRING(510),
+      allowNull: true,
       field: 'Dosage'
     },
 
     UsageInstructions: {
       type: DataTypes.STRING(510),
+      allowNull: true,
       field: 'UsageInstructions'
     }
-
   }, {
     tableName: 'PrescriptionItem',
     timestamps: false,
@@ -64,20 +67,22 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   PrescriptionItem.associate = (models) => {
-
-    // Belongs to Prescription
-    PrescriptionItem.belongsTo(models.Prescription, {
-      foreignKey: 'PrescriptionId',
-      as: 'Prescription',
-      onDelete: 'CASCADE'
-    });
+    // Belongs to Prescription (singular model name)
+    if (models && models.Prescription) {
+      PrescriptionItem.belongsTo(models.Prescription, {
+        foreignKey: 'PrescriptionId',
+        as: 'Prescription',
+        onDelete: 'CASCADE'
+      });
+    }
 
     // Belongs to Medicine
-    PrescriptionItem.belongsTo(models.Medicine, {
-      foreignKey: 'MedicineId',
-      as: 'Medicine'
-    });
-
+    if (models && models.Medicine) {
+      PrescriptionItem.belongsTo(models.Medicine, {
+        foreignKey: 'MedicineId',
+        as: 'Medicine'
+      });
+    }
   };
 
   return PrescriptionItem;

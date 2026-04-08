@@ -1,67 +1,67 @@
 /**
- * Invoice Model (maps to legacy `HoaDon` table)
+ * Invoice Model
  * Represents invoices for services, prescriptions, or payments
  */
-module.exports = (sequelize, DataTypes) => {
-  const Invoice = sequelize.define('Invoice', {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-      field: 'Id'
+import { DataTypes } from 'sequelize';
+
+export default (sequelize) => {
+  const Invoice = sequelize.define(
+    'Invoice',
+    {
+      id: {
+        type: DataTypes.BIGINT,
+        autoIncrement: true,
+        primaryKey: true,
+        allowNull: false,
+        field: 'Id',
+      },
+      patientId: {
+        type: DataTypes.BIGINT,
+        allowNull: false,
+        field: 'PatientId',
+        references: {
+          model: 'patients',
+          key: 'id',
+        },
+      },
+      invoiceDate: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+        field: 'InvoiceDate',
+      },
+      totalAmount: {
+        type: DataTypes.DECIMAL(18, 2),
+        allowNull: false,
+        field: 'TotalAmount',
+      },
+      status: {
+        type: DataTypes.TINYINT,
+        allowNull: false,
+        field: 'Status',
+      },
+      createdAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+        field: 'CreatedAt',
+      },
+      updatedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: 'UpdatedAt',
+      },
     },
-    patientId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      field: 'MaBenhNhan',
-      references: {
-        model: 'BenhNhan',
-        key: 'Id'
-      }
-    },
-    medicalRecordId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      field: 'MaHoSoKham',
-      references: {
-        model: 'HoSoKham',
-        key: 'Id'
-      }
-    },
-    totalAmount: {
-      type: DataTypes.DECIMAL(18, 2),
-      allowNull: true,
-      field: 'TongTien'
-    },
-    discount: {
-      type: DataTypes.DECIMAL(18, 2),
-      allowNull: true,
-      field: 'GiamGia'
-    },
-    paidAmount: {
-      type: DataTypes.DECIMAL(18, 2),
-      allowNull: true,
-      field: 'ThanhTien'
-    },
-    status: {
-      type: DataTypes.TINYINT,
-      allowNull: true,
-      field: 'TrangThai'
-    },
-    issuedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-      field: 'NgayTao'
+    {
+      tableName: 'Invoices',
+      timestamps: false,
+      indexes: [
+        { fields: ['PatientId'] },
+        { fields: ['InvoiceDate'] },
+        { fields: ['Status'] },
+      ],
     }
-  }, {
-    tableName: 'HoaDon',
-    timestamps: false,
-    indexes: [
-      { fields: ['MaBenhNhan'] },
-      { fields: ['MaHoSoKham'] },
-      { fields: ['TrangThai'] }
-    ]
-  });
+  );
 
   // Enum for status
   Invoice.STATUS = {
@@ -72,11 +72,7 @@ module.exports = (sequelize, DataTypes) => {
 
   Invoice.associate = (models) => {
     if (models.Patient) {
-      Invoice.belongsTo(models.Patient, { foreignKey: 'MaBenhNhan', as: 'patient' });
-    }
-    if (models.MedicalRecord || models.HoSoKham) {
-      const MR = models.MedicalRecord || models.HoSoKham;
-      Invoice.belongsTo(MR, { foreignKey: 'MaHoSoKham', as: 'medicalRecord' });
+      Invoice.belongsTo(models.Patient, { foreignKey: 'patientId', as: 'patient' });
     }
   };
 

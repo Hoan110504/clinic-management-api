@@ -1,7 +1,6 @@
 /**
  * MedicalExamination Model
- * Maps to dbo.MedicalExamination. Provides full fields for doctor's
- * "Khám và tư vấn" workflow.
+ * Maps to dbo.MedicalExamination
  */
 import { DataTypes } from 'sequelize';
 
@@ -9,43 +8,28 @@ export default (sequelize) => {
   const MedicalExamination = sequelize.define(
     'MedicalExamination',
     {
-      ExaminationID: { type: DataTypes.BIGINT, primaryKey: true, allowNull: false, autoIncrement: true, columnName: 'ExaminationID' },
-      AppointmentID: { type: DataTypes.STRING(20), allowNull: false, columnName: 'AppointmentID' },
-      PatientID: { type: DataTypes.STRING(50), allowNull: false, columnName: 'PatientID' },
-      DoctorID: { type: DataTypes.CHAR(36), allowNull: true, columnName: 'DoctorID' },
-      ExaminationDate: { type: DataTypes.DATE, allowNull: true, columnName: 'ExaminationDate' },
+      ExaminationID: { type: DataTypes.BIGINT, primaryKey: true, allowNull: false, autoIncrement: true, field: 'ExaminationID' },
+      AppointmentID: { type: DataTypes.STRING(50), allowNull: false, field: 'AppointmentID' },
+      PatientId: { type: DataTypes.BIGINT, allowNull: true, field: 'PatientId' },
+      DoctorID: { type: DataTypes.BIGINT, allowNull: true, field: 'DoctorID' },
+      ExaminationDate: { type: DataTypes.DATE, allowNull: true, field: 'ExaminationDate' },
 
-      // I. TRIỆU CHỨNG
-      Symptoms: { type: DataTypes.TEXT, allowNull: true, columnName: 'Symptoms' },
+      Symptoms: { type: DataTypes.TEXT('long'), allowNull: true, field: 'Symptoms' },
+      BloodPressure: { type: DataTypes.STRING(20), allowNull: true, field: 'BloodPressure' },
+      Pulse: { type: DataTypes.INTEGER, allowNull: true, field: 'Pulse' },
+      Temperature: { type: DataTypes.DECIMAL(5, 2), allowNull: true, field: 'Temperature' },
+      SpO2: { type: DataTypes.INTEGER, allowNull: true, field: 'SpO2' },
+      RespirationRate: { type: DataTypes.INTEGER, allowNull: true, field: 'RespirationRate' },
+      Weight: { type: DataTypes.DECIMAL(8, 2), allowNull: true, field: 'Weight' },
+      Height: { type: DataTypes.DECIMAL(8, 2), allowNull: true, field: 'Height' },
+      BMI: { type: DataTypes.DECIMAL(8, 2), allowNull: true, field: 'BMI' },
 
-      // II. CHỈ SỐ SỨC KHỎE
-      BloodPressure: { type: DataTypes.STRING(20), allowNull: true, columnName: 'BloodPressure' },
-      Pulse: { type: DataTypes.INTEGER, allowNull: true, columnName: 'Pulse' },
-      Temperature: { type: DataTypes.DECIMAL(4,1), allowNull: true, columnName: 'Temperature' },
-      SpO2: { type: DataTypes.INTEGER, allowNull: true, columnName: 'SpO2' },
-      RespirationRate: { type: DataTypes.INTEGER, allowNull: true, columnName: 'RespirationRate' },
-      Weight: { type: DataTypes.DECIMAL(5,2), allowNull: true, columnName: 'Weight' },
-      Height: { type: DataTypes.DECIMAL(5,2), allowNull: true, columnName: 'Height' },
-      BMI: { type: DataTypes.DECIMAL(5,2), allowNull: true, columnName: 'BMI' },
-
-      // III. CHẨN ĐOÁN & HƯỚNG ĐIỀU TRỊ
-      Diagnosis: { type: DataTypes.TEXT, allowNull: true, columnName: 'Diagnosis' },
-      ICD10Code: { type: DataTypes.STRING(20), allowNull: true, columnName: 'ICD10Code' },
-      TreatmentAdvice: { type: DataTypes.TEXT, allowNull: true, columnName: 'TreatmentAdvice' },
-      Notes: { type: DataTypes.TEXT, allowNull: true, columnName: 'Notes' },
-      ReExaminationDate: { type: DataTypes.DATEONLY, allowNull: true, columnName: 'ReExaminationDate' },
-
-      // IV. CHỈ ĐỊNH CẬN LÂM SÀNG
-      LabOrders: { type: DataTypes.TEXT, allowNull: true, columnName: 'LabOrders' },
-      ImagingOrders: { type: DataTypes.TEXT, allowNull: true, columnName: 'ImagingOrders' },
-      ECGOrders: { type: DataTypes.TEXT, allowNull: true, columnName: 'ECGOrders' },
-      LabResults: { type: DataTypes.TEXT, allowNull: true, columnName: 'LabResults' },
-      ImagingResults: { type: DataTypes.TEXT, allowNull: true, columnName: 'ImagingResults' },
-      ECGResults: { type: DataTypes.TEXT, allowNull: true, columnName: 'ECGResults' },
-
-      // V. KÊ ĐƠN THUỐC
-      PrescriptionID: { type: DataTypes.UUID, allowNull: true, columnName: 'PrescriptionID' },
-      PrescriptionStatus: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0, columnName: 'PrescriptionStatus' },
+      Diagnosis: { type: DataTypes.TEXT('long'), allowNull: true, field: 'Diagnosis' },
+      ICD10Code: { type: DataTypes.STRING(20), allowNull: true, field: 'ICD10Code' },
+      TreatmentAdvice: { type: DataTypes.TEXT('long'), allowNull: true, field: 'TreatmentAdvice' },
+      Notes: { type: DataTypes.TEXT('long'), allowNull: true, field: 'Notes' },
+      ReExaminationDate: { type: DataTypes.DATEONLY, allowNull: true, field: 'ReExaminationDate' },
+      PrescriptionStatus: { type: DataTypes.TINYINT, allowNull: true, field: 'PrescriptionStatus' },
     },
     {
       tableName: 'MedicalExamination',
@@ -53,11 +37,10 @@ export default (sequelize) => {
       createdAt: 'CreatedAt',
       updatedAt: 'UpdatedAt',
       paranoid: false,
-      underscored: false,  // ← QUAN TRỌNG: Không convert sang snake_case
+      underscored: false,
     }
   );
 
-  // Aliases camelCase - compute readable code from ExaminationID when DB column was removed
   const formatExaminationIDString = (seq, createdAt) => {
     if (!seq) return null;
     const d = createdAt ? new Date(createdAt) : new Date();
@@ -74,7 +57,7 @@ export default (sequelize) => {
       id: raw.ExaminationID,
       examinationCode: computedCode,
       appointmentId: raw.AppointmentID,
-      patientId: raw.PatientID,
+      patientId: raw.PatientId,
       doctorId: raw.DoctorID,
       examinationDate: raw.ExaminationDate,
       symptoms: raw.Symptoms,
@@ -91,33 +74,18 @@ export default (sequelize) => {
       treatmentAdvice: raw.TreatmentAdvice,
       notes: raw.Notes,
       reExaminationDate: raw.ReExaminationDate,
-      labOrders: raw.LabOrders,
-      imagingOrders: raw.ImagingOrders,
-      ecgOrders: raw.ECGOrders,
-      labResults: raw.LabResults,
-      imagingResults: raw.ImagingResults,
-      ecgResults: raw.ECGResults,
-      prescriptionId: raw.PrescriptionID,
       prescriptionStatus: raw.PrescriptionStatus,
       createdAt: raw.CreatedAt,
       updatedAt: raw.UpdatedAt,
     };
   };
 
-  // Define associations so eager-loading by "patient" and "doctor" works
   MedicalExamination.associate = function (models) {
-    try {
-      if (models && models.Patient) {
-        MedicalExamination.belongsTo(models.Patient, { as: 'patient', foreignKey: 'PatientID' });
-      }
-      if (models && models.User) {
-        MedicalExamination.belongsTo(models.User, { as: 'doctor', foreignKey: 'DoctorID' });
-      }
-    } catch (err) {
-      // defensive: don't crash module load if associations cannot be set yet
-      // real errors will surface when calling associations elsewhere
-      // eslint-disable-next-line no-console
-      console.warn('MedicalExamination.associate: failed to attach associations', err && err.message);
+    if (models && models.Patient) {
+      MedicalExamination.belongsTo(models.Patient, { as: 'patient', foreignKey: 'PatientId' });
+    }
+    if (models && models.User) {
+      MedicalExamination.belongsTo(models.User, { as: 'doctor', foreignKey: 'DoctorID' });
     }
   };
 

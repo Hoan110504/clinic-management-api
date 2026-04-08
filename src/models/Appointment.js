@@ -14,13 +14,15 @@ export default (sequelize) => {
     'Appointment',
     {
       id: {
-        type: DataTypes.STRING(20),
+        type: DataTypes.BIGINT,
+        autoIncrement: true,
         primaryKey: true,
         allowNull: false,
+        field: 'Id',
       },
       source: {
-        type: DataTypes.STRING(20),
-        allowNull: false,
+        type: DataTypes.STRING(255),
+        allowNull: true,
         defaultValue: APPOINTMENT_SOURCE.OFFLINE,
         validate: {
           isIn: {
@@ -31,8 +33,8 @@ export default (sequelize) => {
       },
       // Patient info (can be existing or new patient)
       patientId: {
-        type: DataTypes.STRING(20),
-        allowNull: true,
+        type: DataTypes.BIGINT,
+        allowNull: false,
         field: 'patient_id',
         references: {
           model: 'patients',
@@ -98,13 +100,9 @@ export default (sequelize) => {
       },
       // Doctor assignment
       preferredDoctorId: {
-        type: DataTypes.UUID,
+        type: DataTypes.CHAR(36),
         allowNull: true,
         field: 'preferred_doctor_id',
-        references: {
-          model: 'users',
-          key: 'id',
-        },
       },
       preferredDoctorName: {
         type: DataTypes.STRING(100),
@@ -112,13 +110,9 @@ export default (sequelize) => {
         field: 'preferred_doctor_name',
       },
       assignedDoctorId: {
-        type: DataTypes.UUID,
+        type: DataTypes.CHAR(36),
         allowNull: true,
         field: 'assigned_doctor_id',
-        references: {
-          model: 'users',
-          key: 'id',
-        },
       },
       assignedDoctorName: {
         type: DataTypes.STRING(100),
@@ -131,6 +125,7 @@ export default (sequelize) => {
         type: DataTypes.INTEGER,
         allowNull: false,
         defaultValue: 1,
+        field: 'Status',
         validate: {
           isIn: {
             args: [[1, 2, 3, 4]],
@@ -163,44 +158,53 @@ export default (sequelize) => {
         allowNull: true,
         field: 'cancel_reason',
       },
+      cancelledReason: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        field: 'cancelled_reason',
+      },
+      cancelledBy: {
+        type: DataTypes.CHAR(36),
+        allowNull: true,
+        field: 'cancelled_by',
+      },
+      rescheduledFrom: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+        field: 'rescheduled_from',
+      },
+      rescheduledAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: 'rescheduled_at',
+      },
     },
     {
-      tableName: 'appointments',
+      tableName: 'Appointments',
       timestamps: true,
       paranoid: true,
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+      deletedAt: 'deleted_at',
       indexes: [
         { fields: ['patient_id'] },
         { fields: ['appointment_date'] },
         { fields: ['assigned_doctor_id'] },
-        { fields: ['status'] },
+        { fields: ['Status'] },
         { fields: ['appointment_date', 'time_slot'] },
-      ],
-      hooks: {
-        beforeValidate: async (appointment) => {
-          if (!appointment.id) {
-            const Appointment = sequelize.models.Appointment;
-            const lastAppointment = await Appointment.findOne({
-              order: [['createdAt', 'DESC']],
-              paranoid: false,
-            });
-            let nextNum = 1;
-            if (lastAppointment && lastAppointment.id) {
-              const match = lastAppointment.id.match(/APT(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
-              }
-            }
-            appointment.id = `APT${String(nextNum).padStart(3, '0')}`;
-          }
-        },
-      },
+      ]
     }
   );
   // Associations
   Appointment.associate = (models) => {
     Appointment.belongsTo(models.Patient, { foreignKey: 'patientId', as: 'patient' });
-    Appointment.belongsTo(models.User, { foreignKey: 'assignedDoctorId', as: 'assignedDoctor' });
-    Appointment.belongsTo(models.User, { foreignKey: 'preferredDoctorId', as: 'preferredDoctor' });
+
+    // Link doctors and user references so controllers can include User as 'doctor' etc.
+    if (models && models.User) {
+      Appointment.belongsTo(models.User, { foreignKey: 'assignedDoctorId', as: 'assignedDoctor' });
+      Appointment.belongsTo(models.User, { foreignKey: 'preferredDoctorId', as: 'preferredDoctor' });
+      Appointment.belongsTo(models.User, { foreignKey: 'cancelledBy', as: 'cancelledByUser' });
+    }
   };
 
   return Appointment;
