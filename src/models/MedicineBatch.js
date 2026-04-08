@@ -21,7 +21,7 @@ export default (sequelize) => {
         type: DataTypes.BIGINT,
         allowNull: false,
         references: {
-          model: 'Medicine',
+          model: 'Medicines',
           key: 'Id',
         },
         field: 'MedicineId',
@@ -65,7 +65,7 @@ export default (sequelize) => {
       },
     },
     {
-      tableName: 'MedicineBatch',
+      tableName: 'MedicineBatches',
       timestamps: false,
       indexes: [
         { fields: ['MedicineId'] },

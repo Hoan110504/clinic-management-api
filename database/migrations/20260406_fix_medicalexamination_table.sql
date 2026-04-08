@@ -3,22 +3,22 @@
 -- Run this to fix the DATABASE_ERROR when creating medical examination records
 
 -- Step 1: Drop the old incorrectly-named table if it exists with wrong columns
-IF OBJECT_ID('dbo.MedicalExamination', 'U') IS NOT NULL
+IF OBJECT_ID('dbo.MedicalExaminations', 'U') IS NOT NULL
 BEGIN
   -- Check if table has the old (wrong) columns - if so, drop it
-  IF COL_LENGTH('dbo.MedicalExamination', 'id') IS NOT NULL
-     AND COL_LENGTH('dbo.MedicalExamination', 'ExaminationID') IS NULL
+  IF COL_LENGTH('dbo.MedicalExaminations', 'id') IS NOT NULL
+     AND COL_LENGTH('dbo.MedicalExaminations', 'ExaminationID') IS NULL
   BEGIN
-    PRINT 'Dropping old MedicalExamination table with incorrect schema...';
-    DROP TABLE dbo.MedicalExamination;
+    PRINT 'Dropping old MedicalExaminations table with incorrect schema...';
+    DROP TABLE dbo.MedicalExaminations;
   END
 END
 
 -- Step 2: Create the correct table if it doesn't exist
-IF OBJECT_ID('dbo.MedicalExamination', 'U') IS NULL
+IF OBJECT_ID('dbo.MedicalExaminations', 'U') IS NULL
 BEGIN
-  PRINT 'Creating MedicalExamination table with correct schema...';
-  CREATE TABLE dbo.MedicalExamination (
+  PRINT 'Creating MedicalExaminations table with correct schema...';
+  CREATE TABLE dbo.MedicalExaminations (
     -- Primary key and identifiers
     ExaminationID BIGINT PRIMARY KEY IDENTITY(1,1) NOT NULL,
     ExaminationCode NVARCHAR(50) NOT NULL,
@@ -64,16 +64,16 @@ BEGIN
     UpdatedAt DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
   );
 
-  PRINT 'Creating indexes on MedicalExamination table...';
-  CREATE INDEX IX_MedicalExamination_AppointmentId ON dbo.MedicalExamination(AppointmentID);
-  CREATE INDEX IX_MedicalExamination_PatientId ON dbo.MedicalExamination(PatientID);
-  CREATE INDEX IX_MedicalExamination_DoctorId ON dbo.MedicalExamination(DoctorID);
-  CREATE INDEX IX_MedicalExamination_ExaminationCode ON dbo.MedicalExamination(ExaminationCode);
-  CREATE INDEX IX_MedicalExamination_CreatedAt ON dbo.MedicalExamination(CreatedAt);
+  PRINT 'Creating indexes on MedicalExaminations table...';
+  CREATE INDEX IX_MedicalExaminations_AppointmentId ON dbo.MedicalExaminations(AppointmentID);
+  CREATE INDEX IX_MedicalExaminations_PatientId ON dbo.MedicalExaminations(PatientID);
+  CREATE INDEX IX_MedicalExaminations_DoctorId ON dbo.MedicalExaminations(DoctorID);
+  CREATE INDEX IX_MedicalExaminations_ExaminationCode ON dbo.MedicalExaminations(ExaminationCode);
+  CREATE INDEX IX_MedicalExaminations_CreatedAt ON dbo.MedicalExaminations(CreatedAt);
 
-  PRINT 'MedicalExamination table created successfully!';
+  PRINT 'MedicalExaminations table created successfully!';
 END
 ELSE
 BEGIN
-  PRINT 'MedicalExamination table already exists with correct schema.';
+  PRINT 'MedicalExaminations table already exists with correct schema.';
 END

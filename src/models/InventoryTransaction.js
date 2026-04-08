@@ -21,7 +21,7 @@ export default (sequelize) => {
         type: DataTypes.BIGINT,
         allowNull: true,
         references: {
-          model: 'MedicineBatch',
+          model: 'MedicineBatches',
           key: 'Id',
         },
         field: 'MedicineBatchId',
@@ -31,7 +31,7 @@ export default (sequelize) => {
         type: DataTypes.BIGINT,
         allowNull: true,
         references: {
-          model: 'Medicine',
+          model: 'Medicines',
           key: 'Id',
         },
         field: 'MedicineId',
@@ -96,7 +96,7 @@ export default (sequelize) => {
       },
     },
     {
-      tableName: 'InventoryTransaction',
+      tableName: 'InventoryTransactions',
       timestamps: false,
       indexes: [
         { fields: ['MedicineBatchId'] },

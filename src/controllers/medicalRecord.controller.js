@@ -405,116 +405,46 @@ const createRecord = asyncHandler(async (req, res) => {
         if (vs.height) toCreate.Height = vs.height;
         if (vs.bmi) toCreate.BMI = vs.bmi;
       }
+      console.log('createRecord: toCreate payload after normalization:', JSON.stringify(toCreate, null, 2));
     }
     // Validate required NOT NULL columns for MedicalExamination table
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
-      if (!toCreate.AppointmentID || !toCreate.PatientId) {
-        console.warn('createRecord: validation failed - missing AppointmentID or PatientId');
-        return errorResponse(res, 'Thiếu AppointmentID hoặc PatientId trong payload', 400, 'VALIDATION_ERROR');
+      if (!toCreate.AppointmentID) {
+        console.warn('createRecord: AppointmentID is null, using generated fallback');
+        toCreate.AppointmentID = `APT-${Date.now()}`;
+      }
+      if (!toCreate.PatientId) {
+        console.error('createRecord: PatientId is null - cannot create record without patient');
+        return errorResponse(res, 'Thiếu PatientId trong payload - không thể tạo hồ sơ khám', 400, 'VALIDATION_ERROR');
       }
     }
 
+    console.log('createRecord: attempting to create with toCreate=', JSON.stringify(toCreate, null, 2));
     try {
-      console.log('createRecord: attempting to create with toCreate=', JSON.stringify(toCreate, null, 2));
-
-      const usingMedicalExaminationModel = Boolean(models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination);
-
-      if (usingMedicalExaminationModel) {
-        const sequelizeInstance = PreferredRecordForCreate.sequelize;
-        const transaction = await sequelizeInstance.transaction();
-        try {
-          // Probe DB for existing columns to avoid "Invalid column name" errors
-          const colRows = await sequelizeInstance.query(
-            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'MedicalExamination'",
-            { transaction, type: QueryTypes.SELECT }
-          );
-          const existingCols = (colRows || []).map(r => String(r.COLUMN_NAME || r.column_name || r.COLUMN_NAME).trim());
-
-          const now = new Date();
-          const createPayload = { ...toCreate };
-          if (!Object.prototype.hasOwnProperty.call(createPayload, 'CreatedAt')) createPayload.CreatedAt = now;
-          if (!Object.prototype.hasOwnProperty.call(createPayload, 'UpdatedAt')) createPayload.UpdatedAt = now;
-
-          // Only keep keys that exist in DB
-          const allowedKeys = Object.keys(createPayload).filter(k => existingCols.includes(k));
-          if (allowedKeys.length === 0) {
-            throw new Error('Không có cột hợp lệ để chèn vào MedicalExamination');
-          }
-
-          // Ensure required columns still exist
-          if (!allowedKeys.includes('AppointmentID') || !allowedKeys.includes('PatientId')) {
-            await transaction.rollback();
-            return errorResponse(res, 'Bảng MedicalExamination không có cột bắt buộc AppointmentID hoặc PatientId', 500, 'DATABASE_SCHEMA_ERROR');
-          }
-
-          const filteredPayload = {};
-          allowedKeys.forEach(k => { filteredPayload[k] = createPayload[k]; });
-
-          const colList = allowedKeys.map(c => `[${c}]`).join(',');
-          const paramList = allowedKeys.map(c => `:${c}`).join(',');
-
-          // Use SCOPE_IDENTITY() to retrieve the inserted identity safely
-          const insertSql = `
-            INSERT INTO [MedicalExamination] (${colList})
-            VALUES (${paramList});
-            SELECT SCOPE_IDENTITY() AS ExaminationID;
-          `;
-
-          const insertedRows = await sequelizeInstance.query(insertSql, {
-            replacements: filteredPayload,
-            transaction,
-            type: QueryTypes.SELECT,
-          });
-
-          // sequelize with MSSQL may return [[{ ExaminationID: x }], ...] or [{ ExaminationID: x }]
-          const seqRow = Array.isArray(insertedRows) ? (insertedRows[0] || insertedRows[1] || insertedRows[insertedRows.length - 1]) : insertedRows;
-          const seq = seqRow && (seqRow.ExaminationID || seqRow.examinationid || seqRow[Object.keys(seqRow)[0]]);
-          if (!seq) throw new Error('Không lấy được ExaminationID sau khi tạo hồ sơ khám');
-
-          const y = now.getFullYear();
-          const m = String(now.getMonth() + 1).padStart(2, '0');
-          const d = String(now.getDate()).padStart(2, '0');
-          const finalCode = `PK-${y}${m}${d}-${String(seq).padStart(6, '0')}`;
-
-          const rows = await sequelizeInstance.query(
-            'SELECT * FROM [MedicalExamination] WHERE [ExaminationID] = :id',
-            { replacements: { id: seq }, transaction, type: QueryTypes.SELECT }
-          );
-          const plain = (rows && rows[0]) ? rows[0] : { ...filteredPayload, ExaminationID: seq };
-
-          await transaction.commit();
-
-          const normalized = { ...plain };
-          if (!normalized.id) normalized.id = normalized.ExaminationID || normalized.Id || normalized.id;
-          if (!normalized.recordId) normalized.recordId = normalized.id;
-          normalized.maPhieuKham = finalCode;
-          console.log('createRecord: successfully created (MedicalExamination raw), id=', normalized.id);
-          return createdResponse(res, normalized, 'Đã tạo hồ sơ khám');
-        } catch (eInner) {
-          try { await transaction.rollback(); } catch (er) { /* ignore */ }
-          console.error('createRecord: DB error during raw insert -', eInner && eInner.message);
-          console.error('createRecord: DB error original:', eInner && eInner.original && eInner.original.message);
-          console.error('createRecord: DB error sql:', eInner && eInner.sql);
-          console.error('createRecord: filteredPayload was:', JSON.stringify(filteredPayload || createPayload, null, 2));
-          return errorResponse(res, 'Lỗi cơ sở dữ liệu khi tạo hồ sơ khám', 500, 'DATABASE_ERROR');
-        }
-      }
-
-      // Fallback: legacy model create
+      // Use PreferredRecordForCreate directly with Sequelize - it handles field mapping automatically
       const created = await PreferredRecordForCreate.create(toCreate);
       const plain = created.get ? created.get({ plain: true }) : created;
-      const normalized = { ...plain };
-      if (!normalized.id) normalized.id = normalized.ExaminationID || normalized.Id || normalized.id;
-      if (!normalized.recordId) normalized.recordId = normalized.id;
-      if (!normalized.maPhieuKham) {
-        if (normalized.ExaminationCode) normalized.maPhieuKham = normalized.ExaminationCode;
-        else if (normalized.ExaminationID) {
-          const d = normalized.CreatedAt ? new Date(normalized.CreatedAt) : new Date();
-          const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
-          normalized.maPhieuKham = `PK-${y}${m}${day}-${String(normalized.ExaminationID).padStart(6, '0')}`;
-        }
+      
+      // Generate examination code (maPhieuKham)
+      const examId = plain && (plain.ExaminationID || plain.ExaminationId || plain.id);
+      const createdTime = plain && (plain.CreatedAt || plain.createdAt || new Date());
+      let maPhieuKham = plain && (plain.maPhieuKham || plain.ExaminationCode);
+      
+      if (!maPhieuKham && examId) {
+        const d = createdTime ? new Date(createdTime) : new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        maPhieuKham = `PK-${y}${m}${day}-${String(examId).padStart(6, '0')}`;
       }
-      console.log('createRecord: successfully created (legacy), id=', normalized.id);
+      
+      // Normalize response
+      const normalized = { ...plain };
+      if (!normalized.id) normalized.id = examId;
+      if (!normalized.recordId) normalized.recordId = examId;
+      normalized.maPhieuKham = maPhieuKham;
+      
+      console.log('createRecord: successfully created, id=', examId, 'code=', maPhieuKham);
       return createdResponse(res, normalized, 'Đã tạo hồ sơ khám');
     } catch (e) {
       console.error('createRecord: DB error - message:', e && e.message);
@@ -522,7 +452,9 @@ const createRecord = asyncHandler(async (req, res) => {
       console.error('createRecord: DB error - name:', e && e.name);
       console.error('createRecord: DB error - sql:', e && e.sql);
       console.error('createRecord: DB error - original:', e && e.original && e.original.message);
-      console.error('createRecord: DB error - stack:', e && e.stack);
+      if (e && e.errors && Array.isArray(e.errors)) {
+        console.error('createRecord: Sequelize validation errors:', e.errors.map(err => ({ path: err.path, message: err.message })));
+      }
       console.error('createRecord: toCreate was:', JSON.stringify(toCreate, null, 2));
       return errorResponse(res, 'Lỗi cơ sở dữ liệu khi tạo hồ sơ khám', 500, 'DATABASE_ERROR');
     }

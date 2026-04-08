@@ -472,11 +472,11 @@ const adjustInventory = asyncHandler(async (req, res) => {
               const colList = cols.map(c => `[${c}]`).join(',');
               const replacements = {};
               values.forEach((v, i) => { replacements[`p${i}`] = v; });
-              const sql = `INSERT INTO [MedicineBatch] (${colList}) VALUES (${placeholders});`;
+              const sql = `INSERT INTO [MedicineBatches] (${colList}) VALUES (${placeholders});`;
               await sequelize.query(sql, { replacements, type: sequelize.QueryTypes.INSERT });
               batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
             } catch (rawErr) {
-              console.error('Fallback raw INSERT for MedicineBatch failed', rawErr?.message || rawErr);
+              console.error('Fallback raw INSERT for MedicineBatches failed', rawErr?.message || rawErr);
               throw createErr;
             }
           } else {
@@ -603,7 +603,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
 
         // Fetch actual columns from the DB for InventoryTransaction and only use existing ones
         const colRows = await sequelize.query(
-          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'InventoryTransaction' AND TABLE_SCHEMA = 'dbo'`,
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'InventoryTransactions' AND TABLE_SCHEMA = 'dbo'`,
           { type: sequelize.QueryTypes.SELECT }
         );
         const existingColsSet = new Set(colRows.map(r => r.COLUMN_NAME));
@@ -648,8 +648,8 @@ const adjustInventory = asyncHandler(async (req, res) => {
           return `:p${i}`;
         }).join(',');
 
-        const insertSql = `INSERT INTO [InventoryTransaction] (${colList}) VALUES (${finalPlaceholders}); SELECT CAST(SCOPE_IDENTITY() AS BIGINT) AS Id;`;
-        const inserted = await sequelize.query(insertSql, { replacements, type: sequelize.QueryTypes.SELECT });
+        const insertSql = `INSERT INTO [InventoryTransactions] (${colList}) VALUES (${finalPlaceholders}); SELECT CAST(SCOPE_IDENTITY() AS BIGINT) AS Id;`;
+            const inserted = await sequelize.query(insertSql, { replacements, type: sequelize.QueryTypes.SELECT });
         const newId = inserted && inserted[0] && inserted[0].Id ? inserted[0].Id : null;
         if (newId) {
           const createdRow = await InventoryTransaction.findByPk(newId);
@@ -1035,9 +1035,9 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
   } catch (err) {
     console.error('getAllInventoryTransactions: DB error', err.message || err);
 
-    // Fallback: try raw SQL directly against dbo.InventoryTransaction table
+    // Fallback: try raw SQL directly against dbo.InventoryTransactions table
     try {
-      console.warn('[getAllInventoryTransactions] falling back to raw SQL query on dbo.InventoryTransaction');
+      console.warn('[getAllInventoryTransactions] falling back to raw SQL query on dbo.InventoryTransactions');
 
       const replacements = {};
       const whereClauses = [];
@@ -1079,7 +1079,7 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
       const orderSql = Array.isArray(order) && order.length > 0 ? `ORDER BY ${order.map(o=>`${o[0]} ${o[1]}`).join(',')}` : 'ORDER BY CreatedAt DESC';
       const limitSql = limit ? `OFFSET ${offset || 0} ROWS FETCH NEXT ${limit} ROWS ONLY` : '';
 
-      const sql = `SELECT * FROM dbo.InventoryTransaction ${whereSql} ${orderSql} ${limitSql}`;
+      const sql = `SELECT * FROM dbo.InventoryTransactions ${whereSql} ${orderSql} ${limitSql}`;
 
       const rawRows = await sequelize.query(sql, { replacements, type: sequelize.QueryTypes.SELECT });
 
@@ -1105,7 +1105,7 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
       }));
 
       // Count fallback - try a simple count query
-      const countSql = `SELECT COUNT(1) as cnt FROM dbo.InventoryTransaction ${whereSql}`;
+      const countSql = `SELECT COUNT(1) as cnt FROM dbo.InventoryTransactions ${whereSql}`;
       const countResult = await sequelize.query(countSql, { replacements, type: sequelize.QueryTypes.SELECT });
       const totalCount = Array.isArray(countResult) && countResult[0] ? Number(countResult[0].cnt || 0) : mapped.length;
 

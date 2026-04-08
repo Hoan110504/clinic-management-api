@@ -18,7 +18,7 @@ export default (sequelize) => {
       allowNull: false,
       field: 'MedicalRecordId',
       references: {
-        model: 'MedicalExamination',
+        model: 'MedicalExaminations',
         key: 'ExaminationID'
       }
     },
@@ -61,7 +61,7 @@ export default (sequelize) => {
       field: 'DoctorNotes'
     }
   }, {
-    tableName: 'LabOrderRequest',
+    tableName: 'LabOrderRequests',
     timestamps: false,
     indexes: [
       { fields: ['MedicalRecordId'] },

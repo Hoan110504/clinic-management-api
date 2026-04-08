@@ -29,7 +29,7 @@ export default (sequelize) => {
       allowNull: false,
       field: 'MedicineId',
       references: {
-        model: 'Medicine',
+        model: 'Medicines',
         key: 'Id'
       }
     },
@@ -58,7 +58,7 @@ export default (sequelize) => {
       field: 'UsageInstructions'
     }
   }, {
-    tableName: 'PrescriptionItem',
+    tableName: 'PrescriptionItems',
     timestamps: false,
     indexes: [
       { fields: ['PrescriptionId'] },

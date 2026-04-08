@@ -1,6 +1,6 @@
 /**
  * LabOrder Model
- * Maps to dbo.LabOrder
+ * Maps to dbo.LabOrders
  */
 import { DataTypes } from 'sequelize';
 
@@ -37,7 +37,7 @@ export default (sequelize) => {
       },
     },
     {
-      tableName: 'LabOrder',
+      tableName: 'LabOrders',
       timestamps: false,
       indexes: [
         { fields: ['ExaminationID'] },

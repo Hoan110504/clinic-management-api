@@ -39,7 +39,7 @@ export default (sequelize) => {
       },
     },
     {
-      tableName: 'Medicine',
+      tableName: 'Medicines',
       timestamps: false,
     }
   );

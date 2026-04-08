@@ -1,6 +1,6 @@
 /**
  * MedicalExamination Model
- * Maps to dbo.MedicalExamination
+ * Maps to dbo.MedicalExaminations
  */
 import { DataTypes } from 'sequelize';
 
@@ -32,7 +32,7 @@ export default (sequelize) => {
       PrescriptionStatus: { type: DataTypes.TINYINT, allowNull: true, field: 'PrescriptionStatus' },
     },
     {
-      tableName: 'MedicalExamination',
+      tableName: 'MedicalExaminations',
       timestamps: true,
       createdAt: 'CreatedAt',
       updatedAt: 'UpdatedAt',

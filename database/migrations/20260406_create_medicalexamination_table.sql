@@ -1,9 +1,9 @@
 -- Migration: create MedicalExamination table for MSSQL
 -- Creates dbo.MedicalExamination with exact column names matching Sequelize model
 -- This table stores complete medical examination data with vital signs and lab/imaging results
-IF OBJECT_ID('dbo.MedicalExamination', 'U') IS NULL
+IF OBJECT_ID('dbo.MedicalExaminations', 'U') IS NULL
 BEGIN
-  CREATE TABLE dbo.MedicalExamination (
+  CREATE TABLE dbo.MedicalExaminations (
     -- Primary key and identifiers
     ExaminationID BIGINT PRIMARY KEY IDENTITY(1,1) NOT NULL,
     ExaminationCode NVARCHAR(50) NOT NULL,
@@ -50,9 +50,9 @@ BEGIN
   );
 
   -- Create indexes for commonly queried fields
-  CREATE INDEX IX_MedicalExamination_AppointmentId ON dbo.MedicalExamination(AppointmentID);
-  CREATE INDEX IX_MedicalExamination_PatientId ON dbo.MedicalExamination(PatientID);
-  CREATE INDEX IX_MedicalExamination_DoctorId ON dbo.MedicalExamination(DoctorID);
-  CREATE INDEX IX_MedicalExamination_ExaminationCode ON dbo.MedicalExamination(ExaminationCode);
-  CREATE INDEX IX_MedicalExamination_CreatedAt ON dbo.MedicalExamination(CreatedAt);
+  CREATE INDEX IX_MedicalExaminations_AppointmentId ON dbo.MedicalExaminations(AppointmentID);
+  CREATE INDEX IX_MedicalExaminations_PatientId ON dbo.MedicalExaminations(PatientID);
+  CREATE INDEX IX_MedicalExaminations_DoctorId ON dbo.MedicalExaminations(DoctorID);
+  CREATE INDEX IX_MedicalExaminations_ExaminationCode ON dbo.MedicalExaminations(ExaminationCode);
+  CREATE INDEX IX_MedicalExaminations_CreatedAt ON dbo.MedicalExaminations(CreatedAt);
 END
