@@ -1,6 +1,6 @@
 /**
- * Lab Service Model
- * Catalog of available lab test services
+ * LabService Model (CLS services catalog)
+ * Maps to dbo.LabServices
  */
 import { DataTypes } from 'sequelize';
 
@@ -8,77 +8,85 @@ export default (sequelize) => {
   const LabService = sequelize.define(
     'LabService',
     {
-      id: {
-        type: DataTypes.STRING(20),
+      ServiceID: {
+        type: DataTypes.BIGINT,
         primaryKey: true,
+        autoIncrement: true,
         allowNull: false,
+        field: 'ServiceID',
       },
-      name: {
-        type: DataTypes.STRING(200),
+
+      ServiceCode: {
+        type: DataTypes.BIGINT,
         allowNull: false,
+        field: 'ServiceCode',
       },
-      type: {
-        type: DataTypes.STRING(100),
+
+      ServiceName: {
+        type: DataTypes.STRING(255),
         allowNull: false,
+        field: 'ServiceName',
       },
-      price: {
-        type: DataTypes.DECIMAL(15, 2),
+
+      RoomID: {
+        type: DataTypes.BIGINT,
+        allowNull: true,
+        field: 'RoomID',
+      },
+
+      Price: {
+        type: DataTypes.DECIMAL(18, 2),
         allowNull: false,
-        defaultValue: 0,
+        field: 'Price',
       },
-      description: {
-        type: DataTypes.TEXT,
-        allowNull: true,
+
+      ServiceType: {
+        type: DataTypes.TINYINT,
+        allowNull: false,
+        field: 'ServiceType',
+        comment: '1=Ultrasound, 2=ECG, 3=Lab Test',
       },
-      room: {
-        type: DataTypes.STRING(50),
-        allowNull: true,
-      },
-      duration: {
-        type: DataTypes.INTEGER,
-        allowNull: true,
-        comment: 'Duration in minutes',
-      },
-      instructions: {
-        type: DataTypes.TEXT,
-        allowNull: true,
-      },
-      isActive: {
+
+      IsActive: {
         type: DataTypes.BOOLEAN,
+        allowNull: false,
         defaultValue: true,
-        field: 'is_active',
+        field: 'IsActive',
+      },
+
+      CreatedAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        field: 'CreatedAt',
       },
     },
     {
-      tableName: 'lab_services',
-      timestamps: true,
-      paranoid: true,
+      tableName: 'LabServices',
+      schema: 'dbo',
+      timestamps: false,
       indexes: [
-        { fields: ['name'] },
-        { fields: ['type'] },
-        { fields: ['is_active'] },
+        { fields: ['ServiceCode'] },
+        { fields: ['ServiceType'] },
+        { fields: ['RoomID'] },
       ],
-      hooks: {
-        beforeCreate: async (service) => {
-          if (!service.id) {
-            const LabService = sequelize.models.LabService;
-            const lastService = await LabService.findOne({
-              order: [['createdAt', 'DESC']],
-              paranoid: false,
-            });
-            let nextNum = 1;
-            if (lastService && lastService.id) {
-              const match = lastService.id.match(/SV(\d+)/);
-              if (match) {
-                nextNum = parseInt(match[1], 10) + 1;
-              }
-            }
-            service.id = `SV${String(nextNum).padStart(3, '0')}`;
-          }
-        },
-      },
     }
   );
+
+  LabService.associate = (models) => {
+    if (models && models.LabOrderItem) {
+      LabService.hasMany(models.LabOrderItem, {
+        foreignKey: 'ServiceID',
+        as: 'labOrderItems',
+      });
+    }
+
+    if (models && models.LabResult) {
+      LabService.hasMany(models.LabResult, {
+        foreignKey: 'ServiceID',
+        as: 'labResults',
+      });
+    }
+  };
 
   return LabService;
 };

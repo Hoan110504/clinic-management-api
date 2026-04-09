@@ -42,6 +42,7 @@ const LAB_STATUS = {
   PENDING: 'Chờ thực hiện',
   IN_PROGRESS: 'Đang thực hiện',
   COMPLETED: 'Hoàn thành',
+  CANCELLED: 'Đã hủy',
 };
 
 // Payment Status

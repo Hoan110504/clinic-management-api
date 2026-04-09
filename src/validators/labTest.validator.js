@@ -20,8 +20,12 @@ const createLabTestValidator = [
     .withMessage('Tên xét nghiệm không được để trống'),
   body('medicalRecordId')
     .optional()
-    .isString()
-    .withMessage('ID phiếu khám không hợp lệ'),
+    .custom((value) => {
+      if (value === null || value === undefined || value === '') return true;
+      if (typeof value === 'number' && Number.isFinite(value)) return true;
+      if (typeof value === 'string') return true;
+      throw new Error('ID phiếu khám không hợp lệ');
+    }),
 ];
 
 const updateLabTestValidator = [
@@ -30,8 +34,13 @@ const updateLabTestValidator = [
     .withMessage('ID xét nghiệm không được để trống'),
   body('status')
     .optional()
-    .isIn(Object.values(LAB_STATUS))
-    .withMessage('Trạng thái không hợp lệ'),
+    .custom((value) => {
+      if (value === null || value === undefined || value === '') return true;
+      if (Object.values(LAB_STATUS).includes(value)) return true;
+      if (typeof value === 'number' && [0, 1, 2, 3].includes(value)) return true;
+      if (typeof value === 'string' && /^[0-3]$/.test(value.trim())) return true;
+      throw new Error('Trạng thái không hợp lệ');
+    }),
   body('results')
     .optional()
     .isString()
@@ -71,12 +80,20 @@ const listLabTestsValidator = [
     .withMessage('Số lượng mỗi trang phải từ 1-100'),
   query('status')
     .optional()
-    .isIn(Object.values(LAB_STATUS))
-    .withMessage('Trạng thái không hợp lệ'),
+    .custom((value) => {
+      if (value === null || value === undefined || value === '') return true;
+      if (Object.values(LAB_STATUS).includes(value)) return true;
+      if (/^[0-3]$/.test(String(value).trim())) return true;
+      throw new Error('Trạng thái không hợp lệ');
+    }),
   query('patientId')
     .optional()
-    .isString()
-    .withMessage('ID bệnh nhân không hợp lệ'),
+    .custom((value) => {
+      if (value === null || value === undefined || value === '') return true;
+      if (typeof value === 'number' && Number.isFinite(value)) return true;
+      if (typeof value === 'string') return true;
+      throw new Error('ID bệnh nhân không hợp lệ');
+    }),
 ];
 
 // Short name aliases for routes (e.g. labTestValidator.create)

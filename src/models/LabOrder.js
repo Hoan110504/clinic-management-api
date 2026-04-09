@@ -21,13 +21,14 @@ export default (sequelize) => {
         field: 'ExaminationID',
       },
       DoctorID: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.BIGINT,
         allowNull: false,
         field: 'DoctorID',
       },
       Status: {
-        type: DataTypes.STRING(20),
-        allowNull: true,
+        type: DataTypes.TINYINT,
+        allowNull: false,
+        defaultValue: 0,
         field: 'Status',
       },
       CreatedAt: {
@@ -59,6 +60,13 @@ export default (sequelize) => {
         foreignKey: 'DoctorID',
         as: 'doctor',
         constraints: false,
+      });
+    }
+
+    if (models && models.LabOrderItem) {
+      LabOrder.hasMany(models.LabOrderItem, {
+        foreignKey: 'LabOrderID',
+        as: 'items',
       });
     }
   };

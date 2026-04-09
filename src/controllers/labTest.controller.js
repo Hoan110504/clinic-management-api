@@ -1,107 +1,583 @@
 /**
  * Lab Test Controller
- * Handles lab test operations
+ *
+ * This controller exposes the legacy /lab-tests API shape used by the frontend,
+ * but stores data in the current SQL Server schema:
+ * - LabOrders
+ * - LabOrderItems
+ * - LabResults
+ * - LabServices
  */
 import { Op } from 'sequelize';
-import { LabTest, Patient, User, ServiceOrder, MedicalRecord, LabService, sequelize } from '../models/index.js';
+import { Appointment, Patient, User, sequelize } from '../models/index.js';
 import models from '../models/index.js';
-import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
-import config from '../config/index.js';
+import { asyncHandler, parsePagination } from '../utils/helpers.js';
 import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
 } from '../utils/response.js';
-import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { NotFoundError, BadRequestError, ForbiddenError } from '../utils/errors.js';
 import { LAB_STATUS, ROLES } from '../config/constants.js';
 
-// Legacy CanLamSang synchronization removed.
-// Previous logic that wrote modern LabTest results back into legacy
-// YeuCauDichVu/CanLamSang tables has been intentionally removed to
-// stop automatic propagation of ultrasound results into "Kết quả chỉ định".
+const LAB_ITEM_STATUS = {
+  PENDING: 0,
+  IN_PROGRESS: 1,
+  COMPLETED: 2,
+  CANCELLED: 3,
+};
+
+const STATUS_CODE_TO_LABEL = {
+  [LAB_ITEM_STATUS.PENDING]: LAB_STATUS.PENDING,
+  [LAB_ITEM_STATUS.IN_PROGRESS]: LAB_STATUS.IN_PROGRESS,
+  [LAB_ITEM_STATUS.COMPLETED]: LAB_STATUS.COMPLETED,
+  [LAB_ITEM_STATUS.CANCELLED]: LAB_STATUS.CANCELLED || 'Da huy',
+};
+
+const TYPE_CODE_TO_LABEL = {
+  1: 'Siêu âm',
+  2: 'Điện tim',
+  3: 'Xét nghiệm',
+};
+
+const TYPE_LABEL_TO_CODE = {
+  'siêu âm': 1,
+  'sieu am': 1,
+  'ultrasound': 1,
+  'điện tim': 2,
+  'dien tim': 2,
+  'ecg': 2,
+  'electrocardiogram': 2,
+  'xét nghiệm': 3,
+  'xet nghiem': 3,
+  'lab': 3,
+  'lab test': 3,
+};
+
+const LAB_NOTE_META_KEYS = [
+  'notes',
+  'normalRange',
+  'cancelReason',
+  'canceledBy',
+  'canceledAt',
+  'confirmedBy',
+  'confirmedAt',
+];
+
+const getLabModels = () => {
+  const LabOrder = models.LabOrder;
+  const LabOrderItem = models.LabOrderItem;
+  const LabResult = models.LabResult;
+  const LabService = models.LabService;
+  const MedicalExamination = models.MedicalExamination;
+
+  if (!LabOrder || !LabOrderItem || !LabResult || !LabService || !MedicalExamination) {
+    throw new Error('Lab modules are not initialized correctly (LabOrder/LabOrderItem/LabResult/LabService/MedicalExamination).');
+  }
+
+  return { LabOrder, LabOrderItem, LabResult, LabService, MedicalExamination };
+};
+
+const toPositiveInt = (value, { allowAppointmentPrefix = false } = {}) => {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = allowAppointmentPrefix && /^APT-/i.test(raw) ? raw.replace(/^APT-/i, '') : raw;
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
+const mapTypeToCode = (value) => {
+  if (value === null || value === undefined || value === '') return 3;
+  if (typeof value === 'number' && [1, 2, 3].includes(value)) return value;
+  const normalized = normalizeText(value);
+  if (TYPE_LABEL_TO_CODE[normalized]) return TYPE_LABEL_TO_CODE[normalized];
+  if (normalized.includes('siêu') || normalized.includes('sieu') || normalized.includes('ultra')) return 1;
+  if (normalized.includes('điện') || normalized.includes('dien') || normalized.includes('ecg') || normalized.includes('stress')) return 2;
+  return 3;
+};
+
+const mapTypeToLabel = (value) => {
+  const code = typeof value === 'number' ? value : mapTypeToCode(value);
+  return TYPE_CODE_TO_LABEL[code] || TYPE_CODE_TO_LABEL[3];
+};
+
+const mapStatusToCode = (value, fallback = LAB_ITEM_STATUS.PENDING) => {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'number' && [0, 1, 2, 3].includes(value)) return value;
+
+  const text = normalizeText(value);
+  if (/^[0-3]$/.test(text)) return Number(text);
+  if (text.includes('huy') || text.includes('cancel')) return LAB_ITEM_STATUS.CANCELLED;
+  if (text.includes('hoan') || text.includes('complete')) return LAB_ITEM_STATUS.COMPLETED;
+  if (text.includes('dang') || text.includes('progress') || text.includes('processing')) return LAB_ITEM_STATUS.IN_PROGRESS;
+  if (text.includes('cho') || text.includes('pending') || text.includes('wait')) return LAB_ITEM_STATUS.PENDING;
+  return fallback;
+};
+
+const mapStatusToLabel = (value) => {
+  const code = mapStatusToCode(value, LAB_ITEM_STATUS.PENDING);
+  return STATUS_CODE_TO_LABEL[code] || LAB_STATUS.PENDING;
+};
+
+const parseImages = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value !== 'string') return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed.filter(Boolean);
+    if (parsed && typeof parsed === 'string') return [parsed];
+    return [];
+  } catch {
+    return [trimmed];
+  }
+};
+
+const serializeImages = (images, fallbackImageUrl = null) => {
+  const list = Array.isArray(images) ? images.filter(Boolean) : [];
+  if (list.length > 1) return JSON.stringify(list);
+  if (list.length === 1) return String(list[0]);
+  return fallbackImageUrl || null;
+};
+
+const parseMetaNote = (noteValue) => {
+  if (!noteValue) return {};
+  if (typeof noteValue !== 'string') return {};
+  const trimmed = noteValue.trim();
+  if (!trimmed) return {};
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through to plain note
+    }
+  }
+  return { notes: trimmed };
+};
+
+const buildMetaNote = (existingRaw, patch = {}) => {
+  const base = parseMetaNote(existingRaw);
+  const merged = { ...base };
+  LAB_NOTE_META_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      merged[key] = patch[key];
+    }
+  });
+
+  Object.keys(merged).forEach((key) => {
+    if (merged[key] === undefined || merged[key] === null || merged[key] === '') delete merged[key];
+  });
+
+  if (Object.keys(merged).length === 0) return null;
+  if (Object.keys(merged).length === 1 && Object.prototype.hasOwnProperty.call(merged, 'notes')) {
+    return String(merged.notes);
+  }
+  return JSON.stringify(merged);
+};
+
+const parseSortParam = (sort) => {
+  const raw = String(sort || 'orderedDate:desc').trim();
+  const [fieldRaw, dirRaw] = raw.split(':');
+  const field = String(fieldRaw || 'orderedDate').trim();
+  const dir = String(dirRaw || 'desc').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
+  return { field, dir };
+};
+
+const ensureMutatePermission = (user, doctorIdFromOrder) => {
+  const role = String(user?.role || '').toLowerCase();
+  if (role === String(ROLES.ADMIN)) return;
+
+  if (role === String(ROLES.DOCTOR)) {
+    const current = toPositiveInt(user?.id);
+    const owner = toPositiveInt(doctorIdFromOrder);
+    if (current && owner && current === owner) return;
+  }
+
+  throw new ForbiddenError('Ban khong co quyen thuc hien hanh dong nay', 'INSUFFICIENT_PERMISSIONS');
+};
+
+const ensureLabService = async ({ testName, testType, roomId = null }) => {
+  const { LabService } = getLabModels();
+
+  const normalizedName = String(testName || '').trim();
+  if (!normalizedName) {
+    throw new BadRequestError('Ten xet nghiem khong duoc de trong');
+  }
+
+  let service = await LabService.findOne({ where: { ServiceName: normalizedName } });
+  if (service) return service;
+
+  const maxCode = await LabService.max('ServiceCode');
+  const fallbackSeed = Number(String(Date.now()).slice(-6));
+  const nextCode = Number.isFinite(Number(maxCode)) ? Number(maxCode) + 1 : fallbackSeed;
+
+  const servicePayload = {
+    ServiceCode: nextCode,
+    ServiceName: normalizedName,
+    RoomID: toPositiveInt(roomId),
+    Price: 0,
+    ServiceType: mapTypeToCode(testType),
+    IsActive: true,
+    CreatedAt: sequelize.literal('GETDATE()'),
+  };
+
+  try {
+    // log payload types for debugging date conversion issues
+    console.debug('ensureLabService: creating LabService with payload', Object.fromEntries(Object.entries(servicePayload).map(([k,v])=>[k, { value: v, type: Object.prototype.toString.call(v) }] )));
+    service = await LabService.create(servicePayload);
+  } catch (err) {
+    console.error('ensureLabService: LabService.create failed', { payload: servicePayload, error: err && err.message });
+    throw err;
+  }
+
+  return service;
+};
+
+const resolveOrCreateExamination = async ({
+  medicalRecordId,
+  appointmentId,
+  patientId,
+  doctorId,
+  symptoms,
+}) => {
+  const { MedicalExamination } = getLabModels();
+
+  const recordText = String(medicalRecordId || '').trim();
+  let resolvedAppointmentId = toPositiveInt(appointmentId, { allowAppointmentPrefix: true });
+  let examination = null;
+
+  const recordNumeric = toPositiveInt(recordText, { allowAppointmentPrefix: true });
+  if (recordNumeric) {
+    examination = await MedicalExamination.findByPk(recordNumeric);
+    if (!examination && !resolvedAppointmentId) {
+      resolvedAppointmentId = recordNumeric;
+    }
+  }
+
+  if (!examination && /^APT-/i.test(recordText)) {
+    resolvedAppointmentId = toPositiveInt(recordText, { allowAppointmentPrefix: true });
+  }
+
+  if (!examination && resolvedAppointmentId) {
+    examination = await MedicalExamination.findOne({
+      where: { AppointmentID: resolvedAppointmentId },
+      order: [['CreatedAt', 'DESC'], ['ExaminationID', 'DESC']],
+    });
+  }
+
+  if (examination) return examination;
+
+  if (!resolvedAppointmentId) {
+    throw new BadRequestError('Khong xac dinh duoc phieu kham/lich hen de tao chi dinh can lam sang');
+  }
+
+  const appointment = await Appointment.findByPk(resolvedAppointmentId);
+  if (!appointment) {
+    throw new BadRequestError('Lich hen khong ton tai');
+  }
+
+  const resolvedPatientId = toPositiveInt(patientId) || toPositiveInt(appointment.patientId);
+  if (!resolvedPatientId) {
+    throw new BadRequestError('Khong xac dinh duoc benh nhan cho phieu kham');
+  }
+
+  const finalDoctorId = toPositiveInt(doctorId) || null;
+  const newExamPayload = {
+    AppointmentID: resolvedAppointmentId,
+    PatientId: resolvedPatientId,
+    DoctorID: finalDoctorId,
+    ExaminationDate: new Date(),
+    Symptoms: symptoms ? String(symptoms) : null,
+  };
+
+  return MedicalExamination.create(newExamPayload);
+};
+
+const recomputeLabOrderStatus = async (labOrderId) => {
+  const { LabOrder, LabOrderItem } = getLabModels();
+  const items = await LabOrderItem.findAll({ where: { LabOrderID: labOrderId }, attributes: ['Status'] });
+
+  if (!items || items.length === 0) {
+    await LabOrder.destroy({ where: { LabOrderID: labOrderId } });
+    return;
+  }
+
+  const statuses = items.map((it) => Number(it.Status));
+  let next = LAB_ITEM_STATUS.PENDING;
+
+  if (statuses.every((s) => s === LAB_ITEM_STATUS.CANCELLED)) {
+    next = LAB_ITEM_STATUS.CANCELLED;
+  } else if (statuses.some((s) => s === LAB_ITEM_STATUS.IN_PROGRESS)) {
+    next = LAB_ITEM_STATUS.IN_PROGRESS;
+  } else if (statuses.some((s) => s === LAB_ITEM_STATUS.PENDING)) {
+    next = LAB_ITEM_STATUS.PENDING;
+  } else if (statuses.some((s) => s === LAB_ITEM_STATUS.COMPLETED)) {
+    next = LAB_ITEM_STATUS.COMPLETED;
+  }
+
+  await LabOrder.update({ Status: next }, { where: { LabOrderID: labOrderId } });
+};
+
+const getBaseItemIncludes = () => {
+  const { LabOrder, LabService, MedicalExamination } = getLabModels();
+  return [
+    {
+      model: LabOrder,
+      as: 'LabOrder',
+      required: true,
+      include: [
+        {
+          model: MedicalExamination,
+          as: 'examination',
+          required: false,
+        },
+      ],
+    },
+    {
+      model: LabService,
+      as: 'Service',
+      required: false,
+    },
+  ];
+};
+
+const fetchLabTestRowsByItems = async (itemsInput) => {
+  const { LabResult } = getLabModels();
+  const items = (itemsInput || []).map((it) => (it?.get ? it.get({ plain: true }) : it));
+  if (items.length === 0) return [];
+
+  const examIds = [];
+  const serviceIds = [];
+  const patientIds = [];
+  const appointmentIds = [];
+  const doctorIds = [];
+
+  items.forEach((item) => {
+    const order = item?.LabOrder || {};
+    const exam = order?.examination || {};
+    const service = item?.Service || {};
+
+    if (order.ExaminationID) examIds.push(order.ExaminationID);
+    if (item.ServiceID) serviceIds.push(item.ServiceID);
+    if (exam.PatientId) patientIds.push(exam.PatientId);
+    if (exam.AppointmentID) appointmentIds.push(exam.AppointmentID);
+    if (order.DoctorID) doctorIds.push(order.DoctorID);
+  });
+
+  const uniq = (arr) => [...new Set(arr.map((x) => String(x)))].map((x) => Number(x)).filter((x) => Number.isFinite(x));
+
+  const uniqueExamIds = uniq(examIds);
+  const uniqueServiceIds = uniq(serviceIds);
+  const uniquePatientIds = uniq(patientIds);
+  const uniqueAppointmentIds = uniq(appointmentIds);
+
+  const resultRows = uniqueExamIds.length > 0 && uniqueServiceIds.length > 0
+    ? await LabResult.findAll({
+      where: {
+        ExaminationID: { [Op.in]: uniqueExamIds },
+        ServiceID: { [Op.in]: uniqueServiceIds },
+      },
+      order: [['ResultDate', 'DESC'], ['UpdatedAt', 'DESC'], ['CreatedAt', 'DESC'], ['LabResultID', 'DESC']],
+    })
+    : [];
+
+  const resultByPair = new Map();
+  resultRows.forEach((row) => {
+    const plain = row.get ? row.get({ plain: true }) : row;
+    const key = `${plain.ExaminationID}::${plain.ServiceID}`;
+    if (!resultByPair.has(key)) resultByPair.set(key, plain);
+  });
+
+  const patientRows = uniquePatientIds.length > 0
+    ? await Patient.findAll({ where: { id: { [Op.in]: uniquePatientIds } } })
+    : [];
+  const patientMap = new Map(patientRows.map((p) => {
+    const plain = p.get ? p.get({ plain: true }) : p;
+    return [String(plain.id), plain];
+  }));
+
+  const appointmentRows = uniqueAppointmentIds.length > 0
+    ? await Appointment.findAll({ where: { id: { [Op.in]: uniqueAppointmentIds } } })
+    : [];
+  const appointmentMap = new Map(appointmentRows.map((a) => {
+    const plain = a.get ? a.get({ plain: true }) : a;
+    return [String(plain.id), plain];
+  }));
+
+  const resultDoctorIds = resultRows
+    .map((r) => (r?.DoctorID ?? (r?.get ? r.get('DoctorID') : null)))
+    .filter((v) => v !== null && v !== undefined);
+  const uniqueDoctorIds = uniq([...doctorIds, ...resultDoctorIds]);
+  const doctorRows = uniqueDoctorIds.length > 0
+    ? await User.findAll({ where: { id: { [Op.in]: uniqueDoctorIds } }, paranoid: false })
+    : [];
+  const doctorMap = new Map(doctorRows.map((d) => {
+    const plain = d.get ? d.get({ plain: true }) : d;
+    return [String(plain.id), plain];
+  }));
+
+  return items.map((item) => {
+    const order = item?.LabOrder || {};
+    const exam = order?.examination || {};
+    const service = item?.Service || {};
+    const patient = patientMap.get(String(exam.PatientId || '')) || {};
+    const appointment = appointmentMap.get(String(exam.AppointmentID || '')) || {};
+    const result = resultByPair.get(`${order.ExaminationID}::${item.ServiceID}`) || null;
+
+    const itemMeta = parseMetaNote(item?.Note);
+    const resultMeta = parseMetaNote(result?.Note);
+    const meta = { ...itemMeta, ...resultMeta };
+
+    const images = parseImages(result?.ImageUrl);
+    const doctorOrder = doctorMap.get(String(order.DoctorID || '')) || null;
+    const doctorResult = doctorMap.get(String(result?.DoctorID || '')) || null;
+
+    const orderedDate = item?.CreatedAt || order?.CreatedAt || null;
+    const resultDate = result?.ResultDate || null;
+
+    return {
+      id: item.LabOrderItemID,
+      testId: item.LabOrderItemID,
+      labOrderId: item.LabOrderID,
+      serviceId: item.ServiceID,
+      medicalRecordId: order.ExaminationID,
+      recordId: order.ExaminationID,
+      appointmentId: exam.AppointmentID || null,
+
+      patientId: exam.PatientId || null,
+      patientName: appointment.patientName || patient.fullName || '',
+      patientPhone: appointment.patientPhone || patient.phone || '',
+      patientDob: appointment.patientBirthDate || patient.dateOfBirth || null,
+      gender: appointment.patientGender || patient.gender || '',
+
+      testType: mapTypeToLabel(service.ServiceType),
+      room: mapTypeToLabel(service.ServiceType),
+      testName: service.ServiceName || '',
+      status: mapStatusToLabel(item.Status),
+
+      orderedBy: doctorOrder?.fullName || '',
+      orderedById: order.DoctorID || null,
+      orderedDate,
+
+      results: result?.ResultText || '',
+      normalRange: meta.normalRange || '',
+      notes: meta.notes || '',
+      conclusion: result?.Conclusion || '',
+      images,
+      imageUrl: images[0] || null,
+      resultDate,
+      confirmedBy: meta.confirmedBy || doctorResult?.fullName || null,
+      confirmedAt: meta.confirmedAt || null,
+      cancelReason: meta.cancelReason || '',
+      canceledBy: meta.canceledBy || null,
+      canceledAt: meta.canceledAt || null,
+
+      createdOnServer: true,
+    };
+  });
+};
+
+const fetchSingleLabTestRow = async (itemId) => {
+  const { LabOrderItem } = getLabModels();
+  const item = await LabOrderItem.findByPk(itemId, {
+    include: getBaseItemIncludes(),
+  });
+  if (!item) return null;
+  const rows = await fetchLabTestRowsByItems([item]);
+  return rows[0] || null;
+};
 
 /**
  * Get all lab tests (with pagination and filters)
  * GET /api/lab-tests
  */
 const getAllLabTests = asyncHandler(async (req, res) => {
+  const { LabOrderItem } = getLabModels();
   const { page, limit, offset } = parsePagination(req.query);
-  const { status, patientId, testType, fromDate, toDate, search, sort } = req.query;
+  const { status, patientId, medicalRecordId, fromDate, toDate, search, sort } = req.query;
 
-  // Build where clause
   const where = {};
-
-  if (status) {
-    where.status = status;
+  if (status !== undefined && status !== null && status !== '') {
+    where.Status = mapStatusToCode(status, LAB_ITEM_STATUS.PENDING);
   }
 
-  if (patientId) {
-    where.patientId = patientId;
+  if (fromDate || toDate) {
+    where.CreatedAt = {};
+    if (fromDate) where.CreatedAt[Op.gte] = new Date(fromDate);
+    if (toDate) where.CreatedAt[Op.lte] = new Date(toDate);
   }
 
-  if (testType) {
-    where.testType = testType;
+  const include = getBaseItemIncludes();
+  const parsedRecordId = toPositiveInt(medicalRecordId, { allowAppointmentPrefix: true });
+  if (parsedRecordId) {
+    include[0].where = { ExaminationID: parsedRecordId };
   }
 
-  if (fromDate && toDate) {
-    where.orderedDate = {
-      [Op.between]: [new Date(fromDate), new Date(toDate)],
-    };
+  const items = await LabOrderItem.findAll({
+    where,
+    include,
+    order: [['CreatedAt', 'DESC'], ['LabOrderItemID', 'DESC']],
+  });
+
+  let rows = await fetchLabTestRowsByItems(items);
+
+  if (patientId !== undefined && patientId !== null && patientId !== '') {
+    const pid = String(patientId);
+    rows = rows.filter((row) => String(row.patientId || '') === pid);
   }
 
   if (search) {
-    where[Op.or] = [
-      { patientName: { [Op.like]: `%${search}%` } },
-      { testName: { [Op.like]: `%${search}%` } },
-      { id: { [Op.like]: `%${search}%` } },
-    ];
+    const kw = normalizeText(search);
+    rows = rows.filter((row) => {
+      const haystack = [
+        row.testName,
+        row.patientName,
+        row.id,
+        row.medicalRecordId,
+        row.appointmentId,
+      ].map((x) => normalizeText(x)).join(' ');
+      return haystack.includes(kw);
+    });
   }
 
-  // Parse sort
-  const order = parseSort(sort, ['orderedDate', 'status', 'createdAt']);
+  const { field, dir } = parseSortParam(sort);
+  rows.sort((a, b) => {
+    const factor = dir === 'asc' ? 1 : -1;
+    let av;
+    let bv;
 
-  // Build includes for modern + legacy data
-  const includes = [
-    {
-      model: Patient,
-      as: 'patient',
-      attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
-      required: false,
-    },
-  ];
-
-  // Try to include legacy YeuCauDichVu results (with CanLamSang/images)
-  try {
-    const rawTables = await sequelize.getQueryInterface().showAllTables();
-    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-    const hasYeuCau = tableNames.includes('yeucaudichvu');
-    const hasCanLamSang = tableNames.includes('canlamsang');
-
-    if (models && models.YeuCauDichVu && hasYeuCau && models.MedicalRecord && models.HoSoKham) {
-      // Get lab tests with a single join to fetch legacy results
-      // We'll fetch them after grouping by medicalRecordId and add to each row
-      // For now, just ensure we can access the legacy data when needed
-      // (full include would be complex without hitting N+1; instead fetch legacy separately if needed)
+    if (field === 'status') {
+      av = mapStatusToCode(a.status);
+      bv = mapStatusToCode(b.status);
+    } else if (field === 'testName') {
+      av = String(a.testName || '').toLowerCase();
+      bv = String(b.testName || '').toLowerCase();
+    } else {
+      av = new Date(a.orderedDate || 0).getTime();
+      bv = new Date(b.orderedDate || 0).getTime();
     }
-  } catch (e) {
-    console.warn('getAllLabTests: could not check for legacy tables', e && e.message);
-  }
 
-  const { count, rows } = await LabTest.findAndCountAll({
-    where,
-    order,
-    limit,
-    offset,
-    include: includes,
+    if (av < bv) return -1 * factor;
+    if (av > bv) return 1 * factor;
+    return 0;
   });
 
-  // Legacy enrichment removed: return modern LabTest rows only.
+  const total = rows.length;
+  const paged = rows.slice(offset, offset + limit);
+
   return paginatedResponse(res, {
-    data: rows,
+    data: paged,
     page,
     limit,
-    total: count,
+    total,
   });
 });
 
@@ -110,39 +586,13 @@ const getAllLabTests = asyncHandler(async (req, res) => {
  * GET /api/lab-tests/:id
  */
 const getLabTestById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const itemId = toPositiveInt(req.params.id);
+  if (!itemId) throw new NotFoundError('Khong tim thay xet nghiem');
 
-  // Build include array only for models that are defined and whose tables exist
-  const includes = [];
-  if (Patient) includes.push({ model: Patient, as: 'patient', required: false });
+  const row = await fetchSingleLabTestRow(itemId);
+  if (!row) throw new NotFoundError('Khong tim thay xet nghiem');
 
-  // Check whether the ServiceOrder table actually exists in the DB before including it.
-  // Some deployments use legacy Vietnamese tables instead of the modern `service_orders` table.
-  try {
-    const rawTables = await sequelize.getQueryInterface().showAllTables();
-    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-    const hasServiceOrders = tableNames.includes('service_orders');
-    if (ServiceOrder && hasServiceOrders) {
-      includes.push({ model: ServiceOrder, as: 'serviceOrder', required: false });
-    }
-  } catch (tbErr) {
-    // If checking tables fails, avoid including ServiceOrder to prevent SQL errors.
-    console.warn('getLabTestById: could not enumerate tables, skipping ServiceOrder include', tbErr && tbErr.message);
-  }
-
-  if (MedicalRecord) includes.push({ model: MedicalRecord, as: 'medicalRecord', required: false });
-
-  let labTest = await LabTest.findByPk(id, {
-    include: includes.length > 0 ? includes : undefined,
-  });
-
-  if (!labTest) {
-    throw new NotFoundError('Không tìm thấy xét nghiệm');
-  }
-
-  // Legacy CanLamSang enrichment removed: do not attach legacy ultrasound results to lab test responses.
-
-  return successResponse(res, labTest);
+  return successResponse(res, row);
 });
 
 /**
@@ -150,323 +600,234 @@ const getLabTestById = asyncHandler(async (req, res) => {
  * POST /api/lab-tests
  */
 const createLabTest = asyncHandler(async (req, res) => {
+  const { LabOrder, LabOrderItem } = getLabModels();
+
   const {
     patientId,
     patientName,
     testType,
     testName,
     medicalRecordId,
-    serviceOrderId,
+    appointmentId,
     notes,
-  } = req.body;
+    status,
+    room,
+    roomId,
+    symptoms,
+  } = req.body || {};
 
-  try {
-    // Only use legacy flow when legacy tables exist and references are resolvable.
-    // Frontend may send synthetic medicalRecordId (e.g. REC...) when no HoSoKham model is loaded.
-    let shouldUseLegacyFlow = false;
-    if (models && models.YeuCauDichVu && models.CanLamSang && medicalRecordId) {
-      try {
-        const rawTables = await sequelize.getQueryInterface().showAllTables();
-        const tableNames = (rawTables || [])
-          .map(t => (t && (t.tableName || t.name)) || t)
-          .map(String)
-          .map(s => s.toLowerCase());
-
-        const hasHoSoKhamTable = tableNames.includes('hosokham');
-        const hasNguoiDungTable = tableNames.includes('nguoidung');
-
-        if (hasHoSoKhamTable) {
-          const [hsRows] = await sequelize.query(
-            'SELECT TOP 1 [Id] FROM [dbo].[HoSoKham] WHERE [Id] = :id',
-            { replacements: { id: medicalRecordId } }
-          );
-
-          if ((hsRows || []).length > 0) {
-            if (!hasNguoiDungTable) {
-              shouldUseLegacyFlow = true;
-            } else {
-              const [userRows] = await sequelize.query(
-                'SELECT TOP 1 [Id] FROM [dbo].[NguoiDung] WHERE [Id] = :id',
-                { replacements: { id: req.user.id } }
-              );
-              shouldUseLegacyFlow = (userRows || []).length > 0;
-              if (!shouldUseLegacyFlow) {
-                console.warn('createLabTest: skip legacy flow because req.user.id is not found in NguoiDung', {
-                  userId: req.user.id,
-                });
-              }
-            }
-          } else {
-            console.warn('createLabTest: skip legacy flow because medicalRecordId is not found in HoSoKham', {
-              medicalRecordId,
-            });
-          }
-        }
-      } catch (legacyCheckErr) {
-        console.warn('createLabTest: failed pre-check for legacy flow, fallback to modern flow', legacyCheckErr && legacyCheckErr.message);
-      }
-    }
-
-    // If legacy models exist and references are valid, write into legacy flow
-    if (shouldUseLegacyFlow) {
-      // Resolve BenhNhan.Id: incoming patientId may be BNxxx (english Patient) or GUID (BenhNhan.Id)
-      const BenhNhan = models.BenhNhan;
-      const YeuCauDichVu = models.YeuCauDichVu;
-      const CanLamSang = models.CanLamSang;
-
-      // Resolve BenhNhan in multiple ways:
-      // 1) patientId might already be BenhNhan.Id (GUID)
-      // 2) patientId might be NguoiDung.Id (user GUID) -> lookup BenhNhan.MaNguoiDung
-      // 3) patientId might be english Patient.id (BNxxx) -> find Patient.userId -> lookup BenhNhan
-      let benhNhanId = null;
-      let foundBenhNhan = null;
-
-      if (patientId) {
-        // Try primary key match (BenhNhan.Id)
-        foundBenhNhan = await BenhNhan.findByPk(patientId);
-        if (foundBenhNhan) benhNhanId = foundBenhNhan.Id;
-      }
-
-      // If not found, try matching MaNguoiDung == patientId (frontend might send user GUID)
-      if (!foundBenhNhan && patientId) {
-        foundBenhNhan = await BenhNhan.findOne({ where: { MaNguoiDung: patientId } });
-        if (foundBenhNhan) benhNhanId = foundBenhNhan.Id;
-      }
-
-      // If still not found, try resolving via english Patient table (id like BN022)
-      if (!foundBenhNhan && patientId) {
-        const engPat = await Patient.findByPk(patientId);
-        if (engPat) {
-          // Try to find BenhNhan by MaNguoiDung == engPat.userId
-          if (engPat.userId) {
-            foundBenhNhan = await BenhNhan.findOne({ where: { MaNguoiDung: engPat.userId } });
-            if (foundBenhNhan) benhNhanId = foundBenhNhan.Id;
-            else {
-              // Create BenhNhan record for this Patient.userId so legacy tables can reference it
-              const createdBN = await BenhNhan.create({ MaNguoiDung: engPat.userId });
-              foundBenhNhan = createdBN;
-              benhNhanId = createdBN.Id;
-            }
-          }
-        }
-      }
-
-      if (!foundBenhNhan) {
-        // If we cannot resolve legacy BenhNhan, fall back to creating a modern LabTest
-        console.warn('labTest.create: legacy BenhNhan not found for', { patientId, patientName });
-        // Pre-generate an id to avoid relying on MSSQL OUTPUT behaviour
-        const generatedId = `XN${Date.now().toString().slice(-10)}`;
-        const fallbackPayload = {
-          id: generatedId,
-          patientId,
-          patientName,
-          testType,
-          testName,
-          medicalRecordId,
-          serviceOrderId,
-          orderedBy: req.user.fullName,
-          orderedById: req.user.id,
-          orderedDate: new Date(),
-          status: LAB_STATUS.PENDING,
-          notes,
-        };
-
-        let fallbackLab = null;
-        try {
-          fallbackLab = await LabTest.create(fallbackPayload, { returning: false });
-        } catch (e) {
-          console.warn('labTest.create: create returned error, falling back to generated payload', e && e.message);
-        }
-
-        // If DB did not return the created record (MSSQL + Sequelize OUTPUT mismatch), return generated payload
-        const responsePayload = (fallbackLab && (fallbackLab.id || fallbackLab.ID)) ? fallbackLab : fallbackPayload;
-        return createdResponse(res, responsePayload, 'Tạo xét nghiệm (fallback)');
-      }
-
-      // Create YeuCauDichVu (service order)
-      const yc = await YeuCauDichVu.create({
-        MaHoSoKham: medicalRecordId || null,
-        MaBenhNhan: benhNhanId,
-        NguoiChiDinhId: req.user.id,
-        TrangThai: 0,
-        NgayChiDinh: new Date(),
-        GhiChuBacSi: notes || null,
-      });
-
-      // Create CanLamSang entry for this requested test
-      const cls = await CanLamSang.create({
-        MaYeuCau: yc.Id,
-        TenXetNghiem: testName,
-        KetQua: null,
-        GiaTriThamChieu: null,
-        TrangThai: 0,
-      });
-
-      // ALSO create modern LabTest record (if table exists) to bridge legacy + modern systems
-      // This ensures we can fetch legacy results when querying lab tests from modern table
-      let labTestRecord = null;
-      try {
-        const generatedId = `XN${Date.now().toString().slice(-10)}`;
-        const rawTables = await sequelize.getQueryInterface().showAllTables();
-        const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-        const hasLabTests = tableNames.includes('lab_tests');
-
-        if (LabTest && hasLabTests) {
-          labTestRecord = await LabTest.create({
-            id: generatedId,
-            patientId,
-            patientName,
-            testType,
-            testName,
-            medicalRecordId,
-            serviceOrderId: null,
-            orderedBy: req.user.fullName,
-            orderedById: req.user.id,
-            orderedDate: new Date(),
-            status: LAB_STATUS.PENDING,
-            notes,
-          }, { returning: false });
-        }
-      } catch (e) {
-        console.warn('createLabTest: failed to create modern LabTest record for legacy YeuCauDichVu', e && e.message);
-      }
-
-      return createdResponse(res, {
-        id: labTestRecord?.id || cls.Id,
-        yeuCauDichVuId: yc.Id,
-        canLamSangId: cls.Id,
-        testName: cls.TenXetNghiem,
-        status: cls.TrangThai
-      }, 'Tạo chỉ định cận lâm sàng thành công');
-    }
-
-    // Resolve patientId more flexibly to accept PK, userId or idNumber.
-    // If not found but `patientName` is provided, create a lightweight Patient
-    // so the lab test can be recorded without blocking the frontend action.
-    let resolvedPatientId = patientId;
-    if (patientId) {
-      let foundPatient = await Patient.findByPk(patientId);
-      if (!foundPatient) {
-        foundPatient = await Patient.findOne({ where: { userId: patientId } });
-      }
-      if (!foundPatient) {
-        foundPatient = await Patient.findOne({ where: { idNumber: patientId } });
-      }
-
-      if (!foundPatient && patientName) {
-        try {
-          const newPatient = await Patient.create({ fullName: patientName });
-          foundPatient = newPatient;
-        } catch (e) {
-          console.warn('createLabTest: failed to create patient fallback', e && e.message);
-        }
-      }
-
-      if (foundPatient) {
-        resolvedPatientId = foundPatient.id;
-      }
-    }
-
-    // If medicalRecordId is provided but not found, clear it so creation can proceed.
-    // This avoids hard failures from mismatched ids sent by the frontend.
-    let resolvedMedicalRecordId = medicalRecordId;
-    if (medicalRecordId) {
-      try {
-        const foundMR = await MedicalRecord.findByPk(medicalRecordId);
-        if (!foundMR) {
-          console.warn('createLabTest: provided medicalRecordId not found, clearing it before create', { medicalRecordId });
-          resolvedMedicalRecordId = null;
-        }
-      } catch (e) {
-        console.warn('createLabTest: error checking medicalRecordId', e && e.message);
-        resolvedMedicalRecordId = null;
-      }
-    }
-
-    // Pre-generate id to avoid relying on MSSQL OUTPUT when Sequelize expects inserted row
-    const generatedId = `XN${Date.now().toString().slice(-10)}`;
-    const payload = {
-      id: generatedId,
-      patientId: resolvedPatientId,
-      patientName,
-      testType,
-      testName,
-      medicalRecordId: resolvedMedicalRecordId,
-      serviceOrderId,
-      orderedBy: req.user.fullName,
-      orderedById: req.user.id,
-      orderedDate: new Date(),
-      status: LAB_STATUS.PENDING,
-      notes,
-    };
-
-    let labTest = null;
-    try {
-      labTest = await LabTest.create(payload, { returning: false });
-    } catch (e) {
-      console.warn('labTest.create: create returned error, falling back to payload', e && e.message);
-    }
-
-    const resp = (labTest && (labTest.id || labTest.ID)) ? labTest : payload;
-    return createdResponse(res, resp, 'Tạo xét nghiệm thành công');
-  } catch (dbErr) {
-    console.error('createLabTest: database error creating lab test', {
-      message: dbErr && dbErr.message,
-      name: dbErr && dbErr.name,
-      original: dbErr && dbErr.original,
-      sql: dbErr && dbErr.sql,
-      stack: dbErr && dbErr.stack,
-      body: req.body,
-      user: req.user?.id,
-    });
-
-    // Map common DB errors to friendlier API errors
-    if (dbErr.name === 'SequelizeForeignKeyConstraintError') {
-      // Likely patientId / medicalRecordId / serviceOrderId invalid
-      const err = new BadRequestError('Dữ liệu tham chiếu không hợp lệ (patientId hoặc medicalRecordId không tồn tại)');
-      throw err;
-    }
-
-    if (dbErr.name === 'SequelizeValidationError') {
-      const details = (dbErr.errors || []).map(e => ({ field: e.path, message: e.message }));
-      const err = new BadRequestError('Dữ liệu xét nghiệm không hợp lệ');
-      err.errors = details;
-      throw err;
-    }
-
-    // Database-level error: provide an environment-aware message and attach details
-    if (dbErr.name === 'SequelizeDatabaseError' || dbErr.original) {
-      const origMsg = (dbErr.original && (dbErr.original.message || dbErr.original.sqlMessage)) || dbErr.message || 'Lỗi cơ sở dữ liệu';
-      const displayMsg = config.isDevelopment ? origMsg : 'Lỗi cơ sở dữ liệu';
-      const err = new BadRequestError(displayMsg);
-      // Attach diagnostic details in development, keep minimal in production
-      err.errors = config.isDevelopment
-        ? [{ type: dbErr.name, original: dbErr.original, sql: dbErr.sql }]
-        : [{ type: dbErr.name }];
-      throw err;
-    }
-
-    // Fallback: rethrow original to be handled by global handler
-    throw dbErr;
+  const resolvedPatientId = toPositiveInt(patientId);
+  if (!resolvedPatientId) {
+    throw new BadRequestError('ID benh nhan khong hop le');
   }
+
+  const doctorId = toPositiveInt(req.user?.id);
+  if (!doctorId) {
+    throw new BadRequestError('Khong xac dinh duoc bac si chi dinh');
+  }
+
+  const examination = await resolveOrCreateExamination({
+    medicalRecordId,
+    appointmentId,
+    patientId: resolvedPatientId,
+    doctorId,
+    symptoms,
+  });
+
+  const service = await ensureLabService({
+    testName,
+    testType: testType || room,
+    roomId,
+  });
+
+  const orderWhere = {
+    ExaminationID: examination.ExaminationID,
+    DoctorID: doctorId,
+  };
+
+  let labOrder = await LabOrder.findOne({
+    where: orderWhere,
+    order: [['CreatedAt', 'DESC'], ['LabOrderID', 'DESC']],
+  });
+
+  if (!labOrder) {
+    labOrder = await LabOrder.create({
+      ExaminationID: examination.ExaminationID,
+      DoctorID: doctorId,
+      Status: LAB_ITEM_STATUS.PENDING,
+      CreatedAt: sequelize.literal('GETDATE()'),
+    });
+  }
+
+  const noteValue = buildMetaNote(null, {
+    notes: notes || null,
+  });
+
+  // Avoid creating duplicate LabOrderItems for the same LabOrder + Service combination.
+  // If an item already exists, update its metadata/status instead of creating a new row
+  // so the `LabOrderItemID` remains stable across edits.
+  let createdItem = await LabOrderItem.findOne({
+    where: {
+      LabOrderID: labOrder.LabOrderID,
+      ServiceID: service.ServiceID,
+    },
+  });
+
+  if (createdItem) {
+    const patch = {};
+    const statusCode = mapStatusToCode(status, Number(createdItem.Status) || LAB_ITEM_STATUS.PENDING);
+    if (statusCode !== Number(createdItem.Status)) patch.Status = statusCode;
+    if (noteValue !== undefined && noteValue !== null && String(noteValue).trim() !== String(createdItem.Note || '').trim()) patch.Note = noteValue;
+    if (Object.keys(patch).length > 0) {
+      await createdItem.update(patch);
+    }
+  } else {
+    createdItem = await LabOrderItem.create({
+      LabOrderID: labOrder.LabOrderID,
+      ServiceID: service.ServiceID,
+      RoomID: toPositiveInt(roomId),
+      Status: mapStatusToCode(status, LAB_ITEM_STATUS.PENDING),
+      Priority: 0,
+      Note: noteValue,
+      CreatedAt: sequelize.literal('GETDATE()'),
+    });
+  }
+
+  await recomputeLabOrderStatus(labOrder.LabOrderID);
+
+  const createdRow = await fetchSingleLabTestRow(createdItem.LabOrderItemID);
+
+  // Guarantee snapshot fields even when Patient/Appointment enrichment is missing
+  if (createdRow && !createdRow.patientName && patientName) {
+    createdRow.patientName = patientName;
+  }
+
+  return createdResponse(res, createdRow || { id: createdItem.LabOrderItemID }, 'Tao chi dinh can lam sang thanh cong');
 });
 
 /**
  * Update lab test
  * PUT /api/lab-tests/:id
  */
-const updateLabTest = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const updateData = req.body;
+const updateLabTestCore = async ({ itemId, payload = {}, user }) => {
+  const { LabOrderItem, LabResult } = getLabModels();
+  if (!itemId) throw new NotFoundError('Khong tim thay xet nghiem');
 
-  const labTest = await LabTest.findByPk(id);
-  if (!labTest) {
-    throw new NotFoundError('Không tìm thấy xét nghiệm');
+  const item = await LabOrderItem.findByPk(itemId, { include: getBaseItemIncludes() });
+  if (!item) throw new NotFoundError('Khong tim thay xet nghiem');
+
+  const order = item.LabOrder;
+  ensureMutatePermission(user, order?.DoctorID);
+
+  const itemUpdates = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
+    itemUpdates.Status = mapStatusToCode(payload.status, Number(item.Status) || LAB_ITEM_STATUS.PENDING);
   }
 
-  await labTest.update(updateData);
+  const itemMetaPatch = {
+    cancelReason: payload.cancelReason,
+    canceledBy: payload.canceledBy,
+    canceledAt: payload.canceledAt,
+  };
 
-  return successResponse(res, labTest, 'Cập nhật xét nghiệm thành công');
+  if (Object.values(itemMetaPatch).some((v) => v !== undefined)) {
+    itemUpdates.Note = buildMetaNote(item.Note, itemMetaPatch);
+  }
+
+  if (Object.keys(itemUpdates).length > 0) {
+    await item.update(itemUpdates);
+  }
+
+  const hasResultPayload = [
+    'results',
+    'resultText',
+    'normalRange',
+    'notes',
+    'conclusion',
+    'images',
+    'imageUrl',
+    'resultDate',
+    'confirmedBy',
+    'confirmedAt',
+  ].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+
+  if (hasResultPayload) {
+    const existing = await LabResult.findOne({
+      where: {
+        ExaminationID: order.ExaminationID,
+        ServiceID: item.ServiceID,
+      },
+      order: [['ResultDate', 'DESC'], ['UpdatedAt', 'DESC'], ['LabResultID', 'DESC']],
+    });
+
+    const resultText = payload.results ?? payload.resultText;
+    const imagesInput = payload.images ?? (payload.imageUrl ? [payload.imageUrl] : undefined);
+    const nextImageUrl = imagesInput !== undefined ? serializeImages(imagesInput) : undefined;
+    const noteValue = buildMetaNote(existing?.Note, {
+      notes: payload.notes,
+      normalRange: payload.normalRange,
+      cancelReason: payload.cancelReason,
+      canceledBy: payload.canceledBy,
+      canceledAt: payload.canceledAt,
+      confirmedBy: payload.confirmedBy,
+      confirmedAt: payload.confirmedAt,
+    });
+
+    if (existing) {
+      const resultUpdates = {
+        UpdatedAt: new Date(),
+      };
+
+      if (resultText !== undefined) {
+        resultUpdates.ResultText = resultText || existing.ResultText || '-';
+      }
+      if (payload.conclusion !== undefined) {
+        resultUpdates.Conclusion = payload.conclusion || null;
+      }
+      if (noteValue !== undefined) {
+        resultUpdates.Note = noteValue;
+      }
+      if (nextImageUrl !== undefined) {
+        resultUpdates.ImageUrl = nextImageUrl;
+      }
+      if (payload.resultDate) {
+        resultUpdates.ResultDate = new Date(payload.resultDate);
+      } else if (resultText !== undefined || payload.conclusion !== undefined || nextImageUrl !== undefined) {
+        resultUpdates.ResultDate = existing.ResultDate || new Date();
+      }
+
+      await existing.update(resultUpdates);
+    } else if (
+      resultText !== undefined ||
+      payload.conclusion !== undefined ||
+      payload.notes !== undefined ||
+      payload.normalRange !== undefined ||
+      nextImageUrl !== undefined
+    ) {
+      await LabResult.create({
+        ExaminationID: order.ExaminationID,
+        ServiceID: item.ServiceID,
+        ResultText: (resultText || '-').toString(),
+        ImageUrl: nextImageUrl || null,
+        Conclusion: payload.conclusion || null,
+        Note: noteValue,
+        DoctorID: toPositiveInt(user?.id) || order.DoctorID,
+        ResultDate: payload.resultDate ? new Date(payload.resultDate) : new Date(),
+        CreatedAt: new Date(),
+        UpdatedAt: new Date(),
+      });
+    }
+  }
+
+  await recomputeLabOrderStatus(order.LabOrderID);
+  return fetchSingleLabTestRow(itemId);
+};
+
+const updateLabTest = asyncHandler(async (req, res) => {
+  const itemId = toPositiveInt(req.params.id);
+  const row = await updateLabTestCore({ itemId, payload: req.body || {}, user: req.user });
+  return successResponse(res, row, 'Cap nhat xet nghiem thanh cong');
 });
 
 /**
@@ -474,207 +835,150 @@ const updateLabTest = asyncHandler(async (req, res) => {
  * POST /api/lab-tests/:id/start
  */
 const startLabTest = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const { LabOrderItem } = getLabModels();
+  const itemId = toPositiveInt(req.params.id);
+  if (!itemId) throw new NotFoundError('Khong tim thay xet nghiem');
 
-  const labTest = await LabTest.findByPk(id);
-  if (!labTest) {
-    throw new NotFoundError('Không tìm thấy xét nghiệm');
+  const item = await LabOrderItem.findByPk(itemId, { include: getBaseItemIncludes() });
+  if (!item) throw new NotFoundError('Khong tim thay xet nghiem');
+
+  ensureMutatePermission(req.user, item?.LabOrder?.DoctorID);
+
+  if (Number(item.Status) === LAB_ITEM_STATUS.CANCELLED) {
+    throw new BadRequestError('Khong the bat dau lai xet nghiem da huy');
   }
 
-  if (labTest.status !== LAB_STATUS.PENDING) {
-    throw new BadRequestError('Chỉ có thể bắt đầu xét nghiệm đang chờ');
-  }
+  await item.update({ Status: LAB_ITEM_STATUS.IN_PROGRESS });
+  await recomputeLabOrderStatus(item.LabOrderID);
 
-  await labTest.update({
-    status: LAB_STATUS.IN_PROGRESS,
-  });
-
-  return successResponse(res, labTest, 'Bắt đầu xét nghiệm thành công');
+  const row = await fetchSingleLabTestRow(itemId);
+  return successResponse(res, row, 'Bat dau xet nghiem thanh cong');
 });
 
 /**
- * Complete lab test with results
+ * Complete lab test with results (save results, keep workflow in-progress)
  * POST /api/lab-tests/:id/complete
  */
 const completeLabTest = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { results, normalRange, notes, conclusion, images } = req.body;
-
-  const labTest = await LabTest.findByPk(id);
-  if (!labTest) {
-    throw new NotFoundError('Không tìm thấy xét nghiệm');
-  }
-
+  const { results, normalRange, notes, conclusion, images } = req.body || {};
   if (!results) {
-    throw new BadRequestError('Kết quả không được để trống');
+    throw new BadRequestError('Ket qua khong duoc de trong');
   }
 
-  // Only allow saving results while the test is in progress
-  if (labTest.status !== LAB_STATUS.IN_PROGRESS) {
-    throw new BadRequestError('Chỉ có thể lưu kết quả khi đang thực hiện');
-  }
-
-  const updatePayload = {
-    // Keep status as IN_PROGRESS; final completion happens when returning results
+  const itemId = toPositiveInt(req.params.id);
+  const payload = {
+    status: LAB_STATUS.IN_PROGRESS,
     results,
     normalRange,
     notes,
     conclusion,
-    // record last-saved timestamp
-    resultDate: new Date(),
+    images,
+    resultDate: new Date().toISOString(),
   };
 
-  if (images !== undefined) {
-    updatePayload.images = images;
-  }
-
-  await labTest.update(updatePayload);
-
-  return successResponse(res, labTest, 'Lưu kết quả xét nghiệm thành công');
+  const row = await updateLabTestCore({ itemId, payload, user: req.user });
+  return successResponse(res, row, 'Luu ket qua xet nghiem thanh cong');
 });
 
 /**
- * Return lab test (mark result as delivered/returned)
+ * Return lab test (mark completed and attach confirmer)
  * POST /api/lab-tests/:id/return
  */
 const returnLabTest = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const { LabOrderItem, LabResult } = getLabModels();
+  const itemId = toPositiveInt(req.params.id);
+  if (!itemId) throw new NotFoundError('Khong tim thay xet nghiem');
 
-  const labTest = await LabTest.findByPk(id);
-  if (!labTest) {
-    throw new NotFoundError('Không tìm thấy xét nghiệm');
-  }
+  const item = await LabOrderItem.findByPk(itemId, { include: getBaseItemIncludes() });
+  if (!item) throw new NotFoundError('Khong tim thay xet nghiem');
 
-  // Allow returning when test is in progress or already completed
-  if (![LAB_STATUS.IN_PROGRESS, LAB_STATUS.COMPLETED].includes(labTest.status)) {
-    throw new BadRequestError('Chỉ có thể trả kết quả cho xét nghiệm đang thực hiện hoặc đã hoàn thành');
-  }
+  ensureMutatePermission(req.user, item?.LabOrder?.DoctorID);
 
-  // Clean any internal returned markers from existing notes and preserve human-friendly notes
-  const cleanedNotes = (labTest.notes || '').replace(/\[RETURNED_BY:[^\]]*\]/g, '').trim();
+  const nowIso = new Date().toISOString();
+  await item.update({ Status: LAB_ITEM_STATUS.COMPLETED });
 
-  await labTest.update({
-    status: LAB_STATUS.COMPLETED,
-    notes: cleanedNotes,
-    // mark who confirmed and when
-    confirmedBy: req.user.fullName,
-    confirmedById: req.user.id,
-    confirmedAt: new Date(),
-    resultDate: labTest.resultDate || new Date(),
+  const existing = await LabResult.findOne({
+    where: {
+      ExaminationID: item.LabOrder.ExaminationID,
+      ServiceID: item.ServiceID,
+    },
+    order: [['ResultDate', 'DESC'], ['UpdatedAt', 'DESC'], ['LabResultID', 'DESC']],
   });
 
-  // Legacy sync removed: do not write results back to CanLamSang
-
-  // Re-fetch the lab test with related data so the client receives full details
-  const include = [];
-  if (Patient) include.push({ model: Patient, as: 'patient', required: false });
-  if (MedicalRecord) include.push({ model: MedicalRecord, as: 'medicalRecord', required: false });
-
-  // Only include ServiceOrder if the physical table exists (some deployments use legacy VN tables)
-  try {
-    const rawTables = await sequelize.getQueryInterface().showAllTables();
-    const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-    const hasServiceOrders = tableNames.includes('service_orders');
-    if (ServiceOrder && hasServiceOrders) {
-      include.push({ model: ServiceOrder, as: 'serviceOrder', required: false });
-    }
-  } catch (tbErr) {
-    console.warn('returnLabTest: could not enumerate tables, skipping ServiceOrder include', tbErr && tbErr.message);
+  if (existing) {
+    const noteValue = buildMetaNote(existing.Note, {
+      confirmedBy: req.user?.fullName || null,
+      confirmedAt: nowIso,
+    });
+    await existing.update({
+      Note: noteValue,
+      ResultDate: existing.ResultDate || new Date(nowIso),
+      UpdatedAt: new Date(nowIso),
+      DoctorID: toPositiveInt(req.user?.id) || existing.DoctorID,
+    });
+  } else {
+    await LabResult.create({
+      ExaminationID: item.LabOrder.ExaminationID,
+      ServiceID: item.ServiceID,
+      ResultText: '-',
+      ImageUrl: null,
+      Conclusion: null,
+      Note: buildMetaNote(null, {
+        confirmedBy: req.user?.fullName || null,
+        confirmedAt: nowIso,
+      }),
+      DoctorID: toPositiveInt(req.user?.id) || item.LabOrder.DoctorID,
+      ResultDate: new Date(nowIso),
+      CreatedAt: new Date(nowIso),
+      UpdatedAt: new Date(nowIso),
+    });
   }
 
-  if (User) {
-    include.push({ model: User, as: 'orderedByUser', required: false });
-    include.push({ model: User, as: 'confirmedByUser', required: false });
-  }
+  await recomputeLabOrderStatus(item.LabOrderID);
+  const row = await fetchSingleLabTestRow(itemId);
 
-  const fullLabTest = await LabTest.findByPk(id, { include: include.length ? include : undefined });
-
-  // Do not include legacy CanLamSang results in return payload
-  return successResponse(res, { id: labTest.id, returned: true, returnedBy: req.user.fullName, labTest: fullLabTest, legacyResults: null }, 'Đã trả kết quả');
+  return successResponse(
+    res,
+    {
+      id: itemId,
+      returned: true,
+      returnedBy: req.user?.fullName || null,
+      labTest: row,
+      legacyResults: null,
+    },
+    'Da tra ket qua'
+  );
 });
 
 /**
- * Delete lab test (soft delete)
+ * Delete lab test (hard delete LabOrderItem)
  * DELETE /api/lab-tests/:id
  */
+const deleteLabTestCore = async ({ itemId, user }) => {
+  const { LabOrder, LabOrderItem } = getLabModels();
+  if (!itemId) throw new NotFoundError('Khong tim thay xet nghiem');
+
+  const item = await LabOrderItem.findByPk(itemId, { include: getBaseItemIncludes() });
+  if (!item) throw new NotFoundError('Khong tim thay xet nghiem');
+
+  ensureMutatePermission(user, item?.LabOrder?.DoctorID);
+
+  const labOrderId = item.LabOrderID;
+  await item.destroy();
+
+  const remain = await LabOrderItem.count({ where: { LabOrderID: labOrderId } });
+  if (remain === 0) {
+    await LabOrder.destroy({ where: { LabOrderID: labOrderId } });
+  } else {
+    await recomputeLabOrderStatus(labOrderId);
+  }
+
+  return true;
+};
+
 const deleteLabTest = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const labTest = await LabTest.findByPk(id);
-  if (!labTest) {
-    throw new NotFoundError('Không tìm thấy xét nghiệm');
-  }
-
-  // Add diagnostic logging to help debug permission/delete failures
-  const user = req.user || {};
-  try {
-    console.info('deleteLabTest: attempt', {
-      timestamp: new Date().toISOString(),
-      requestedId: id,
-      user: { id: user.id, role: user.role, fullName: user.fullName },
-      labTest: {
-        id: labTest.id || labTest.Id,
-        orderedBy: labTest.orderedBy,
-        orderedById: labTest.orderedById,
-        medicalRecordId: labTest.medicalRecordId,
-      },
-    });
-  } catch (logErr) {
-    // ignore logging failures
-  }
-
-  // Authorization: allow admin or the doctor who ordered the test to delete
-  const isAdmin = String(user.role) === String(ROLES.ADMIN) || String(user.role) === 'admin';
-
-  // Check if current user is the ordering doctor by id or by fullName
-  const isOrderingDoctor = (String(user.role) === String(ROLES.DOCTOR)) && (
-    (labTest.orderedById && String(user.id) === String(labTest.orderedById)) ||
-    (labTest.orderedBy && String(user.fullName) === String(labTest.orderedBy))
-  );
-
-  if (!isAdmin && !isOrderingDoctor) {
-    // Additional ownership check: if labTest linked to a medical record and
-    // the current user is the doctor on that medical record, allow deletion.
-    try {
-      const MRModel = models.HoSoKham || models.MedicalRecord || MedicalRecord;
-      if (labTest.medicalRecordId && MRModel) {
-        const record = await MRModel.findByPk(labTest.medicalRecordId);
-        console.debug('deleteLabTest: linked medical record', { recordId: labTest.medicalRecordId, record });
-        if (record) {
-          // legacy HoSoKham uses MaBacSi, modern uses doctorId
-          const recordDoctorId = record.MaBacSi || record.doctorId || null;
-          if (recordDoctorId && String(recordDoctorId) === String(user.id)) {
-            // allowed — proceed to delete
-          } else {
-            console.warn('deleteLabTest: user not owner of medical record', { userId: user.id, recordDoctorId });
-            throw new Error('not-owner');
-          }
-        } else {
-          console.warn('deleteLabTest: medical record not found for labTest', { medicalRecordId: labTest.medicalRecordId });
-          throw new Error('not-owner');
-        }
-      } else {
-        console.warn('deleteLabTest: labTest not linked to medical record and user not ordering doctor/admin');
-        throw new Error('not-owner');
-      }
-    } catch (ex) {
-      // Still forbidden — include diagnostic info to logs
-      console.error('deleteLabTest: forbidden', {
-        user: { id: user.id, role: user.role, fullName: user.fullName },
-        labTest: { id: labTest.id || labTest.Id, orderedBy: labTest.orderedBy, orderedById: labTest.orderedById, medicalRecordId: labTest.medicalRecordId },
-        error: ex && ex.message,
-      });
-      throw new (require('../utils/errors.js').ForbiddenError)('Bạn không có quyền thực hiện hành động này', 'INSUFFICIENT_PERMISSIONS');
-    }
-  }
-
-  try {
-    await labTest.destroy();
-    console.info('deleteLabTest: success', { id: labTest.id || labTest.Id, deletedBy: user.id });
-  } catch (destroyErr) {
-    console.error('deleteLabTest: destroy error', { id: labTest.id || labTest.Id, error: destroyErr && destroyErr.message });
-    throw destroyErr;
-  }
+  const itemId = toPositiveInt(req.params.id);
+  await deleteLabTestCore({ itemId, user: req.user });
 
   return noContentResponse(res);
 });
@@ -684,113 +988,84 @@ const deleteLabTest = asyncHandler(async (req, res) => {
  * GET /api/lab-tests/pending
  */
 const getPendingLabTests = asyncHandler(async (req, res) => {
-  const labTests = await LabTest.findAll({
+  const { LabOrderItem } = getLabModels();
+  const items = await LabOrderItem.findAll({
     where: {
-      status: {
-        [Op.in]: [LAB_STATUS.PENDING, LAB_STATUS.IN_PROGRESS],
+      Status: {
+        [Op.in]: [LAB_ITEM_STATUS.PENDING, LAB_ITEM_STATUS.IN_PROGRESS],
       },
     },
-    order: [['orderedDate', 'ASC']],
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
-        required: false,
-      },
-    ],
+    include: getBaseItemIncludes(),
+    order: [['CreatedAt', 'ASC'], ['LabOrderItemID', 'ASC']],
   });
 
-  return successResponse(res, labTests);
+  const rows = await fetchLabTestRowsByItems(items);
+  return successResponse(res, rows);
 });
 
 /**
- * Batch delete lab tests (accepts array of ids)
+ * Batch delete lab tests
  * POST /api/lab-tests/batch-delete
  */
 const batchDeleteLabTests = asyncHandler(async (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    throw new BadRequestError('ids là mảng các id cần xóa');
-  }
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (ids.length === 0) throw new BadRequestError('ids la mang cac id can xoa');
 
-  const user = req.user || {};
   const results = [];
-
   for (const id of ids) {
     try {
-      const labTest = await LabTest.findByPk(id);
-      if (!labTest) {
-        // Treat not found as already deleted/success for idempotency
-        results.push({ id, ok: true, status: 'not_found', message: 'Không tìm thấy (đã xóa?)' });
-        continue;
-      }
-
-      // Authorization checks (reuse same rules as single delete)
-      const isAdmin = String(user.role) === String(ROLES.ADMIN) || String(user.role) === 'admin';
-      const isOrderingDoctor = (String(user.role) === String(ROLES.DOCTOR)) && (
-        (labTest.orderedById && String(user.id) === String(labTest.orderedById)) ||
-        (labTest.orderedBy && String(user.fullName) === String(labTest.orderedBy))
-      );
-
-      let allowed = isAdmin || isOrderingDoctor;
-      if (!allowed) {
-        const MRModel = models.HoSoKham || models.MedicalRecord || MedicalRecord;
-        if (labTest.medicalRecordId && MRModel) {
-          const record = await MRModel.findByPk(labTest.medicalRecordId);
-          const recordDoctorId = record?.MaBacSi || record?.doctorId || null;
-          if (recordDoctorId && String(recordDoctorId) === String(user.id)) {
-            allowed = true;
-          }
-        }
-      }
-
-      if (!allowed) {
-        results.push({ id, ok: false, status: 'forbidden', message: 'Không có quyền xóa' });
-        continue;
-      }
-
-      await labTest.destroy();
+      await deleteLabTestCore({ itemId: toPositiveInt(id), user: req.user });
       results.push({ id, ok: true, status: 'deleted' });
-    } catch (e) {
-      results.push({ id, ok: false, status: 'error', message: e && e.message });
+    } catch (error) {
+      results.push({ id, ok: false, status: 'error', message: error?.message || 'unknown error' });
     }
   }
 
-  const failed = results.filter(r => !r.ok).length;
-  return successResponse(res, { total: ids.length, failed, results }, 'Kết quả xóa hàng loạt');
+  const failed = results.filter((r) => !r.ok).length;
+  return successResponse(res, { total: ids.length, failed, results }, 'Ket qua xoa hang loat');
 });
+
+const mapLabServiceResponse = (service) => {
+  const plain = service?.get ? service.get({ plain: true }) : service;
+  return {
+    id: plain.ServiceID,
+    serviceId: plain.ServiceID,
+    serviceCode: plain.ServiceCode,
+    name: plain.ServiceName,
+    type: mapTypeToLabel(plain.ServiceType),
+    typeCode: plain.ServiceType,
+    roomId: plain.RoomID,
+    price: plain.Price,
+    isActive: Boolean(plain.IsActive),
+    createdAt: plain.CreatedAt,
+  };
+};
 
 /**
  * Get lab services catalog
  * GET /api/lab-services
  */
 const getLabServices = asyncHandler(async (req, res) => {
+  const { LabService } = getLabModels();
   const { type, search, isActive = 'true' } = req.query;
 
   const where = {};
-
-  if (isActive !== undefined) {
-    where.isActive = isActive === 'true';
+  if (isActive !== undefined && isActive !== null && isActive !== '') {
+    where.IsActive = String(isActive) === 'true';
   }
-
   if (type) {
-    where.type = type;
+    where.ServiceType = mapTypeToCode(type);
   }
-
   if (search) {
-    where[Op.or] = [
-      { name: { [Op.like]: `%${search}%` } },
-      { type: { [Op.like]: `%${search}%` } },
-    ];
+    where.ServiceName = { [Op.like]: `%${String(search).trim()}%` };
   }
 
   const services = await LabService.findAll({
     where,
-    order: [['type', 'ASC'], ['name', 'ASC']],
+    order: [['ServiceType', 'ASC'], ['ServiceName', 'ASC']],
   });
 
-  return successResponse(res, services);
+  return successResponse(res, services.map(mapLabServiceResponse));
 });
 
 /**
@@ -798,19 +1073,28 @@ const getLabServices = asyncHandler(async (req, res) => {
  * POST /api/lab-services
  */
 const createLabService = asyncHandler(async (req, res) => {
-  const { name, type, price, description, room, duration, instructions } = req.body;
+  const { LabService } = getLabModels();
+  const { name, type, price = 0, roomId = null, isActive = true } = req.body || {};
+
+  if (!name || !String(name).trim()) {
+    throw new BadRequestError('Ten dich vu khong duoc de trong');
+  }
+
+  const maxCode = await LabService.max('ServiceCode');
+  const fallbackSeed = Number(String(Date.now()).slice(-6));
+  const nextCode = Number.isFinite(Number(maxCode)) ? Number(maxCode) + 1 : fallbackSeed;
 
   const service = await LabService.create({
-    name,
-    type,
-    price,
-    description,
-    room,
-    duration,
-    instructions,
+    ServiceCode: nextCode,
+    ServiceName: String(name).trim(),
+    ServiceType: mapTypeToCode(type),
+    RoomID: toPositiveInt(roomId),
+    Price: Number(price) || 0,
+    IsActive: Boolean(isActive),
+    CreatedAt: sequelize.literal('GETDATE()'),
   });
 
-  return createdResponse(res, service, 'Tạo dịch vụ xét nghiệm thành công');
+  return createdResponse(res, mapLabServiceResponse(service), 'Tao dich vu can lam sang thanh cong');
 });
 
 /**
@@ -818,17 +1102,23 @@ const createLabService = asyncHandler(async (req, res) => {
  * PUT /api/lab-services/:id
  */
 const updateLabService = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const updateData = req.body;
+  const { LabService } = getLabModels();
+  const serviceId = toPositiveInt(req.params.id);
+  if (!serviceId) throw new NotFoundError('Khong tim thay dich vu');
 
-  const service = await LabService.findByPk(id);
-  if (!service) {
-    throw new NotFoundError('Không tìm thấy dịch vụ');
-  }
+  const service = await LabService.findByPk(serviceId);
+  if (!service) throw new NotFoundError('Khong tim thay dich vu');
 
-  await service.update(updateData);
+  const payload = req.body || {};
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(payload, 'name')) updates.ServiceName = String(payload.name || '').trim();
+  if (Object.prototype.hasOwnProperty.call(payload, 'type')) updates.ServiceType = mapTypeToCode(payload.type);
+  if (Object.prototype.hasOwnProperty.call(payload, 'price')) updates.Price = Number(payload.price) || 0;
+  if (Object.prototype.hasOwnProperty.call(payload, 'roomId')) updates.RoomID = toPositiveInt(payload.roomId);
+  if (Object.prototype.hasOwnProperty.call(payload, 'isActive')) updates.IsActive = Boolean(payload.isActive);
 
-  return successResponse(res, service, 'Cập nhật dịch vụ thành công');
+  await service.update(updates);
+  return successResponse(res, mapLabServiceResponse(service), 'Cap nhat dich vu thanh cong');
 });
 
 export {
