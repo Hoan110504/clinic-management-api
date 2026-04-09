@@ -50,7 +50,7 @@ export default (sequelize) => {
         allowNull: true,
         field: 'patient_id',
         references: {
-          model: 'patients',
+          model: 'Patients',
           key: 'id',
         },
       },
@@ -95,7 +95,7 @@ export default (sequelize) => {
         allowNull: true,
         field: 'prescription_id',
         references: {
-          model: 'prescriptions',
+          model: 'Prescriptions',
           key: 'id',
         },
       },

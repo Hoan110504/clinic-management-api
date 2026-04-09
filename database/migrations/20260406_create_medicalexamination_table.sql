@@ -1,58 +1,34 @@
--- Migration: create MedicalExamination table for MSSQL
--- Creates dbo.MedicalExamination with exact column names matching Sequelize model
--- This table stores complete medical examination data with vital signs and lab/imaging results
+-- Migration: create MedicalExaminations table for MSSQL
+-- Synchronized with actual DB schema (2026-04-09)
 IF OBJECT_ID('dbo.MedicalExaminations', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.MedicalExaminations (
-    -- Primary key and identifiers
-    ExaminationID BIGINT PRIMARY KEY IDENTITY(1,1) NOT NULL,
-    ExaminationCode NVARCHAR(50) NOT NULL,
-    AppointmentID NVARCHAR(50) NOT NULL,
-    PatientID NVARCHAR(50) NOT NULL,
-    DoctorID CHAR(36) NULL,
+    ExaminationID BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
     ExaminationDate DATETIME2 NULL,
-
-    -- I. Symptoms
     Symptoms NVARCHAR(MAX) NULL,
-
-    -- II. Vital Signs (Health Indicators)
     BloodPressure NVARCHAR(20) NULL,
     Pulse INT NULL,
-    Temperature DECIMAL(4,1) NULL,
+    Temperature DECIMAL(10,2) NULL,
     SpO2 INT NULL,
     RespirationRate INT NULL,
-    Weight DECIMAL(5,2) NULL,
-    Height DECIMAL(5,2) NULL,
-    BMI DECIMAL(5,2) NULL,
-
-    -- III. Diagnosis and Treatment
+    Weight DECIMAL(10,2) NULL,
+    Height DECIMAL(10,2) NULL,
+    BMI DECIMAL(10,2) NULL,
     Diagnosis NVARCHAR(MAX) NULL,
     ICD10Code NVARCHAR(20) NULL,
     TreatmentAdvice NVARCHAR(MAX) NULL,
     Notes NVARCHAR(MAX) NULL,
     ReExaminationDate DATE NULL,
-
-    -- IV. Lab/Imaging/ECG Orders and Results
-    LabOrders NVARCHAR(MAX) NULL,
-    ImagingOrders NVARCHAR(MAX) NULL,
-    ECGOrders NVARCHAR(MAX) NULL,
-    LabResults NVARCHAR(MAX) NULL,
-    ImagingResults NVARCHAR(MAX) NULL,
-    ECGResults NVARCHAR(MAX) NULL,
-
-    -- V. Prescription
-    PrescriptionID UNIQUEIDENTIFIER NULL,
     PrescriptionStatus TINYINT NULL DEFAULT 0,
-
-    -- Timestamps
-    CreatedAt DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
-    UpdatedAt DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
+    CreatedAt DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    UpdatedAt DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    DoctorID BIGINT NULL,
+    PatientId BIGINT NULL,
+    AppointmentID BIGINT NOT NULL
   );
 
-  -- Create indexes for commonly queried fields
-  CREATE INDEX IX_MedicalExaminations_AppointmentId ON dbo.MedicalExaminations(AppointmentID);
-  CREATE INDEX IX_MedicalExaminations_PatientId ON dbo.MedicalExaminations(PatientID);
-  CREATE INDEX IX_MedicalExaminations_DoctorId ON dbo.MedicalExaminations(DoctorID);
-  CREATE INDEX IX_MedicalExaminations_ExaminationCode ON dbo.MedicalExaminations(ExaminationCode);
+  CREATE INDEX IX_MedicalExaminations_AppointmentID ON dbo.MedicalExaminations(AppointmentID);
+  CREATE INDEX IX_MedicalExaminations_PatientId ON dbo.MedicalExaminations(PatientId);
+  CREATE INDEX IX_MedicalExaminations_DoctorID ON dbo.MedicalExaminations(DoctorID);
   CREATE INDEX IX_MedicalExaminations_CreatedAt ON dbo.MedicalExaminations(CreatedAt);
 END

@@ -1,79 +1,54 @@
--- Migration: Fix MedicalExamination table schema
--- Drops old incorrect schema and creates correct one matching Sequelize model
--- Run this to fix the DATABASE_ERROR when creating medical examination records
+-- Migration: fix MedicalExaminations schema
+-- Synchronized with actual DB schema (2026-04-09)
 
--- Step 1: Drop the old incorrectly-named table if it exists with wrong columns
+-- Drop legacy table shape that used old columns/types (ExaminationCode, PatientID, NVARCHAR AppointmentID)
 IF OBJECT_ID('dbo.MedicalExaminations', 'U') IS NOT NULL
 BEGIN
-  -- Check if table has the old (wrong) columns - if so, drop it
-  IF COL_LENGTH('dbo.MedicalExaminations', 'id') IS NOT NULL
-     AND COL_LENGTH('dbo.MedicalExaminations', 'ExaminationID') IS NULL
+  IF COL_LENGTH('dbo.MedicalExaminations', 'ExaminationCode') IS NOT NULL
+     OR COL_LENGTH('dbo.MedicalExaminations', 'PatientID') IS NOT NULL
   BEGIN
-    PRINT 'Dropping old MedicalExaminations table with incorrect schema...';
+    PRINT 'Dropping legacy MedicalExaminations schema to recreate synchronized schema...';
     DROP TABLE dbo.MedicalExaminations;
   END
 END
 
--- Step 2: Create the correct table if it doesn't exist
+-- Create synchronized table if needed
 IF OBJECT_ID('dbo.MedicalExaminations', 'U') IS NULL
 BEGIN
-  PRINT 'Creating MedicalExaminations table with correct schema...';
+  PRINT 'Creating synchronized MedicalExaminations table...';
   CREATE TABLE dbo.MedicalExaminations (
-    -- Primary key and identifiers
-    ExaminationID BIGINT PRIMARY KEY IDENTITY(1,1) NOT NULL,
-    ExaminationCode NVARCHAR(50) NOT NULL,
-    AppointmentID NVARCHAR(50) NOT NULL,
-    PatientID NVARCHAR(50) NOT NULL,
-    DoctorID CHAR(36) NULL,
+    ExaminationID BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
     ExaminationDate DATETIME2 NULL,
-
-    -- I. Symptoms
     Symptoms NVARCHAR(MAX) NULL,
-
-    -- II. Vital Signs (Health Indicators)
     BloodPressure NVARCHAR(20) NULL,
     Pulse INT NULL,
-    Temperature DECIMAL(4,1) NULL,
+    Temperature DECIMAL(10,2) NULL,
     SpO2 INT NULL,
     RespirationRate INT NULL,
-    Weight DECIMAL(5,2) NULL,
-    Height DECIMAL(5,2) NULL,
-    BMI DECIMAL(5,2) NULL,
-
-    -- III. Diagnosis and Treatment
+    Weight DECIMAL(10,2) NULL,
+    Height DECIMAL(10,2) NULL,
+    BMI DECIMAL(10,2) NULL,
     Diagnosis NVARCHAR(MAX) NULL,
     ICD10Code NVARCHAR(20) NULL,
     TreatmentAdvice NVARCHAR(MAX) NULL,
     Notes NVARCHAR(MAX) NULL,
     ReExaminationDate DATE NULL,
-
-    -- IV. Lab/Imaging/ECG Orders and Results
-    LabOrders NVARCHAR(MAX) NULL,
-    ImagingOrders NVARCHAR(MAX) NULL,
-    ECGOrders NVARCHAR(MAX) NULL,
-    LabResults NVARCHAR(MAX) NULL,
-    ImagingResults NVARCHAR(MAX) NULL,
-    ECGResults NVARCHAR(MAX) NULL,
-
-    -- V. Prescription
-    PrescriptionID UNIQUEIDENTIFIER NULL,
     PrescriptionStatus TINYINT NULL DEFAULT 0,
-
-    -- Timestamps
-    CreatedAt DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET(),
-    UpdatedAt DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()
+    CreatedAt DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    UpdatedAt DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    DoctorID BIGINT NULL,
+    PatientId BIGINT NULL,
+    AppointmentID BIGINT NOT NULL
   );
 
-  PRINT 'Creating indexes on MedicalExaminations table...';
-  CREATE INDEX IX_MedicalExaminations_AppointmentId ON dbo.MedicalExaminations(AppointmentID);
-  CREATE INDEX IX_MedicalExaminations_PatientId ON dbo.MedicalExaminations(PatientID);
-  CREATE INDEX IX_MedicalExaminations_DoctorId ON dbo.MedicalExaminations(DoctorID);
-  CREATE INDEX IX_MedicalExaminations_ExaminationCode ON dbo.MedicalExaminations(ExaminationCode);
+  CREATE INDEX IX_MedicalExaminations_AppointmentID ON dbo.MedicalExaminations(AppointmentID);
+  CREATE INDEX IX_MedicalExaminations_PatientId ON dbo.MedicalExaminations(PatientId);
+  CREATE INDEX IX_MedicalExaminations_DoctorID ON dbo.MedicalExaminations(DoctorID);
   CREATE INDEX IX_MedicalExaminations_CreatedAt ON dbo.MedicalExaminations(CreatedAt);
 
-  PRINT 'MedicalExaminations table created successfully!';
+  PRINT 'MedicalExaminations table synchronized successfully.';
 END
 ELSE
 BEGIN
-  PRINT 'MedicalExaminations table already exists with correct schema.';
+  PRINT 'MedicalExaminations table already synchronized.';
 END

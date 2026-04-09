@@ -88,7 +88,7 @@ export default (sequelize) => {
       },
     },
     {
-      tableName: 'patients',
+      tableName: 'Patients',
       timestamps: true,
       paranoid: true,
       createdAt: 'created_at',

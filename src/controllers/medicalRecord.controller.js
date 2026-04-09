@@ -10,6 +10,20 @@ import { APPOINTMENT_STATUS, MEDICAL_RECORD_STATUS } from '../config/constants.j
 import { labelToCode, codeToLabel, normalizeStatus } from '../utils/statusHelpers.js';
 import { parsePagination, parseSort, buildWhereClause } from '../utils/helpers.js';
 
+// Helper: calculate BMI from weight (kg) and height (m or cm). Returns null if inputs invalid.
+function calculateBMI(weight, height) {
+  if (weight === null || weight === undefined || height === null || height === undefined) return null;
+  const w = Number(String(weight).trim());
+  const h = Number(String(height).trim());
+  if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) return null;
+  // If height looks like cm (greater than 3 meters), convert to meters
+  const heightMeters = h > 3 ? h / 100 : h;
+  if (heightMeters <= 0) return null;
+  const bmi = w / (heightMeters * heightMeters);
+  // round to one decimal place
+  return Math.round(bmi * 10) / 10;
+}
+
 const getTodayQueue = asyncHandler(async (req, res) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -88,16 +102,24 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   const seenApptIds = new Set();
 
   for (const rec of records) {
-    if (rec && rec.appointmentId) seenApptIds.add(String(rec.appointmentId));
+    const recAppointmentId = rec && (rec.appointmentId || rec.AppointmentID);
+    const recPatientId = rec && (rec.patientId || rec.PatientId || (rec.patient && rec.patient.id));
+    const recPatientName = rec && (rec.patientName || (rec.patient && (rec.patient.fullName || rec.patient.HoTen)) || null);
+    const recSymptoms = rec && (rec.symptoms || rec.Symptoms || rec.purpose || '');
+    const recCreatedAt = rec && (rec.createdAt || rec.CreatedAt || rec.ExaminationDate || null);
+    const recStatus = rec && (rec.status || rec.Status || null);
+
+    if (recAppointmentId) seenApptIds.add(String(recAppointmentId));
     merged.push({
-      id: rec.id || rec.Id || `REC-${rec.id || ''}`,
+      id: rec.id || rec.ExaminationID || rec.Id || `REC-${rec.id || rec.ExaminationID || ''}`,
       _source: 'record',
-      appointmentRef: rec.appointmentId ? { id: rec.appointmentId } : null,
-      patientId: rec.patientId || (rec.patient && rec.patient.id),
-      patientName: rec.patientName || (rec.patient && (rec.patient.fullName || rec.patient.HoTen)) || null,
-      purpose: rec.symptoms || rec.purpose || '',
-      createdAt: rec.createdAt,
-      status: rec.status,
+      appointmentRef: recAppointmentId ? { id: recAppointmentId } : null,
+      appointmentId: recAppointmentId || null,
+      patientId: recPatientId,
+      patientName: recPatientName,
+      purpose: recSymptoms,
+      createdAt: recCreatedAt,
+      status: recStatus,
       raw: rec,
     });
   }
@@ -376,21 +398,39 @@ const createRecord = asyncHandler(async (req, res) => {
   
   // If model exists, create in DB (prefer MedicalExamination if available)
   const PreferredRecordForCreate = (models && models.MedicalExamination) || MedicalRecord;
-  console.log('createRecord: using model:', PreferredRecordForCreate.name || 'unknown');
+  console.log('createRecord: using model:', PreferredRecordForCreate?.name || 'unknown');
   
   if (PreferredRecordForCreate && typeof PreferredRecordForCreate.create === 'function') {
+    const parsePositiveInt = (value, { allowAppointmentPrefix = false } = {}) => {
+      if (value === null || value === undefined || value === '') return null;
+      const raw = String(value).trim();
+      if (!raw) return null;
+      const normalized = allowAppointmentPrefix && /^APT-/i.test(raw) ? raw.replace(/^APT-/i, '') : raw;
+      if (!/^\d+$/.test(normalized)) return null;
+      const n = Number(normalized);
+      return Number.isSafeInteger(n) && n > 0 ? n : null;
+    };
+
     // Normalize payload keys when persisting to MedicalExamination table
     let toCreate = payload;
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
       toCreate = {};
       // Do not persist ExaminationCode column (may have been removed). We'll compute maPhieuKham from ExaminationID after create.
-      toCreate.AppointmentID = payload.appointmentId || payload.appointmentRef?.id || payload.AppointmentID;
-      toCreate.PatientId = payload.patientId || payload.patient?.id || payload.PatientId;
-      toCreate.DoctorID = payload.doctorId || payload.doctorId || payload.DoctorID;
-      toCreate.ExaminationDate = payload.examinationDate || payload.createdAt || payload.ExaminationDate;
+      const appointmentRaw = payload.appointmentId || payload.appointmentRef?.id || payload.AppointmentID || payload.id;
+      const patientRaw = payload.patientId || payload.patient?.id || payload.PatientId;
+      const doctorRaw = payload.doctorId || payload.DoctorID || req.user?.id;
+
+      toCreate.AppointmentID = parsePositiveInt(appointmentRaw, { allowAppointmentPrefix: true });
+      toCreate.PatientId = parsePositiveInt(patientRaw);
+
+      const doctorId = parsePositiveInt(doctorRaw);
+      if (doctorId) toCreate.DoctorID = doctorId;
+
+      toCreate.ExaminationDate = payload.examinationDate || payload.createdAt || payload.ExaminationDate || new Date();
       toCreate.Symptoms = payload.symptoms || payload.purpose || payload.Symptoms;
       // Map treatment/diagnosis/notes
       toCreate.Diagnosis = payload.diagnosis || payload.Diagnosis;
+      toCreate.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
       toCreate.TreatmentAdvice = payload.treatment || payload.treatmentAdvice || payload.TreatmentAdvice;
       toCreate.Notes = payload.notes || payload.Notes;
       // Map vital signs if provided as object
@@ -401,25 +441,91 @@ const createRecord = asyncHandler(async (req, res) => {
         if (vs.temperature) toCreate.Temperature = vs.temperature;
         if (vs.spO2) toCreate.SpO2 = vs.spO2;
         if (vs.respirationRate) toCreate.RespirationRate = vs.respirationRate;
+        if (vs.respiratoryRate && !toCreate.RespirationRate) toCreate.RespirationRate = vs.respiratoryRate;
         if (vs.weight) toCreate.Weight = vs.weight;
         if (vs.height) toCreate.Height = vs.height;
         if (vs.bmi) toCreate.BMI = vs.bmi;
+        // Compute BMI automatically when weight and height available and BMI not provided
+        if (!toCreate.BMI) {
+          const calc = calculateBMI(toCreate.Weight, toCreate.Height);
+          if (calc !== null) toCreate.BMI = calc;
+        }
       }
       console.log('createRecord: toCreate payload after normalization:', JSON.stringify(toCreate, null, 2));
     }
     // Validate required NOT NULL columns for MedicalExamination table
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
       if (!toCreate.AppointmentID) {
-        console.warn('createRecord: AppointmentID is null, using generated fallback');
-        toCreate.AppointmentID = `APT-${Date.now()}`;
+        console.error('createRecord: AppointmentID is missing/invalid');
+        return errorResponse(res, 'Thiếu hoặc sai AppointmentID trong payload', 400, 'VALIDATION_ERROR');
       }
       if (!toCreate.PatientId) {
         console.error('createRecord: PatientId is null - cannot create record without patient');
         return errorResponse(res, 'Thiếu PatientId trong payload - không thể tạo hồ sơ khám', 400, 'VALIDATION_ERROR');
       }
+
+      // Validate referenced rows early to avoid opaque SQL 500 errors (FK/type issues)
+      const [appointmentExists, patientExists] = await Promise.all([
+        Appointment.findByPk(toCreate.AppointmentID).catch(() => null),
+        Patient.findByPk(toCreate.PatientId).catch(() => null),
+      ]);
+
+      if (!appointmentExists) {
+        console.error('createRecord: Appointment not found for AppointmentID=', toCreate.AppointmentID);
+        return errorResponse(res, 'AppointmentID không tồn tại', 400, 'VALIDATION_ERROR');
+      }
+
+      if (!patientExists) {
+        console.error('createRecord: Patient not found for PatientId=', toCreate.PatientId);
+        return errorResponse(res, 'PatientId không tồn tại', 400, 'VALIDATION_ERROR');
+      }
     }
 
     console.log('createRecord: attempting to create with toCreate=', JSON.stringify(toCreate, null, 2));
+
+    // If the record already exists (same AppointmentID / PatientId / maPhieuKham), update it instead of creating a new one
+    if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
+      try {
+        const existingWhere = {};
+        if (toCreate.AppointmentID) existingWhere.AppointmentID = toCreate.AppointmentID;
+        if (toCreate.PatientId) existingWhere.PatientId = toCreate.PatientId;
+        // allow lookup by provided visit code if supplied
+        if (payload.maPhieuKham) existingWhere.ExaminationCode = payload.maPhieuKham;
+
+        // Only perform findOne when we have at least one lookup key
+        let existing = null;
+        if (Object.keys(existingWhere).length > 0) {
+          existing = await PreferredRecordForCreate.findOne({ where: existingWhere });
+        }
+
+        if (existing) {
+          try {
+            await existing.update(toCreate);
+            const plainExisting = existing.get ? existing.get({ plain: true }) : existing;
+            const examId = plainExisting && (plainExisting.ExaminationID || plainExisting.id);
+            const createdTime = plainExisting && (plainExisting.CreatedAt || plainExisting.createdAt || new Date());
+            let maPhieuKham = plainExisting && (plainExisting.maPhieuKham || plainExisting.ExaminationCode);
+            if (!maPhieuKham && examId) {
+              const d = createdTime ? new Date(createdTime) : new Date();
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              maPhieuKham = `PK-${y}${m}${day}-${String(examId).padStart(6, '0')}`;
+            }
+            if (!plainExisting.maPhieuKham) plainExisting.maPhieuKham = maPhieuKham;
+            console.log('createRecord: existing record updated instead of create, id=', examId, 'code=', maPhieuKham);
+            return successResponse(res, plainExisting, 'Đã cập nhật hồ sơ khám (đã tồn tại)');
+          } catch (updErr) {
+            console.error('createRecord: error updating existing record', updErr && updErr.message);
+            return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật hồ sơ khám', 500, 'DATABASE_ERROR');
+          }
+        }
+      } catch (checkErr) {
+        console.error('createRecord: error while checking for existing record', checkErr && checkErr.message);
+        // fall through to create attempt
+      }
+    }
+
     try {
       // Use PreferredRecordForCreate directly with Sequelize - it handles field mapping automatically
       const created = await PreferredRecordForCreate.create(toCreate);
@@ -456,7 +562,14 @@ const createRecord = asyncHandler(async (req, res) => {
         console.error('createRecord: Sequelize validation errors:', e.errors.map(err => ({ path: err.path, message: err.message })));
       }
       console.error('createRecord: toCreate was:', JSON.stringify(toCreate, null, 2));
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi tạo hồ sơ khám', 500, 'DATABASE_ERROR');
+
+      // Build details to help debugging in non-production environments
+      const details = {};
+      if (e && e.original && e.original.message) details.sqlError = e.original.message;
+      if (e && e.sql) details.sql = e.sql;
+      if (e && e.errors && Array.isArray(e.errors)) details.validation = e.errors.map(err => ({ path: err.path, message: err.message }));
+
+      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi tạo hồ sơ khám', 500, 'DATABASE_ERROR', details);
     }
   }
 
@@ -474,13 +587,56 @@ const updateRecord = asyncHandler(async (req, res) => {
   const payload = req.body || {};
   const PreferredRecordForUpdate = (models && models.MedicalExamination) || MedicalRecord;
   if (PreferredRecordForUpdate && typeof PreferredRecordForUpdate.findByPk === 'function') {
-    let rec;
-    try {
-      rec = await PreferredRecordForUpdate.findByPk(id);
-    } catch (e) {
-      console.error('updateRecord: DB error', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi đọc hồ sơ khám', 500, 'DATABASE_ERROR');
+    const idText = String(id || '').trim();
+    let rec = null;
+    // Prefer numeric examinationId path param. If caller provided our generated visit code (PK-...), derive numeric suffix to use as PK lookup.
+    let lookupId = idText;
+    const pkMatch = /^PK-[0-9]{8}-([0-9]+)$/.exec(idText);
+    if (pkMatch) {
+      const candidate = pkMatch[1];
+      if (/^\d+$/.test(candidate)) lookupId = String(Number(candidate));
     }
+    // Try PK lookup first (safe for numeric PKs)
+    try {
+      rec = await PreferredRecordForUpdate.findByPk(lookupId);
+    } catch (e) {
+      console.warn('updateRecord: PK lookup failed, will try alternate keys -', e && e.message);
+      rec = null;
+    }
+
+    // If not found by PK, try alternate common keys (ExaminationCode / AppointmentID / PatientId / legacy keys)
+    if (!rec) {
+      try {
+        const rawAttrs = PreferredRecordForUpdate.rawAttributes || {};
+        const altOr = [];
+        const pushIfAttr = (attr, value) => {
+          if (value && Object.prototype.hasOwnProperty.call(rawAttrs, attr)) altOr.push({ [attr]: value });
+        };
+
+        // Common MedicalExamination attributes
+        pushIfAttr('ExaminationCode', idText);
+        pushIfAttr('AppointmentID', idText);
+        pushIfAttr('PatientId', idText);
+
+        // Legacy / fallback attributes
+        pushIfAttr('recordCode', idText);
+        pushIfAttr('appointmentId', idText);
+        pushIfAttr('patientId', idText);
+
+        if (altOr.length > 0) {
+          const orderClause = [];
+          if (Object.prototype.hasOwnProperty.call(rawAttrs, 'createdAt')) orderClause.push(['createdAt', 'DESC']);
+          else if (Object.prototype.hasOwnProperty.call(rawAttrs, 'ExaminationID')) orderClause.push(['ExaminationID', 'DESC']);
+          else if (Object.prototype.hasOwnProperty.call(rawAttrs, 'id')) orderClause.push(['id', 'DESC']);
+
+          rec = await PreferredRecordForUpdate.findOne({ where: { [Op.or]: altOr }, order: orderClause });
+        }
+      } catch (e) {
+        console.error('updateRecord: DB error during alternate lookup -', e && e.message);
+        return errorResponse(res, 'Lỗi cơ sở dữ liệu khi đọc hồ sơ khám', 500, 'DATABASE_ERROR');
+      }
+    }
+
     if (!rec) {
       return successResponse(res, null);
     }
@@ -498,7 +654,9 @@ const updateRecord = asyncHandler(async (req, res) => {
     let toUpdate = payload;
     if (models && models.MedicalExamination && PreferredRecordForUpdate === models.MedicalExamination) {
       toUpdate = {};
+      if (payload.symptoms) toUpdate.Symptoms = payload.symptoms;
       if (payload.diagnosis) toUpdate.Diagnosis = payload.diagnosis;
+      if (payload.icdCode || payload.icd10Code || payload.ICD10Code) toUpdate.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
       if (payload.treatment) toUpdate.TreatmentAdvice = payload.treatment;
       if (payload.notes) toUpdate.Notes = payload.notes;
       if (payload.nextAppointment) toUpdate.ReExaminationDate = payload.nextAppointment;
@@ -509,9 +667,22 @@ const updateRecord = asyncHandler(async (req, res) => {
         if (vs.temperature) toUpdate.Temperature = vs.temperature;
         if (vs.spO2) toUpdate.SpO2 = vs.spO2;
         if (vs.respirationRate) toUpdate.RespirationRate = vs.respirationRate;
+        if (vs.respiratoryRate && !toUpdate.RespirationRate) toUpdate.RespirationRate = vs.respiratoryRate;
         if (vs.weight) toUpdate.Weight = vs.weight;
         if (vs.height) toUpdate.Height = vs.height;
         if (vs.bmi) toUpdate.BMI = vs.bmi;
+        // compute BMI using provided values or falling back to existing record values
+        try {
+          const existingPlainForBmi = rec && rec.get ? rec.get({ plain: true }) : rec || {};
+          const weightForBmi = (toUpdate.Weight !== undefined ? toUpdate.Weight : (existingPlainForBmi.Weight || existingPlainForBmi.weight));
+          const heightForBmi = (toUpdate.Height !== undefined ? toUpdate.Height : (existingPlainForBmi.Height || existingPlainForBmi.height));
+          if (!toUpdate.BMI) {
+            const calc = calculateBMI(weightForBmi, heightForBmi);
+            if (calc !== null) toUpdate.BMI = calc;
+          }
+        } catch (e) {
+          // ignore BMI calculation errors
+        }
       }
     }
     try {
@@ -585,7 +756,9 @@ const completeExamination = asyncHandler(async (req, res) => {
     // Normalize updates for MedicalExamination table
     let updates = {};
     if (models && models.MedicalExamination && PreferredRecordForComplete === models.MedicalExamination) {
+      if (payload.symptoms) updates.Symptoms = payload.symptoms;
       if (payload.diagnosis) updates.Diagnosis = payload.diagnosis;
+      if (payload.icdCode || payload.icd10Code || payload.ICD10Code) updates.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
       if (payload.treatment) updates.TreatmentAdvice = payload.treatment;
       if (payload.notes) updates.Notes = payload.notes;
       if (payload.nextAppointment) updates.ReExaminationDate = payload.nextAppointment;
@@ -596,9 +769,22 @@ const completeExamination = asyncHandler(async (req, res) => {
         if (vs.temperature) updates.Temperature = vs.temperature;
         if (vs.spO2) updates.SpO2 = vs.spO2;
         if (vs.respirationRate) updates.RespirationRate = vs.respirationRate;
+        if (vs.respiratoryRate && !updates.RespirationRate) updates.RespirationRate = vs.respiratoryRate;
         if (vs.weight) updates.Weight = vs.weight;
         if (vs.height) updates.Height = vs.height;
         if (vs.bmi) updates.BMI = vs.bmi;
+        // compute BMI using provided values or existing record values
+        try {
+          const existingPlainForBmi = rec && rec.get ? rec.get({ plain: true }) : rec || {};
+          const weightForBmi = (updates.Weight !== undefined ? updates.Weight : (existingPlainForBmi.Weight || existingPlainForBmi.weight));
+          const heightForBmi = (updates.Height !== undefined ? updates.Height : (existingPlainForBmi.Height || existingPlainForBmi.height));
+          if (!updates.BMI) {
+            const calc = calculateBMI(weightForBmi, heightForBmi);
+            if (calc !== null) updates.BMI = calc;
+          }
+        } catch (e) {
+          // ignore BMI calculation errors
+        }
       }
     } else {
       updates = {

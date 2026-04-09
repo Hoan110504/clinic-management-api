@@ -5,13 +5,13 @@ async function fix() {
     await sequelize.authenticate();
     console.log('DB connected');
 
-    // Find any check constraints that mention the gender column on patients
+    // Find any check constraints that mention the gender column on Patients
     const [results] = await sequelize.query(
-      "SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID('patients')"
+      "SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID('Patients')"
     );
 
     if (!results || results.length === 0) {
-      console.log('No check constraints found on table patients');
+      console.log('No check constraints found on table Patients');
     } else {
       const toDrop = results.filter(r => String(r.definition).toLowerCase().includes('gender'));
       if (toDrop.length === 0) {
@@ -20,7 +20,7 @@ async function fix() {
         for (const r of toDrop) {
           console.log(`Dropping constraint: ${r.name}`);
           try {
-            await sequelize.query(`ALTER TABLE [patients] DROP CONSTRAINT [${r.name}]`);
+            await sequelize.query(`ALTER TABLE [Patients] DROP CONSTRAINT [${r.name}]`);
             console.log('Dropped');
           } catch (err) {
             console.error('Failed to drop constraint', r.name, err.message || err);
@@ -32,7 +32,7 @@ async function fix() {
     // Alter column to varchar null to be permissive
     try {
       console.log('Altering column gender to VARCHAR(255) NULL');
-      await sequelize.query("ALTER TABLE [patients] ALTER COLUMN [gender] VARCHAR(255) NULL");
+      await sequelize.query("ALTER TABLE [Patients] ALTER COLUMN [gender] VARCHAR(255) NULL");
       console.log('Altered column gender');
     } catch (err) {
       console.error('Failed to alter column gender:', err.message || err);

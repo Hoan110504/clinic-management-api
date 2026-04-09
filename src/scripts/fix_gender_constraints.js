@@ -14,9 +14,9 @@ const fixGenderConstraints = async () => {
 
     // Run fixes for each table
     const tables = [
-      { table: 'patients', column: 'gender' },
+      { table: 'Patients', column: 'gender' },
       { table: 'users', column: 'gender' },
-      { table: 'appointments', column: 'patient_gender' },
+      { table: 'Appointments', column: 'patient_gender' },
       { table: 'medical_records', column: 'patient_gender' },
       { table: 'payments', column: 'patient_gender' },
       { table: 'service_orders', column: 'patient_gender' },
@@ -118,7 +118,7 @@ const fixGenderConstraints = async () => {
     logger.info('\nSummary:');
     logger.info('  - Converted VARCHAR columns to NVARCHAR(10)');
     logger.info('  - Recreated CHECK constraints to allow N\'Nam\' and N\'Nữ\'');
-    logger.info('  - Applied fixes to: patients, users, appointments, medical_records, payments, service_orders');
+    logger.info('  - Applied fixes to: Patients, users, Appointments, medical_records, payments, service_orders');
 
   } catch (error) {
     logger.error('❌ Fix failed:', error);

@@ -6,9 +6,9 @@ async function alter() {
     console.log('DB connected');
 
     const stmts = [
-      "ALTER TABLE [patients] ALTER COLUMN [date_of_birth] DATE NULL",
-      "ALTER TABLE [patients] ALTER COLUMN [gender] VARCHAR(255) NULL",
-      "ALTER TABLE [patients] ALTER COLUMN [phone] NVARCHAR(15) NULL",
+      "ALTER TABLE [Patients] ALTER COLUMN [date_of_birth] DATE NULL",
+      "ALTER TABLE [Patients] ALTER COLUMN [gender] VARCHAR(255) NULL",
+      "ALTER TABLE [Patients] ALTER COLUMN [phone] NVARCHAR(15) NULL",
     ];
 
     for (const s of stmts) {

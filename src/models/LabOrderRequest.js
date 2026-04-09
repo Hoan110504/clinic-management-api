@@ -27,7 +27,7 @@ export default (sequelize) => {
       allowNull: false,
       field: 'PatientId',
       references: {
-        model: 'patients',
+        model: 'Patients',
         key: 'id'
       }
     },
