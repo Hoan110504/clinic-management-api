@@ -38,7 +38,7 @@ const updateLabTestValidator = [
       if (value === null || value === undefined || value === '') return true;
       if (Object.values(LAB_STATUS).includes(value)) return true;
       if (typeof value === 'number' && [0, 1, 2, 3].includes(value)) return true;
-      if (typeof value === 'string' && /^[0-3]$/.test(value.trim())) return true;
+      if (typeof value === 'string' && (/^[0-3]$/.test(value.trim()) || value.trim().toLowerCase() === 'x' || value.trim() === '×')) return true;
       throw new Error('Trạng thái không hợp lệ');
     }),
   body('results')

@@ -84,9 +84,9 @@ export default (sequelize) => {
 
   // Enum trạng thái thực hiện CLS
   LabOrderItem.STATUS = {
-    PENDING: 0,        // Chưa thực hiện
+    ASSIGNED: 0,       // Đã chỉ định / Lưu tạm
     IN_PROGRESS: 1,    // Đang thực hiện
-    COMPLETED: 2,      // Đã có kết quả
+    COMPLETED: 2,      // Đã có kết quả / Đã hoàn thành
     CANCELLED: 3       // Đã hủy
   };
 

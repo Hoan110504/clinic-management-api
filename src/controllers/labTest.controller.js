@@ -22,14 +22,14 @@ import { NotFoundError, BadRequestError, ForbiddenError } from '../utils/errors.
 import { LAB_STATUS, ROLES } from '../config/constants.js';
 
 const LAB_ITEM_STATUS = {
-  PENDING: 0,
+  ASSIGNED: 0,
   IN_PROGRESS: 1,
   COMPLETED: 2,
   CANCELLED: 3,
 };
 
 const STATUS_CODE_TO_LABEL = {
-  [LAB_ITEM_STATUS.PENDING]: LAB_STATUS.PENDING,
+  [LAB_ITEM_STATUS.ASSIGNED]: LAB_STATUS.PENDING || 'Da chi dinh',
   [LAB_ITEM_STATUS.IN_PROGRESS]: LAB_STATUS.IN_PROGRESS,
   [LAB_ITEM_STATUS.COMPLETED]: LAB_STATUS.COMPLETED,
   [LAB_ITEM_STATUS.CANCELLED]: LAB_STATUS.CANCELLED || 'Da huy',
@@ -106,22 +106,37 @@ const mapTypeToLabel = (value) => {
   return TYPE_CODE_TO_LABEL[code] || TYPE_CODE_TO_LABEL[3];
 };
 
-const mapStatusToCode = (value, fallback = LAB_ITEM_STATUS.PENDING) => {
+const mapStatusToCode = (value, fallback = LAB_ITEM_STATUS.ASSIGNED) => {
   if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'number' && [0, 1, 2, 3].includes(value)) return value;
-
+  if (Number(value) === 4) return LAB_ITEM_STATUS.CANCELLED;
   const text = normalizeText(value);
+  // Accept UI shorthand 'x' or multiplication sign '×' as cancel
+  if (text === 'x' || text === '×') return LAB_ITEM_STATUS.CANCELLED;
   if (/^[0-3]$/.test(text)) return Number(text);
+  if (text === '4') return LAB_ITEM_STATUS.CANCELLED;
   if (text.includes('huy') || text.includes('cancel')) return LAB_ITEM_STATUS.CANCELLED;
   if (text.includes('hoan') || text.includes('complete')) return LAB_ITEM_STATUS.COMPLETED;
   if (text.includes('dang') || text.includes('progress') || text.includes('processing')) return LAB_ITEM_STATUS.IN_PROGRESS;
-  if (text.includes('cho') || text.includes('pending') || text.includes('wait')) return LAB_ITEM_STATUS.PENDING;
+  if (text.includes('cho') || text.includes('pending') || text.includes('wait') || text.includes('chi dinh') || text.includes('dang cho')) return LAB_ITEM_STATUS.ASSIGNED;
   return fallback;
 };
 
 const mapStatusToLabel = (value) => {
-  const code = mapStatusToCode(value, LAB_ITEM_STATUS.PENDING);
+  const code = mapStatusToCode(value, LAB_ITEM_STATUS.ASSIGNED);
   return STATUS_CODE_TO_LABEL[code] || LAB_STATUS.PENDING;
+};
+
+// Safely parse date-like inputs into Date objects; return null for invalid values
+const parseDateSafe = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  } catch (e) {
+    return null;
+  }
 };
 
 const parseImages = (value) => {
@@ -191,6 +206,50 @@ const parseSortParam = (sort) => {
   return { field, dir };
 };
 
+const parseDateParamSafe = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // Try native parse first (ISO, timestamps)
+  const d = new Date(raw);
+  if (!Number.isNaN(d.getTime())) return d;
+
+  // Try dd/MM/YYYY or d/M/YYYY (common frontend format)
+  const m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const day = m[1].padStart(2, '0');
+    const month = m[2].padStart(2, '0');
+    const year = m[3];
+    const iso = `${year}-${month}-${day}T00:00:00.000Z`;
+    const d2 = new Date(iso);
+    if (!Number.isNaN(d2.getTime())) return d2;
+  }
+
+  // Try YYYY-MM-DD (no time)
+  const m2 = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (m2) {
+    const iso = `${m2[1]}-${m2[2].padStart(2, '0')}-${m2[3].padStart(2, '0')}T00:00:00.000Z`;
+    const d3 = new Date(iso);
+    if (!Number.isNaN(d3.getTime())) return d3;
+  }
+
+  return null;
+};
+
+const toMSSQLDateTime = (date) => {
+  if (!date || !(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const year = date.getUTCFullYear();
+  const month = pad(date.getUTCMonth() + 1);
+  const day = pad(date.getUTCDate());
+  const hours = pad(date.getUTCHours());
+  const mins = pad(date.getUTCMinutes());
+  const secs = pad(date.getUTCSeconds());
+  const ms = String(date.getUTCMilliseconds()).padStart(3, '0');
+  return `${year}-${month}-${day} ${hours}:${mins}:${secs}.${ms}`;
+};
+
 const ensureMutatePermission = (user, doctorIdFromOrder) => {
   const role = String(user?.role || '').toLowerCase();
   if (role === String(ROLES.ADMIN)) return;
@@ -215,12 +274,7 @@ const ensureLabService = async ({ testName, testType, roomId = null }) => {
   let service = await LabService.findOne({ where: { ServiceName: normalizedName } });
   if (service) return service;
 
-  const maxCode = await LabService.max('ServiceCode');
-  const fallbackSeed = Number(String(Date.now()).slice(-6));
-  const nextCode = Number.isFinite(Number(maxCode)) ? Number(maxCode) + 1 : fallbackSeed;
-
   const servicePayload = {
-    ServiceCode: nextCode,
     ServiceName: normalizedName,
     RoomID: toPositiveInt(roomId),
     Price: 0,
@@ -306,19 +360,19 @@ const recomputeLabOrderStatus = async (labOrderId) => {
   const items = await LabOrderItem.findAll({ where: { LabOrderID: labOrderId }, attributes: ['Status'] });
 
   if (!items || items.length === 0) {
-    await LabOrder.destroy({ where: { LabOrderID: labOrderId } });
+    await LabOrder.update({ Status: LAB_ITEM_STATUS.CANCELLED }, { where: { LabOrderID: labOrderId } });
     return;
   }
 
   const statuses = items.map((it) => Number(it.Status));
-  let next = LAB_ITEM_STATUS.PENDING;
+  let next = LAB_ITEM_STATUS.ASSIGNED;
 
   if (statuses.every((s) => s === LAB_ITEM_STATUS.CANCELLED)) {
     next = LAB_ITEM_STATUS.CANCELLED;
   } else if (statuses.some((s) => s === LAB_ITEM_STATUS.IN_PROGRESS)) {
     next = LAB_ITEM_STATUS.IN_PROGRESS;
-  } else if (statuses.some((s) => s === LAB_ITEM_STATUS.PENDING)) {
-    next = LAB_ITEM_STATUS.PENDING;
+  } else if (statuses.some((s) => s === LAB_ITEM_STATUS.ASSIGNED)) {
+    next = LAB_ITEM_STATUS.ASSIGNED;
   } else if (statuses.some((s) => s === LAB_ITEM_STATUS.COMPLETED)) {
     next = LAB_ITEM_STATUS.COMPLETED;
   }
@@ -510,9 +564,13 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   }
 
   if (fromDate || toDate) {
-    where.CreatedAt = {};
-    if (fromDate) where.CreatedAt[Op.gte] = new Date(fromDate);
-    if (toDate) where.CreatedAt[Op.lte] = new Date(toDate);
+    const parsedFrom = parseDateParamSafe(fromDate);
+    const parsedTo = parseDateParamSafe(toDate);
+    if (parsedFrom || parsedTo) {
+      console.debug('Date filters parsed', { fromDate, toDate, parsedFrom, parsedTo });
+    } else {
+      console.warn('Skipping DB date filter due to unparseable input', { query: req.query, fromDate, toDate });
+    }
   }
 
   const include = getBaseItemIncludes();
@@ -528,6 +586,26 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   });
 
   let rows = await fetchLabTestRowsByItems(items);
+
+  // Filter by date range in memory
+  if (fromDate || toDate) {
+    const parsedFrom = parseDateParamSafe(fromDate);
+    const parsedTo = parseDateParamSafe(toDate);
+    if (parsedFrom || parsedTo) {
+      rows = rows.filter((row) => {
+        const rowDate = row.orderedDate ? new Date(row.orderedDate).getTime() : 0;
+        if (parsedFrom) {
+          parsedFrom.setHours(0, 0, 0, 0);
+          if (rowDate < parsedFrom.getTime()) return false;
+        }
+        if (parsedTo) {
+          parsedTo.setHours(23, 59, 59, 999);
+          if (rowDate > parsedTo.getTime()) return false;
+        }
+        return true;
+      });
+    }
+  }
 
   if (patientId !== undefined && patientId !== null && patientId !== '') {
     const pid = String(patientId);
@@ -640,6 +718,9 @@ const createLabTest = asyncHandler(async (req, res) => {
     roomId,
   });
 
+  // Resolve RoomID from provided roomId or fallback to the LabService.RoomID
+  const resolvedRoomId = toPositiveInt(roomId) || toPositiveInt(service?.RoomID) || null;
+
   const orderWhere = {
     ExaminationID: examination.ExaminationID,
     DoctorID: doctorId,
@@ -654,7 +735,7 @@ const createLabTest = asyncHandler(async (req, res) => {
     labOrder = await LabOrder.create({
       ExaminationID: examination.ExaminationID,
       DoctorID: doctorId,
-      Status: LAB_ITEM_STATUS.PENDING,
+      Status: LAB_ITEM_STATUS.ASSIGNED,
       CreatedAt: sequelize.literal('GETDATE()'),
     });
   }
@@ -675,9 +756,13 @@ const createLabTest = asyncHandler(async (req, res) => {
 
   if (createdItem) {
     const patch = {};
-    const statusCode = mapStatusToCode(status, Number(createdItem.Status) || LAB_ITEM_STATUS.PENDING);
+    const statusCode = mapStatusToCode(status, Number(createdItem.Status) || LAB_ITEM_STATUS.ASSIGNED);
     if (statusCode !== Number(createdItem.Status)) patch.Status = statusCode;
     if (noteValue !== undefined && noteValue !== null && String(noteValue).trim() !== String(createdItem.Note || '').trim()) patch.Note = noteValue;
+    // Keep RoomID in sync with LabService when missing or different
+    if (resolvedRoomId !== null && Number(createdItem.RoomID) !== Number(resolvedRoomId)) {
+      patch.RoomID = resolvedRoomId;
+    }
     if (Object.keys(patch).length > 0) {
       await createdItem.update(patch);
     }
@@ -685,8 +770,8 @@ const createLabTest = asyncHandler(async (req, res) => {
     createdItem = await LabOrderItem.create({
       LabOrderID: labOrder.LabOrderID,
       ServiceID: service.ServiceID,
-      RoomID: toPositiveInt(roomId),
-      Status: mapStatusToCode(status, LAB_ITEM_STATUS.PENDING),
+      RoomID: resolvedRoomId,
+      Status: mapStatusToCode(status, LAB_ITEM_STATUS.ASSIGNED),
       Priority: 0,
       Note: noteValue,
       CreatedAt: sequelize.literal('GETDATE()'),
@@ -722,7 +807,12 @@ const updateLabTestCore = async ({ itemId, payload = {}, user }) => {
   const itemUpdates = {};
 
   if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
-    itemUpdates.Status = mapStatusToCode(payload.status, Number(item.Status) || LAB_ITEM_STATUS.PENDING);
+    const statusCode = mapStatusToCode(payload.status, Number(item.Status) || LAB_ITEM_STATUS.ASSIGNED);
+    // Enforce: cancellation only allowed when current status is ASSIGNED
+    if (statusCode === LAB_ITEM_STATUS.CANCELLED && Number(item.Status) !== LAB_ITEM_STATUS.ASSIGNED) {
+      throw new BadRequestError('Chi co the huy chi dinh khi trang thai la "da chi dinh"', 'INVALID_CANCEL');
+    }
+    itemUpdates.Status = statusCode;
   }
 
   const itemMetaPatch = {
@@ -792,7 +882,8 @@ const updateLabTestCore = async ({ itemId, payload = {}, user }) => {
         resultUpdates.ImageUrl = nextImageUrl;
       }
       if (payload.resultDate) {
-        resultUpdates.ResultDate = new Date(payload.resultDate);
+        const parsed = parseDateParamSafe(payload.resultDate);
+        resultUpdates.ResultDate = parsed || new Date(payload.resultDate);
       } else if (resultText !== undefined || payload.conclusion !== undefined || nextImageUrl !== undefined) {
         resultUpdates.ResultDate = existing.ResultDate || new Date();
       }
@@ -813,7 +904,7 @@ const updateLabTestCore = async ({ itemId, payload = {}, user }) => {
         Conclusion: payload.conclusion || null,
         Note: noteValue,
         DoctorID: toPositiveInt(user?.id) || order.DoctorID,
-        ResultDate: payload.resultDate ? new Date(payload.resultDate) : new Date(),
+        ResultDate: payload.resultDate ? (parseDateParamSafe(payload.resultDate) || new Date(payload.resultDate)) : new Date(),
         CreatedAt: new Date(),
         UpdatedAt: new Date(),
       });
@@ -867,7 +958,7 @@ const completeLabTest = asyncHandler(async (req, res) => {
 
   const itemId = toPositiveInt(req.params.id);
   const payload = {
-    status: LAB_STATUS.IN_PROGRESS,
+    status: LAB_ITEM_STATUS.IN_PROGRESS,
     results,
     normalRange,
     notes,
@@ -951,11 +1042,11 @@ const returnLabTest = asyncHandler(async (req, res) => {
 });
 
 /**
- * Delete lab test (hard delete LabOrderItem)
+ * Cancel lab test (soft delete via Status = CANCELLED)
  * DELETE /api/lab-tests/:id
  */
 const deleteLabTestCore = async ({ itemId, user }) => {
-  const { LabOrder, LabOrderItem } = getLabModels();
+  const { LabOrderItem } = getLabModels();
   if (!itemId) throw new NotFoundError('Khong tim thay xet nghiem');
 
   const item = await LabOrderItem.findByPk(itemId, { include: getBaseItemIncludes() });
@@ -963,15 +1054,18 @@ const deleteLabTestCore = async ({ itemId, user }) => {
 
   ensureMutatePermission(user, item?.LabOrder?.DoctorID);
 
-  const labOrderId = item.LabOrderID;
-  await item.destroy();
+  const noteValue = buildMetaNote(item.Note, {
+    cancelReason: 'Cancelled by delete action',
+    canceledBy: user?.fullName || null,
+    canceledAt: new Date().toISOString(),
+  });
 
-  const remain = await LabOrderItem.count({ where: { LabOrderID: labOrderId } });
-  if (remain === 0) {
-    await LabOrder.destroy({ where: { LabOrderID: labOrderId } });
-  } else {
-    await recomputeLabOrderStatus(labOrderId);
-  }
+  await item.update({
+    Status: LAB_ITEM_STATUS.CANCELLED,
+    Note: noteValue,
+  });
+
+  await recomputeLabOrderStatus(item.LabOrderID);
 
   return true;
 };
@@ -992,7 +1086,7 @@ const getPendingLabTests = asyncHandler(async (req, res) => {
   const items = await LabOrderItem.findAll({
     where: {
       Status: {
-        [Op.in]: [LAB_ITEM_STATUS.PENDING, LAB_ITEM_STATUS.IN_PROGRESS],
+        [Op.in]: [LAB_ITEM_STATUS.ASSIGNED, LAB_ITEM_STATUS.IN_PROGRESS],
       },
     },
     include: getBaseItemIncludes(),
@@ -1015,14 +1109,14 @@ const batchDeleteLabTests = asyncHandler(async (req, res) => {
   for (const id of ids) {
     try {
       await deleteLabTestCore({ itemId: toPositiveInt(id), user: req.user });
-      results.push({ id, ok: true, status: 'deleted' });
+      results.push({ id, ok: true, status: 'cancelled' });
     } catch (error) {
       results.push({ id, ok: false, status: 'error', message: error?.message || 'unknown error' });
     }
   }
 
   const failed = results.filter((r) => !r.ok).length;
-  return successResponse(res, { total: ids.length, failed, results }, 'Ket qua xoa hang loat');
+  return successResponse(res, { total: ids.length, failed, results }, 'Ket qua huy hang loat');
 });
 
 const mapLabServiceResponse = (service) => {
@@ -1030,7 +1124,6 @@ const mapLabServiceResponse = (service) => {
   return {
     id: plain.ServiceID,
     serviceId: plain.ServiceID,
-    serviceCode: plain.ServiceCode,
     name: plain.ServiceName,
     type: mapTypeToLabel(plain.ServiceType),
     typeCode: plain.ServiceType,
@@ -1080,12 +1173,7 @@ const createLabService = asyncHandler(async (req, res) => {
     throw new BadRequestError('Ten dich vu khong duoc de trong');
   }
 
-  const maxCode = await LabService.max('ServiceCode');
-  const fallbackSeed = Number(String(Date.now()).slice(-6));
-  const nextCode = Number.isFinite(Number(maxCode)) ? Number(maxCode) + 1 : fallbackSeed;
-
   const service = await LabService.create({
-    ServiceCode: nextCode,
     ServiceName: String(name).trim(),
     ServiceType: mapTypeToCode(type),
     RoomID: toPositiveInt(roomId),

@@ -16,12 +16,6 @@ export default (sequelize) => {
         field: 'ServiceID',
       },
 
-      ServiceCode: {
-        type: DataTypes.BIGINT,
-        allowNull: false,
-        field: 'ServiceCode',
-      },
-
       ServiceName: {
         type: DataTypes.STRING(255),
         allowNull: false,
@@ -65,7 +59,6 @@ export default (sequelize) => {
       schema: 'dbo',
       timestamps: false,
       indexes: [
-        { fields: ['ServiceCode'] },
         { fields: ['ServiceType'] },
         { fields: ['RoomID'] },
       ],
