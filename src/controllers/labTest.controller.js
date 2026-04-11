@@ -494,6 +494,7 @@ const fetchLabTestRowsByItems = async (itemsInput) => {
     const doctorOrder = doctorMap.get(String(order.DoctorID || '')) || null;
     const doctorResult = doctorMap.get(String(result?.DoctorID || '')) || null;
 
+    const examinationDate = exam?.ExaminationDate || null;
     const orderedDate = item?.CreatedAt || order?.CreatedAt || null;
     const resultDate = result?.ResultDate || null;
 
@@ -516,6 +517,7 @@ const fetchLabTestRowsByItems = async (itemsInput) => {
       room: mapTypeToLabel(service.ServiceType),
       testName: service.ServiceName || '',
       status: mapStatusToLabel(item.Status),
+      examinationDate,
 
       orderedBy: doctorOrder?.fullName || '',
       orderedById: order.DoctorID || null,
@@ -559,18 +561,26 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   const { status, patientId, medicalRecordId, fromDate, toDate, search, sort } = req.query;
 
   const where = {};
+  let resolvedStatusCode = null;
   if (status !== undefined && status !== null && status !== '') {
-    where.Status = mapStatusToCode(status, LAB_ITEM_STATUS.PENDING);
+    resolvedStatusCode = mapStatusToCode(status, LAB_ITEM_STATUS.ASSIGNED);
+    where.Status = resolvedStatusCode;
   }
 
-  if (fromDate || toDate) {
-    const parsedFrom = parseDateParamSafe(fromDate);
-    const parsedTo = parseDateParamSafe(toDate);
-    if (parsedFrom || parsedTo) {
-      console.debug('Date filters parsed', { fromDate, toDate, parsedFrom, parsedTo });
-    } else {
-      console.warn('Skipping DB date filter due to unparseable input', { query: req.query, fromDate, toDate });
-    }
+  let parsedFrom = parseDateParamSafe(fromDate);
+  let parsedTo = parseDateParamSafe(toDate);
+  let strictExaminationDateOnly = false;
+
+  // Business rule for Doctor Cận lâm sàng:
+  // GET /api/lab-tests?status=0 must only include orders from today's examinations.
+  if (resolvedStatusCode === LAB_ITEM_STATUS.ASSIGNED && !parsedFrom && !parsedTo) {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    parsedFrom = todayStart;
+    parsedTo = todayEnd;
+    strictExaminationDateOnly = true;
   }
 
   const include = getBaseItemIncludes();
@@ -587,24 +597,28 @@ const getAllLabTests = asyncHandler(async (req, res) => {
 
   let rows = await fetchLabTestRowsByItems(items);
 
-  // Filter by date range in memory
-  if (fromDate || toDate) {
-    const parsedFrom = parseDateParamSafe(fromDate);
-    const parsedTo = parseDateParamSafe(toDate);
-    if (parsedFrom || parsedTo) {
-      rows = rows.filter((row) => {
-        const rowDate = row.orderedDate ? new Date(row.orderedDate).getTime() : 0;
-        if (parsedFrom) {
-          parsedFrom.setHours(0, 0, 0, 0);
-          if (rowDate < parsedFrom.getTime()) return false;
-        }
-        if (parsedTo) {
-          parsedTo.setHours(23, 59, 59, 999);
-          if (rowDate > parsedTo.getTime()) return false;
-        }
-        return true;
-      });
-    }
+  // Filter by examination date (fallback to orderedDate for legacy rows).
+  if (parsedFrom || parsedTo) {
+    const fromTime = parsedFrom
+      ? new Date(parsedFrom.getFullYear(), parsedFrom.getMonth(), parsedFrom.getDate(), 0, 0, 0, 0).getTime()
+      : null;
+    const toTime = parsedTo
+      ? new Date(parsedTo.getFullYear(), parsedTo.getMonth(), parsedTo.getDate(), 23, 59, 59, 999).getTime()
+      : null;
+
+    rows = rows.filter((row) => {
+      const sourceDate = strictExaminationDateOnly
+        ? row.examinationDate
+        : (row.examinationDate || row.orderedDate);
+      if (!sourceDate) return false;
+
+      const rowDate = new Date(sourceDate).getTime();
+      if (Number.isNaN(rowDate)) return false;
+
+      if (fromTime !== null && rowDate < fromTime) return false;
+      if (toTime !== null && rowDate > toTime) return false;
+      return true;
+    });
   }
 
   if (patientId !== undefined && patientId !== null && patientId !== '') {
@@ -1084,10 +1098,9 @@ const deleteLabTest = asyncHandler(async (req, res) => {
 const getPendingLabTests = asyncHandler(async (req, res) => {
   const { LabOrderItem } = getLabModels();
   const items = await LabOrderItem.findAll({
+    // Only include items that are newly assigned (Status = ASSIGNED / 0)
     where: {
-      Status: {
-        [Op.in]: [LAB_ITEM_STATUS.ASSIGNED, LAB_ITEM_STATUS.IN_PROGRESS],
-      },
+      Status: LAB_ITEM_STATUS.ASSIGNED,
     },
     include: getBaseItemIncludes(),
     order: [['CreatedAt', 'ASC'], ['LabOrderItemID', 'ASC']],

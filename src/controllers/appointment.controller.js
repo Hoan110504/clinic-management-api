@@ -482,6 +482,15 @@ const checkInAppointment = asyncHandler(async (req, res) => {
   const apptNorm3 = normalizeStatus(appointment.status);
   const schedCode = labelToCode(APPOINTMENT_STATUS.SCHEDULED);
   const confCode = labelToCode(APPOINTMENT_STATUS.CONFIRMED);
+  // Allow check-in only from SCHEDULED or CONFIRMED.
+  // If already WAITING or IN_PROGRESS, treat as idempotent success.
+  const waitingCodeExisting = labelToCode(APPOINTMENT_STATUS.WAITING);
+  const inProgressCode = labelToCode(APPOINTMENT_STATUS.IN_PROGRESS);
+
+  if (apptNorm3.code === waitingCodeExisting || apptNorm3.code === inProgressCode) {
+    return successResponse(res, appointment, 'Bệnh nhân đã được check-in');
+  }
+
   if (![schedCode, confCode].includes(apptNorm3.code)) {
     throw new BadRequestError('Không thể check-in lịch hẹn này');
   }
