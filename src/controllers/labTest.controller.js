@@ -571,17 +571,9 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   let parsedTo = parseDateParamSafe(toDate);
   let strictExaminationDateOnly = false;
 
-  // Business rule for Doctor Cận lâm sàng:
-  // GET /api/lab-tests?status=0 must only include orders from today's examinations.
-  if (resolvedStatusCode === LAB_ITEM_STATUS.ASSIGNED && !parsedFrom && !parsedTo) {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-    parsedFrom = todayStart;
-    parsedTo = todayEnd;
-    strictExaminationDateOnly = true;
-  }
+  // Previously: status=0 requests were limited to today's examinations for
+  // the Cận lâm sàng screen. Change: return all LabOrderItems with Status=0
+  // unless caller provides explicit fromDate/toDate filters.
 
   const include = getBaseItemIncludes();
   const parsedRecordId = toPositiveInt(medicalRecordId, { allowAppointmentPrefix: true });
