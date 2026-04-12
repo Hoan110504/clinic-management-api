@@ -1,5 +1,5 @@
 import express from 'express';
-import { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord, startExamination, completeExamination } from '../controllers/medicalRecord.controller.js';
+import { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord, startExamination, completeExamination, cancelExamination } from '../controllers/medicalRecord.controller.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -21,6 +21,9 @@ router.post('/:id/start', authenticate, startExamination);
 
 // Complete examination
 router.post('/:id/complete', authenticate, completeExamination);
+
+// Cancel examination
+router.post('/:id/cancel', authenticate, cancelExamination);
 
 // Update record
 router.put('/:id', authenticate, updateRecord);

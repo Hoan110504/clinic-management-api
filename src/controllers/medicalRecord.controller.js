@@ -900,3 +900,64 @@ const completeExamination = asyncHandler(async (req, res) => {
 });
 
 export { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord, startExamination, completeExamination };
+
+// Cancel examination: set MedicalExamination.Status = 2 and cancel related lab order items
+const cancelExamination = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const Preferred = (models && models.MedicalExamination) || MedicalRecord;
+  if (!Preferred || typeof Preferred.findByPk !== 'function') return successResponse(res, null);
+
+  let rec = null;
+  try {
+    rec = await Preferred.findByPk(id);
+  } catch (e) {
+    console.warn('cancelExamination: PK lookup failed, id=', id, e?.message);
+    rec = null;
+  }
+  if (!rec) return successResponse(res, null);
+
+  const plain = rec.get ? rec.get({ plain: true }) : rec;
+  const examId = plain.ExaminationID || plain.id || id;
+
+  try {
+    // update medical examination status to '2' (cancelled)
+    await rec.update({ Status: 2 });
+
+    // cancel related lab order items (set to 3) and mark lab orders cancelled
+    try {
+      const LabOrder = models && models.LabOrder;
+      const LabOrderItem = models && models.LabOrderItem;
+      if (LabOrder && LabOrderItem) {
+        const labOrders = await LabOrder.findAll({ where: { ExaminationID: examId } });
+        for (const lo of labOrders || []) {
+          try {
+            await LabOrderItem.update(
+              { Status: 3 },
+              { where: { LabOrderID: lo.LabOrderID, Status: { [Op.ne]: 2 } } }
+            );
+            try { await lo.update({ Status: 3 }); } catch (e) { /* ignore */ }
+          } catch (e) {
+            console.warn('cancelExamination: failed updating LabOrderItem for LabOrder', lo && lo.LabOrderID, e?.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('cancelExamination: lab cancellation step failed', e?.message);
+    }
+
+    // update appointment status to CANCELLED if present
+    try {
+      const cancelledCode = getAppointmentStatusCode(APPOINTMENT_STATUS.CANCELLED, 4);
+      await updateAppointmentStatusSafely(plain.AppointmentID || plain.appointmentId, cancelledCode);
+    } catch (e) { /* ignore */ }
+
+    const updated = await Preferred.findByPk(examId);
+    const out = updated && updated.get ? updated.get({ plain: true }) : updated;
+    return successResponse(res, out || { id: examId, status: 2 }, 'Đã hủy phiếu khám');
+  } catch (e) {
+    console.error('cancelExamination: DB error', e && e.message);
+    return errorResponse(res, 'Lỗi khi hủy phiếu khám', 500, 'DATABASE_ERROR');
+  }
+});
+
+export { cancelExamination };

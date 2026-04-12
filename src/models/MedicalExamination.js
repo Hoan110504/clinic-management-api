@@ -29,6 +29,7 @@ export default (sequelize) => {
       TreatmentAdvice: { type: DataTypes.TEXT('long'), allowNull: true, field: 'TreatmentAdvice' },
       Notes: { type: DataTypes.TEXT('long'), allowNull: true, field: 'Notes' },
       ReExaminationDate: { type: DataTypes.DATEONLY, allowNull: true, field: 'ReExaminationDate' },
+      Status: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0, field: 'Status' },
       PrescriptionStatus: { type: DataTypes.TINYINT, allowNull: true, field: 'PrescriptionStatus' },
     },
     {
@@ -75,6 +76,7 @@ export default (sequelize) => {
       notes: raw.Notes,
       reExaminationDate: raw.ReExaminationDate,
       prescriptionStatus: raw.PrescriptionStatus,
+      status: raw.Status,
       createdAt: raw.CreatedAt,
       updatedAt: raw.UpdatedAt,
     };

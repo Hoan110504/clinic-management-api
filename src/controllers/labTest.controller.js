@@ -324,7 +324,7 @@ const resolveOrCreateExamination = async ({
 
   if (!examination && resolvedAppointmentId) {
     examination = await MedicalExamination.findOne({
-      where: { AppointmentID: resolvedAppointmentId },
+      where: { AppointmentID: resolvedAppointmentId, Status: 0 },
       order: [['CreatedAt', 'DESC'], ['ExaminationID', 'DESC']],
     });
   }
@@ -1144,6 +1144,7 @@ const getPendingLabTests = asyncHandler(async (req, res) => {
       ExaminationDate: {
         [Op.between]: [startOfDay, endOfDay],
       },
+      Status: 0,
     },
     attributes: ['ExaminationID'],
     raw: true,
