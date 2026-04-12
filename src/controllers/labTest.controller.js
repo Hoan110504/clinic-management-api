@@ -36,23 +36,24 @@ const STATUS_CODE_TO_LABEL = {
 };
 
 const TYPE_CODE_TO_LABEL = {
-  1: 'Siêu âm',
-  2: 'Điện tim',
-  3: 'Xét nghiệm',
+  1: 'Xét nghiệm',
+  2: 'Siêu âm',
+  3: 'Điện tim',
 };
 
 const TYPE_LABEL_TO_CODE = {
-  'siêu âm': 1,
-  'sieu am': 1,
-  'ultrasound': 1,
-  'điện tim': 2,
-  'dien tim': 2,
-  'ecg': 2,
-  'electrocardiogram': 2,
-  'xét nghiệm': 3,
-  'xet nghiem': 3,
-  'lab': 3,
-  'lab test': 3,
+  'xét nghiệm': 1,
+  'xet nghiem': 1,
+  'lab': 1,
+  'lab test': 1,
+  'siêu âm': 2,
+  'sieu am': 2,
+  'ultrasound': 2,
+  'điện tim': 3,
+  'dien tim': 3,
+  'ecg': 3,
+  'electrocardiogram': 3,
+  'stress': 3,
 };
 
 const LAB_NOTE_META_KEYS = [
@@ -92,13 +93,14 @@ const toPositiveInt = (value, { allowAppointmentPrefix = false } = {}) => {
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
 const mapTypeToCode = (value) => {
-  if (value === null || value === undefined || value === '') return 3;
+  if (value === null || value === undefined || value === '') return 1;
   if (typeof value === 'number' && [1, 2, 3].includes(value)) return value;
   const normalized = normalizeText(value);
   if (TYPE_LABEL_TO_CODE[normalized]) return TYPE_LABEL_TO_CODE[normalized];
-  if (normalized.includes('siêu') || normalized.includes('sieu') || normalized.includes('ultra')) return 1;
-  if (normalized.includes('điện') || normalized.includes('dien') || normalized.includes('ecg') || normalized.includes('stress')) return 2;
-  return 3;
+  if (normalized.includes('xét') || normalized.includes('xet') || normalized.includes('máu') || normalized.includes('huyết')) return 1;
+  if (normalized.includes('siêu') || normalized.includes('sieu') || normalized.includes('ultra')) return 2;
+  if (normalized.includes('điện') || normalized.includes('dien') || normalized.includes('ecg') || normalized.includes('stress')) return 3;
+  return 1; // default to lab test
 };
 
 const mapTypeToLabel = (value) => {
@@ -514,7 +516,9 @@ const fetchLabTestRowsByItems = async (itemsInput) => {
       gender: appointment.patientGender || patient.gender || '',
 
       testType: mapTypeToLabel(service.ServiceType),
+      testTypeCode: service.ServiceType || 1,
       room: mapTypeToLabel(service.ServiceType),
+      roomId: service.ServiceType || 1,
       testName: service.ServiceName || '',
       status: mapStatusToLabel(item.Status),
       examinationDate,
@@ -556,7 +560,7 @@ const fetchSingleLabTestRow = async (itemId) => {
  * GET /api/lab-tests
  */
 const getAllLabTests = asyncHandler(async (req, res) => {
-  const { LabOrderItem } = getLabModels();
+  const { LabOrderItem, MedicalExamination } = getLabModels();
   const { page, limit, offset } = parsePagination(req.query);
   const { status, patientId, medicalRecordId, fromDate, toDate, search, sort } = req.query;
 
@@ -571,14 +575,52 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   let parsedTo = parseDateParamSafe(toDate);
   let strictExaminationDateOnly = false;
 
-  // Previously: status=0 requests were limited to today's examinations for
-  // the Cận lâm sàng screen. Change: return all LabOrderItems with Status=0
-  // unless caller provides explicit fromDate/toDate filters.
-
   const include = getBaseItemIncludes();
   const parsedRecordId = toPositiveInt(medicalRecordId, { allowAppointmentPrefix: true });
+  
+  // For Status=0 (pending) requests without explicit date filters, enforce today's examination date
+  if (resolvedStatusCode === LAB_ITEM_STATUS.ASSIGNED && !parsedFrom && !parsedTo) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    
+    // Get today's examination IDs
+    const todayExaminations = await MedicalExamination.findAll({
+      where: {
+        ExaminationDate: {
+          [Op.between]: [startOfDay, endOfDay],
+        },
+      },
+      attributes: ['ExaminationID'],
+      raw: true,
+    });
+    
+    const todayExaminationIds = todayExaminations.map(exam => exam.ExaminationID);
+    
+    // Set the ExaminationID filter for the LabOrder include
+    if (todayExaminationIds.length > 0) {
+      if (include[0].where) {
+        include[0].where.ExaminationID = { [Op.in]: todayExaminationIds };
+      } else {
+        include[0].where = { ExaminationID: { [Op.in]: todayExaminationIds } };
+      }
+    } else {
+      // No examinations today, return empty result
+      return paginatedResponse(res, {
+        data: [],
+        page,
+        limit,
+        total: 0,
+      });
+    }
+  }
+  
   if (parsedRecordId) {
-    include[0].where = { ExaminationID: parsedRecordId };
+    if (include[0].where) {
+      include[0].where.ExaminationID = parsedRecordId;
+    } else {
+      include[0].where = { ExaminationID: parsedRecordId };
+    }
   }
 
   const items = await LabOrderItem.findAll({
@@ -589,7 +631,7 @@ const getAllLabTests = asyncHandler(async (req, res) => {
 
   let rows = await fetchLabTestRowsByItems(items);
 
-  // Filter by examination date (fallback to orderedDate for legacy rows).
+  // Filter by examination date (fallback to orderedDate for legacy rows) only if explicit date filters provided.
   if (parsedFrom || parsedTo) {
     const fromTime = parsedFrom
       ? new Date(parsedFrom.getFullYear(), parsedFrom.getMonth(), parsedFrom.getDate(), 0, 0, 0, 0).getTime()
@@ -1086,15 +1128,50 @@ const deleteLabTest = asyncHandler(async (req, res) => {
 /**
  * Get pending lab tests
  * GET /api/lab-tests/pending
+ * Filters to Status=0 items from today's MedicalExaminations only
  */
 const getPendingLabTests = asyncHandler(async (req, res) => {
-  const { LabOrderItem } = getLabModels();
+  const { LabOrderItem, MedicalExamination } = getLabModels();
+  
+  // Get today's date range (00:00:00 to 23:59:59)
+  const today = new Date();
+  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+  
+  // Query MedicalExaminations with today's ExaminationDate
+  const todayExaminations = await MedicalExamination.findAll({
+    where: {
+      ExaminationDate: {
+        [Op.between]: [startOfDay, endOfDay],
+      },
+    },
+    attributes: ['ExaminationID'],
+    raw: true,
+  });
+  
+  const todayExaminationIds = todayExaminations.map(exam => exam.ExaminationID);
+  
+  // If no examinations today, return empty array
+  if (todayExaminationIds.length === 0) {
+    return successResponse(res, []);
+  }
+  
+  // Get the base includes structure
+  const include = getBaseItemIncludes();
+  
+  // Add ExaminationID filter to the LabOrder include
+  if (include[0] && include[0].where) {
+    include[0].where.ExaminationID = { [Op.in]: todayExaminationIds };
+  } else if (include[0]) {
+    include[0].where = { ExaminationID: { [Op.in]: todayExaminationIds } };
+  }
+  
+  // Query LabOrderItems with Status=0 that are linked to today's examinations
   const items = await LabOrderItem.findAll({
-    // Only include items that are newly assigned (Status = ASSIGNED / 0)
     where: {
       Status: LAB_ITEM_STATUS.ASSIGNED,
     },
-    include: getBaseItemIncludes(),
+    include,
     order: [['CreatedAt', 'ASC'], ['LabOrderItemID', 'ASC']],
   });
 
