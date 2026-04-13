@@ -68,6 +68,7 @@ export default (sequelize) => {
     timestamps: true,
     createdAt: 'CreatedAt',
     updatedAt: false,
+    underscored: false,
     indexes: [
       { fields: ['PrescriptionID'] },
       { fields: ['MedicineId'] }

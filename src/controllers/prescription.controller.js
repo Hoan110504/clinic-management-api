@@ -3,7 +3,7 @@
  * Handles prescription operations
  */
 import { Op, QueryTypes } from 'sequelize';
-import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction } from '../models/index.js';
+import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction, PrescriptionItem, MedicineBatch } from '../models/index.js';
 import { sequelize } from '../models/database.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import {
@@ -508,105 +508,255 @@ const updatePrescription = asyncHandler(async (req, res) => {
 const dispensePrescription = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const prescription = await Prescription.findByPk(id);
+  let prescription;
+  try {
+    prescription = await Prescription.findByPk(id);
+  } catch (dbErr) {
+    console.error('[dispensePrescription] Prescription.findByPk failed', { id, message: dbErr?.message, original: dbErr?.original?.message || dbErr });
+    // Try legacy/raw table fallbacks (safe: read-only selects)
+    const candidates = [
+      { sql: `SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE [Id] = :id` },
+      { sql: `SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE [PrescriptionID] = :id` },
+      { sql: `SELECT TOP 1 * FROM [dbo].[prescriptions] WHERE [id] = :id` },
+      { sql: `SELECT TOP 1 * FROM [dbo].[prescriptions] WHERE [prescriptionid] = :id` },
+      { sql: `SELECT TOP 1 * FROM [DonThuoc] WHERE [Id] = :id` },
+      { sql: `SELECT TOP 1 * FROM [DonThuoc] WHERE [PrescriptionID] = :id` },
+    ];
+
+    let found = null; let foundTable = null;
+    for (const c of candidates) {
+      try {
+        const rows = await sequelize.query(c.sql, { replacements: { id }, type: QueryTypes.SELECT });
+        if (Array.isArray(rows) && rows.length > 0) {
+          found = rows[0];
+          // extract table name from SQL for later updates
+          const m = c.sql.match(/FROM\s+([^\s]+)/i);
+          foundTable = m ? m[1] : null;
+          break;
+        }
+      } catch (e) {
+        // ignore individual fallback errors
+        console.warn('[dispensePrescription] fallback query failed', { sql: c.sql, err: e?.message });
+      }
+    }
+
+    if (!found) {
+      throw new BadRequestError('Lỗi cơ sở dữ liệu khi truy vấn đơn thuốc. Vui lòng kiểm tra cấu trúc DB và chạy migrations.');
+    }
+
+    // Build a lightweight prescription-like object from raw row
+    const mapped = mapRawPrescriptionRow(found);
+    prescription = {
+      isRaw: true,
+      rawRow: found,
+      rawTable: foundTable,
+      id: mapped.id,
+      status: mapped.status,
+      // helper to update status later via raw SQL
+    };
+  }
+
   if (!prescription) {
     throw new NotFoundError('Không tìm thấy đơn thuốc');
   }
 
   const currentStatus = Number(prescription.status);
-  if (currentStatus === 1) {
+  if (currentStatus === 2) {
     throw new BadRequestError('Không thể phát thuốc - đơn thuốc đã được phát');
   }
-  if (currentStatus === 2) {
-    throw new BadRequestError('Không thể phát thuốc - đơn thuốc đã bị hủy');
-  }
-  if (currentStatus !== 0) {
-    throw new BadRequestError('Không thể phát thuốc - trạng thái đơn thuốc không hợp lệ');
+  if (currentStatus !== 1) {
+    throw new BadRequestError('Không thể phát thuốc - trạng thái đơn thuốc không hợp lệ (cần status 1: Chờ phát thuốc)');
   }
 
   const transaction = await sequelize.transaction();
 
   try {
-    // Dispense items from prescription
-    const dispenseItems = Array.isArray(req.body.dispenseItems) ? req.body.dispenseItems : [];
-
-    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-    const mapTypeToLoai = () => 2; // export
-
-    // Get prescription items with details (if storing separately in PrescriptionItem table)
-    let itemsToProcess = [];
+    console.log('[dispensePrescription] Starting dispense process for prescription id:', prescription.id);
+    
+    let prescriptionItems;
     try {
-      const prescriptionItems = await sequelize.models.PrescriptionItem?.findAll({
-        where: { prescriptionId: id },
-        transaction
-      });
-      itemsToProcess = prescriptionItems && prescriptionItems.length > 0 
-        ? prescriptionItems.map(pi => ({
-            medicineId: pi.medicineId,
-            quantityPrescribed: pi.quantityPrescribed,
-          }))
-        : dispenseItems;
-    } catch (e) {
-      // Fallback if PrescriptionItem table doesn't exist
-      itemsToProcess = dispenseItems;
-    }
-
-    for (const item of itemsToProcess) {
-      const medicine = await Medicine.findByPk(item.medicineId, { transaction });
-
-      if (!medicine) {
-        throw new NotFoundError(`Không tìm thấy thuốc: ID ${item.medicineId}`);
-      }
-
-      const latestTx = await InventoryTransaction.findOne({
-        where: { MedicineId: medicine.Id },
-        order: [['CreatedAt', 'DESC']],
+      console.log('[dispensePrescription] Loading PrescriptionItems from DB...');
+      prescriptionItems = await PrescriptionItem.findAll({
+        where: { prescriptionId: prescription.id },
         transaction,
       });
-
-      const previousQuantity = Number.isFinite(Number(latestTx?.QuantityAfter))
-        ? Number(latestTx.QuantityAfter)
-        : 0;
-
-      const quantity = Number(item.quantityPrescribed || item.quantity || 0);
-      if (previousQuantity < quantity) {
-        throw new BadRequestError(`Thuốc ${medicine.Name} không đủ số lượng (còn ${previousQuantity})`);
-      }
-
-      const newQuantity = previousQuantity - quantity;
-
-      // Create inventory transaction
-      const batch = await sequelize.models.MedicineBatch?.findOne({ where: { MedicineId: medicine.Id }, transaction });
-
-      await InventoryTransaction.create(
-        {
-          MedicineBatchId: batch ? batch.Id : null,
-          MedicineId: medicine.Id,
-          TransactionType: mapTypeToLoai(),
-          Quantity: quantity,
-          QuantityBefore: previousQuantity,
-          QuantityAfter: newQuantity,
-          Reason: `Xuất theo đơn thuốc ${prescription.id}`,
-          ReferenceType: 1,
-          ReferenceId: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? prescription.id : null,
-          PerformedByUserId: req.user.id,
-          Note: typeof prescription.id === 'string' && uuidRegex.test(prescription.id) ? null : `ref:${prescription.id}`,
-        },
-        { transaction }
-      );
+      console.log('[dispensePrescription] PrescriptionItems loaded:', prescriptionItems?.length || 0);
+    } catch (e) {
+      console.error('[dispensePrescription] PrescriptionItem.findAll failed:', e?.message);
+      throw e;
     }
 
-    // Update prescription status to 1 (dispensed)
-    await prescription.update(
-      { status: 1 },
-      { transaction }
-    );
+    if (!Array.isArray(prescriptionItems) || prescriptionItems.length === 0) {
+      throw new BadRequestError('Đơn thuốc không có thuốc để phát');
+    }
+
+    const performedByUserId = req.user?.id ? String(req.user.id) : null;
+
+    for (const item of prescriptionItems) {
+      const medicineId = Number(item.medicineId);
+      const quantityToDispense = Number(item.quantityPrescribed || 0);
+
+      if (!Number.isFinite(medicineId) || medicineId <= 0) {
+        throw new BadRequestError('Chi tiết đơn thuốc có MedicineId không hợp lệ');
+      }
+      if (!Number.isFinite(quantityToDispense) || quantityToDispense <= 0) {
+        throw new BadRequestError(`Số lượng thuốc cần phát không hợp lệ (MedicineId=${medicineId})`);
+      }
+
+      console.log('[dispensePrescription] Looking up Medicine:', medicineId);
+      let medicine;
+      try {
+        medicine = await Medicine.findByPk(medicineId, { transaction });
+      } catch (e) {
+        console.error('[dispensePrescription] Medicine.findByPk failed:', { medicineId, err: e?.message });
+        throw e;
+      }
+      if (!medicine) {
+        throw new NotFoundError(`Không tìm thấy thuốc: ID ${medicineId}`);
+      }
+      console.log('[dispensePrescription] Medicine found:', medicine.Name);
+
+      console.log('[dispensePrescription] Loading MedicineBatch for medicine:', medicineId);
+      let batchRows;
+      try {
+        batchRows = await MedicineBatch.findAll({
+        where: {
+          MedicineId: medicineId,
+          QuantityInStock: { [Op.gt]: 0 },
+        },
+          transaction,
+        });
+      } catch (e) {
+        console.error('[dispensePrescription] MedicineBatch.findAll failed:', { medicineId, err: e?.message });
+        throw e;
+      }
+      console.log('[dispensePrescription] MedicineBatch rows found:', batchRows?.length || 0);
+
+
+      const availableBatches = (batchRows || []).sort((a, b) => {
+        const aExpiry = a.ExpiryDate ? new Date(a.ExpiryDate).getTime() : Number.MAX_SAFE_INTEGER;
+        const bExpiry = b.ExpiryDate ? new Date(b.ExpiryDate).getTime() : Number.MAX_SAFE_INTEGER;
+        if (aExpiry !== bExpiry) return aExpiry - bExpiry;
+        return Number(a.Id || 0) - Number(b.Id || 0);
+      });
+
+      const totalStock = availableBatches.reduce((sum, batch) => sum + Number(batch.QuantityInStock || 0), 0);
+      if (totalStock < quantityToDispense) {
+        throw new BadRequestError(`Không đủ thuốc để phát: ${medicine.Name} (cần ${quantityToDispense}, tồn ${totalStock})`);
+      }
+
+      let remaining = quantityToDispense;
+      for (const batch of availableBatches) {
+        if (remaining <= 0) break;
+
+        const quantityBefore = Number(batch.QuantityInStock || 0);
+        if (quantityBefore <= 0) continue;
+
+        const issuedQuantity = Math.min(quantityBefore, remaining);
+        const quantityAfter = quantityBefore - issuedQuantity;
+
+        await batch.update(
+          {
+            QuantityInStock: quantityAfter,
+            Status: quantityAfter > 0 ? 1 : 0,
+          },
+          { transaction }
+        );
+
+        const inventoryTxPayload = {
+          MedicineBatchId: batch.Id,
+          MedicineId: medicine.Id,
+          TransactionType: InventoryTransaction.TRANSACTION_TYPE?.EXPORT || 2,
+          Quantity: issuedQuantity,
+          QuantityBefore: quantityBefore,
+          QuantityAfter: quantityAfter,
+          Reason: `Xuất theo đơn thuốc ${prescription.id}`,
+          ReferenceType: InventoryTransaction.REFERENCE_TYPE?.PRESCRIPTION || 1,
+          PerformedByUserId: performedByUserId,
+          Note: JSON.stringify({
+            prescriptionId: prescription.id,
+            prescriptionItemId: item.id,
+            batchId: batch.Id,
+            batchNumber: batch.BatchNumber,
+            issuedQuantity,
+          }),
+        };
+
+        // Log payload to help diagnose conversion issues (trim large fields)
+        console.log('[dispensePrescription] creating InventoryTransaction payload', JSON.stringify({
+          MedicineBatchId: inventoryTxPayload.MedicineBatchId,
+          MedicineId: inventoryTxPayload.MedicineId,
+          Quantity: inventoryTxPayload.Quantity,
+          NoteLength: inventoryTxPayload.Note ? inventoryTxPayload.Note.length : 0,
+        }));
+
+        try {
+          await InventoryTransaction.create(inventoryTxPayload, { transaction });
+        } catch (createErr) {
+          console.error('[dispensePrescription] InventoryTransaction.create failed', {
+            message: createErr?.message,
+            original: createErr?.original && (createErr.original.message || createErr.original),
+            sql: createErr?.sql,
+            payloadSample: inventoryTxPayload && {
+              MedicineBatchId: inventoryTxPayload.MedicineBatchId,
+              MedicineId: inventoryTxPayload.MedicineId,
+              Quantity: inventoryTxPayload.Quantity,
+            },
+          });
+          throw createErr;
+        }
+
+        remaining -= issuedQuantity;
+      }
+
+      if (remaining > 0) {
+        throw new BadRequestError(`Không thể hoàn tất phát thuốc cho ${medicine.Name}`);
+      }
+    }
+
+    if (prescription && prescription.isRaw) {
+      // Update legacy/raw prescription table using detected columns
+      const row = prescription.rawRow || {};
+      const table = prescription.rawTable || '[dbo].[Prescriptions]';
+
+      // detect id column
+      const idCandidates = ['Id', 'PrescriptionID', 'PrescriptionId', 'prescriptionid', 'id'];
+      let idCol = idCandidates.find((c) => Object.prototype.hasOwnProperty.call(row, c));
+      if (!idCol) idCol = 'Id';
+
+      // detect status column
+      const statusCandidates = ['Status', 'TrangThai', 'is_dispensed', 'IsDispensed', 'status'];
+      let statusCol = statusCandidates.find((c) => Object.prototype.hasOwnProperty.call(row, c));
+      if (!statusCol) statusCol = 'Status';
+
+      // detect updatedAt column
+      const updatedAtCandidates = ['UpdatedAt', 'updated_at', 'Updated_at'];
+      const updatedAtCol = updatedAtCandidates.find((c) => Object.prototype.hasOwnProperty.call(row, c));
+
+      const replacements = { status: 2, id: prescription.id };
+      let updateSql;
+      if (updatedAtCol) {
+        updateSql = `UPDATE ${table} SET [${statusCol}] = :status, [${updatedAtCol}] = GETUTCDATE() WHERE [${idCol}] = :id`;
+      } else {
+        updateSql = `UPDATE ${table} SET [${statusCol}] = :status WHERE [${idCol}] = :id`;
+      }
+
+      await sequelize.query(updateSql, { replacements, type: QueryTypes.UPDATE, transaction });
+    } else {
+      await prescription.update({ status: 2 }, { transaction });
+    }
 
     await transaction.commit();
 
-    return successResponse(res, prescription, 'Phát thuốc thành công');
+    return successResponse(res, prescription, 'Xác nhận phát thuốc thành công');
   } catch (error) {
-    await transaction.rollback();
+    try {
+      if (transaction && !transaction.finished) {
+        await transaction.rollback();
+      }
+    } catch (rbErr) {
+      console.warn('[dispensePrescription] rollback skipped or failed:', rbErr && rbErr.message);
+    }
     throw error;
   }
 });
@@ -639,7 +789,7 @@ const deletePrescription = asyncHandler(async (req, res) => {
 const getPendingPrescriptions = asyncHandler(async (req, res) => {
   try {
     const prescriptions = await Prescription.findAll({
-      where: { status: 0 },  // Status 0 = Chờ phát thuốc (Waiting for dispensing)
+      where: { status: 1 },  // Status 1 = Chờ phát thuốc (Waiting for dispensing)
       order: [['prescriptionDate', 'ASC']],
       include: [
         {
@@ -669,6 +819,24 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
 
     return successResponse(res, prescriptions);
   } catch (err) {
+    // Check if Prescriptions table exists first
+    let tableExists = false;
+    try {
+      await sequelize.query(
+        `SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Prescriptions' AND TABLE_SCHEMA = 'dbo'`,
+        { type: QueryTypes.SELECT }
+      );
+      tableExists = true;
+    } catch (tableCheckErr) {
+      console.error('getPendingPrescriptions: failed to check if Prescriptions table exists', tableCheckErr?.message);
+    }
+
+    if (!tableExists) {
+      console.error('getPendingPrescriptions: Prescriptions table does not exist. Run migrations: npm run migrate');
+      const userErr = new Error('Bảng Prescriptions chưa được tạo. Vui lòng chạy migration: npm run migrate');
+      userErr.code = 'TABLE_NOT_EXISTS';
+      throw userErr;
+    }
     // Add structured logging to help diagnose DB/schema issues
     try {
       console.error('getPendingPrescriptions: database error', {
@@ -682,12 +850,18 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
     }
     // Try legacy fallbacks for deployments with different schemas
     const fallbackErrors = [];
+    
+    // Simplified fallback: just get prescriptions without complex enrichment
     try {
       // Try PascalCase identity-style table (simple: no joins, enrichment via model)
       const rows1 = await sequelize.query(
         `SELECT TOP 200 * FROM [dbo].[Prescriptions] WHERE [Status] = 0 ORDER BY [PrescriptionDate] ASC`,
         { type: QueryTypes.SELECT }
-      );
+      ).catch(err => {
+        console.error('getPendingPrescriptions: Prescriptions query failed:', err?.message);
+        throw err;
+      });
+      
       if (Array.isArray(rows1) && rows1.length > 0) {
         const enriched = await Promise.all(rows1.map(async (r) => {
           const mapped = mapRawPrescriptionRow(r);
@@ -922,15 +1096,22 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
         try { console.debug('getPendingPrescriptions: returning fallback DonThuoc sample', JSON.stringify(enriched3[0] ? { id: enriched3[0].id, patient: enriched3[0].patient, patientName: enriched3[0].patientName, prescriptionDate: enriched3[0].prescriptionDate } : {}, null, 2)); } catch (e) {}
         return successResponse(res, enriched3);
       }
-    } catch (e3) { fallbackErrors.push({ step: 'donthuoc', message: e3 && (e3.original?.message || e3.message || String(e3)) }); console.error('getPendingPrescriptions: DonThuoc fallback failed', e3 && (e3.original?.message || e3.message || e3)); }
+    } catch (e3) { 
+      fallbackErrors.push({ step: 'donthuoc', message: e3 && (e3.original?.message || e3.message || String(e3)) }); 
+      console.error('getPendingPrescriptions: DonThuoc fallback failed', e3 && (e3.original?.message || e3.message || e3)); 
+    }
 
-    // Re-throw a clearer error that the global error handler will surface
     // Log collected fallback errors for diagnostics
-    try { if (fallbackErrors.length > 0) console.error('getPendingPrescriptions: fallback errors summary', JSON.stringify(fallbackErrors, null, 2)); } catch (le) { /* ignore logging failure */ }
+    try { 
+      if (fallbackErrors.length > 0) {
+        console.error('getPendingPrescriptions: fallback errors summary', JSON.stringify(fallbackErrors, null, 2));
+      } 
+    } catch (le) { /* ignore logging failure */ }
 
-    const userErr = new Error('Lỗi cơ sở dữ liệu khi tải đơn chờ phát (xem server logs)');
-    userErr.code = 'DATABASE_ERROR';
-    throw userErr;
+    // If no fallbacks worked, return empty array instead of error (graceful degradation)
+    // This prevents API  from breaking if schema changes but doesn't have data yet
+    console.warn('getPendingPrescriptions: All query attempts failed, returning empty array for graceful degradation');
+    return successResponse(res, [], 'Không có đơn chờ phát (tất cả các source đều thất bại)');
   }
 });
 
@@ -944,13 +1125,10 @@ const confirmPrescription = asyncHandler(async (req, res) => {
   let prescription = await Prescription.findByPk(id).catch(() => null);
   if (prescription) {
     const currentStatus = Number(prescription.status);
-    if (currentStatus === 1) {
+    if (currentStatus === 2) {
       throw new BadRequestError('Không thể xác nhận đơn thuốc đã phát');
     }
-    if (currentStatus === 2) {
-      throw new BadRequestError('Không thể xác nhận đơn thuốc đã hủy');
-    }
-    await prescription.update({ status: 0, updatedAt: new Date() });
+    await prescription.update({ status: 1, updatedAt: new Date() });
     return successResponse(res, prescription, 'Xác nhận kê đơn thành công');
   }
 

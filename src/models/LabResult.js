@@ -34,6 +34,18 @@ export default (sequelize) => {
       }
     },
 
+    LabOrderItemID: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      field: 'LabOrderItemID',
+    },
+
+    RoomID: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      field: 'RoomID',
+    },
+
     ResultText: {
       type: DataTypes.TEXT('long'),
       allowNull: false,
@@ -41,7 +53,8 @@ export default (sequelize) => {
     },
 
     ImageUrl: {
-      type: DataTypes.STRING(500),
+      // Allow long image URLs (data URLs / base64) by using TEXT
+      type: DataTypes.TEXT('long'),
       allowNull: true,
       field: 'ImageUrl'
     },
@@ -95,7 +108,9 @@ export default (sequelize) => {
     indexes: [
       { fields: ['ExaminationID'] },
       { fields: ['ServiceID'] },
-      { fields: ['DoctorID'] }
+      { fields: ['DoctorID'] },
+      { fields: ['LabOrderItemID'] },
+      { fields: ['RoomID'] }
     ]
   });
 

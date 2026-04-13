@@ -534,6 +534,8 @@ const fetchLabTestRowsByItems = async (itemsInput) => {
       images,
       imageUrl: images[0] || null,
       resultDate,
+      labResultLabOrderItemId: result?.LabOrderItemID || null,
+      labResultRoomId: result?.RoomID || null,
       confirmedBy: meta.confirmedBy || doctorResult?.fullName || null,
       confirmedAt: meta.confirmedAt || null,
       cancelReason: meta.cancelReason || '',
@@ -936,6 +938,14 @@ const updateLabTestCore = async ({ itemId, payload = {}, user }) => {
         resultUpdates.ResultDate = existing.ResultDate || new Date();
       }
 
+      // Ensure LabOrderItemID and RoomID are recorded on the result for traceability
+      try {
+        resultUpdates.LabOrderItemID = item.LabOrderItemID || null;
+      } catch (e) { /* ignore if item not available */ }
+      try {
+        resultUpdates.RoomID = (item.RoomID !== undefined && item.RoomID !== null) ? item.RoomID : (order.RoomID || null);
+      } catch (e) { /* ignore */ }
+
       await existing.update(resultUpdates);
     } else if (
       resultText !== undefined ||
@@ -955,6 +965,8 @@ const updateLabTestCore = async ({ itemId, payload = {}, user }) => {
         ResultDate: payload.resultDate ? (parseDateParamSafe(payload.resultDate) || new Date(payload.resultDate)) : new Date(),
         CreatedAt: new Date(),
         UpdatedAt: new Date(),
+        LabOrderItemID: item.LabOrderItemID || null,
+        RoomID: (item.RoomID !== undefined && item.RoomID !== null) ? item.RoomID : (order.RoomID || null),
       });
     }
   }

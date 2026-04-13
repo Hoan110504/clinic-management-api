@@ -90,9 +90,9 @@ export default (sequelize) => {
         allowNull: true,
         field: 'Note',
       },
-      // Status: 0 = Chờ phát thuốc (Waiting for dispensing)
-      //         1 = Đã phát thuốc (Dispensed)
-      //         2 = Đã hủy (Cancelled)
+      // Status: 0 = Đang kê (Prescribing)
+      //         1 = Chờ phát thuốc (Waiting for dispensing)
+      //         2 = Đã phát thuốc (Dispensed)
       status: {
         type: DataTypes.TINYINT,
         defaultValue: 0,
