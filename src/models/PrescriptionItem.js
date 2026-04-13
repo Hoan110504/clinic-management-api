@@ -6,25 +6,25 @@ import { DataTypes } from 'sequelize';
 
 export default (sequelize) => {
   const PrescriptionItem = sequelize.define('PrescriptionItem', {
-    Id: {
+    id: {
       type: DataTypes.BIGINT,
       autoIncrement: true,
       primaryKey: true,
       allowNull: false,
-      field: 'Id'
+      field: 'PrescriptionItemID'
     },
 
-    PrescriptionId: {
+    prescriptionId: {
       type: DataTypes.BIGINT,
       allowNull: false,
-      field: 'PrescriptionId',
+      field: 'PrescriptionID',
       references: {
         model: 'Prescriptions',
         key: 'Id'
       }
     },
 
-    MedicineId: {
+    medicineId: {
       type: DataTypes.BIGINT,
       allowNull: false,
       field: 'MedicineId',
@@ -34,44 +34,52 @@ export default (sequelize) => {
       }
     },
 
-    Quantity: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      field: 'Quantity'
-    },
-
-    UnitPrice: {
-      type: DataTypes.DECIMAL(18, 2),
-      allowNull: false,
-      field: 'UnitPrice'
-    },
-
-    Dosage: {
+    dosage: {
       type: DataTypes.STRING(510),
       allowNull: true,
       field: 'Dosage'
     },
 
-    UsageInstructions: {
+    frequency: {
       type: DataTypes.STRING(510),
       allowNull: true,
-      field: 'UsageInstructions'
+      field: 'Frequency'
+    },
+
+    duration: {
+      type: DataTypes.STRING(510),
+      allowNull: true,
+      field: 'Duration'
+    },
+
+    quantityPrescribed: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      field: 'QuantityPrescribed'
+    },
+
+    instructions: {
+      type: DataTypes.STRING(1000),
+      allowNull: true,
+      field: 'Instructions'
     }
   }, {
     tableName: 'PrescriptionItems',
-    timestamps: false,
+    timestamps: true,
+    createdAt: 'CreatedAt',
+    updatedAt: false,
     indexes: [
-      { fields: ['PrescriptionId'] },
+      { fields: ['PrescriptionID'] },
       { fields: ['MedicineId'] }
     ]
   });
 
   PrescriptionItem.associate = (models) => {
-    // Belongs to Prescription (singular model name)
+    // Belongs to Prescription
     if (models && models.Prescription) {
       PrescriptionItem.belongsTo(models.Prescription, {
-        foreignKey: 'PrescriptionId',
-        as: 'Prescription',
+        foreignKey: 'prescriptionId',
+        as: 'prescription',
         onDelete: 'CASCADE'
       });
     }
@@ -79,8 +87,8 @@ export default (sequelize) => {
     // Belongs to Medicine
     if (models && models.Medicine) {
       PrescriptionItem.belongsTo(models.Medicine, {
-        foreignKey: 'MedicineId',
-        as: 'Medicine'
+        foreignKey: 'medicineId',
+        as: 'medicine'
       });
     }
   };

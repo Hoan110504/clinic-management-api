@@ -15,6 +15,8 @@ import paymentRoutes from './payment.routes.js';
 import inventoryRoutes from './inventory.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import medicalRecordRoutes from './medicalRecord.routes.js';
+import { sequelize } from '../models/database.js';
+import { QueryTypes } from 'sequelize';
 
 const router = express.Router();
 
@@ -26,6 +28,18 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
   });
+});
+
+// Debug: quick DB check for Prescriptions table (returns count or error)
+router.get('/debug/db-prescriptions-check', async (req, res) => {
+  try {
+    const rows = await sequelize.query('SELECT COUNT(*) AS cnt FROM [dbo].[Prescriptions]', { type: QueryTypes.SELECT });
+    const cnt = rows && rows[0] && (rows[0].cnt || rows[0].CNT || rows[0].Cnt) ? Number(rows[0].cnt || rows[0].CNT || rows[0].Cnt) : 0;
+    return res.json({ success: true, count: cnt });
+  } catch (err) {
+    console.error('debug/db-prescriptions-check failed', err && (err.original?.message || err.message));
+    return res.status(500).json({ success: false, error: { message: 'DB check failed', details: err && (err.original?.message || err.message) } });
+  }
 });
 
 // Mount routes

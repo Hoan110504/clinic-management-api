@@ -15,6 +15,15 @@ export default (sequelize) => {
         allowNull: false,
         field: 'Id',
       },
+      examinationId: {
+        type: DataTypes.BIGINT,
+        allowNull: false,
+        field: 'ExaminationID',
+        references: {
+          model: 'MedicalExaminations',
+          key: 'ExaminationID',
+        },
+      },
       medicalRecordId: {
         type: DataTypes.BIGINT,
         allowNull: false,
@@ -79,32 +88,16 @@ export default (sequelize) => {
       notes: {
         type: DataTypes.TEXT('long'),
         allowNull: true,
-        field: 'Notes',
+        field: 'Note',
       },
-      // Dispensing status
-      isDispensed: {
-        type: DataTypes.BOOLEAN,
-        defaultValue: false,
-        field: 'IsDispensed',
-      },
-      dispensedAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: 'DispensedAt',
-      },
-      dispensedById: {
-        type: DataTypes.BIGINT,
-        allowNull: true,
-        field: 'DispensedById',
-        references: {
-          model: 'users',
-          key: 'id',
-        },
-      },
-      dispensedByName: {
-        type: DataTypes.STRING(100),
-        allowNull: true,
-        field: 'DispensedByName',
+      // Status: 0 = Chờ phát thuốc (Waiting for dispensing)
+      //         1 = Đã phát thuốc (Dispensed)
+      //         2 = Đã hủy (Cancelled)
+      status: {
+        type: DataTypes.TINYINT,
+        defaultValue: 0,
+        field: 'Status',
+        allowNull: false,
       },
     },
     {
@@ -115,11 +108,11 @@ export default (sequelize) => {
       paranoid: true,
       deletedAt: 'DeletedAt',
       indexes: [
+        { fields: ['ExaminationID'] },
         { fields: ['MedicalRecordId'] },
-        { fields: ['PatientId'] },
         { fields: ['DoctorId'] },
         { fields: ['PrescriptionDate'] },
-        { fields: ['IsDispensed'] },
+        { fields: ['Status'] },
       ],
     }
   );
