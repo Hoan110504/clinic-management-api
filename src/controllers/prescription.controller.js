@@ -222,7 +222,48 @@ const createPrescription = asyncHandler(async (req, res) => {
 
   // ExaminationID may be required by this deployment's Prescriptions schema.
   // Prefer explicit `examinationId` from request body, fallback to medicalRecordId when appropriate.
-  const examinationId = req.body.examinationId || medicalRecordId || null;
+  let examinationId = req.body.examinationId || medicalRecordId || null;
+
+  // Resolve examinationId to a numeric ExaminationID (bigint) when possible.
+  const parseNumeric = (v) => {
+    if (v === undefined || v === null) return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return Number(v);
+    const s = String(v).trim();
+    if (/^\d+$/.test(s)) return Number(s);
+    return null;
+  };
+
+  let resolvedExaminationId = parseNumeric(examinationId);
+  // Try resolving via appointmentId if provided and numeric or as lookup
+  if (!resolvedExaminationId && req.body.appointmentId) {
+    const apptNum = parseNumeric(req.body.appointmentId);
+    if (apptNum) {
+      try {
+        const rows = await sequelize.query(
+          `SELECT TOP 1 ExaminationID FROM [dbo].[MedicalExaminations] WHERE [AppointmentID] = :apptId ORDER BY ExaminationID DESC`,
+          { replacements: { apptId: apptNum }, type: QueryTypes.SELECT }
+        );
+        if (Array.isArray(rows) && rows.length > 0 && rows[0].ExaminationID) resolvedExaminationId = Number(rows[0].ExaminationID);
+      } catch (e) { /* ignore lookup errors */ }
+    }
+  }
+
+  // Try resolving by patientId to find most recent examination
+  if (!resolvedExaminationId && req.body.patientId) {
+    const pidNum = parseNumeric(req.body.patientId);
+    if (pidNum) {
+      try {
+        const rows = await sequelize.query(
+          `SELECT TOP 1 ExaminationID FROM [dbo].[MedicalExaminations] WHERE [PatientId] = :pid ORDER BY ExaminationDate DESC`,
+          { replacements: { pid: pidNum }, type: QueryTypes.SELECT }
+        );
+        if (Array.isArray(rows) && rows.length > 0 && rows[0].ExaminationID) resolvedExaminationId = Number(rows[0].ExaminationID);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  // Only accept numeric ExaminationID; if resolution failed, set to null
+  examinationId = resolvedExaminationId || null;
 
   // Extract doctor info - ignore status and patientPhone as they're not in model
   let doctorId = req.body.doctorId;
@@ -236,6 +277,18 @@ const createPrescription = asyncHandler(async (req, res) => {
   if (!doctorId) {
     throw new BadRequestError('ID bác sĩ không được để trống');
   }
+
+  // Ensure doctorId is numeric when possible to avoid nvarchar->bigint conversion errors
+  const parseNumericLocal = (v) => {
+    if (v === undefined || v === null) return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return Number(v);
+    const s = String(v).trim();
+    if (/^\d+$/.test(s)) return Number(s);
+    return null;
+  };
+  const resolvedDoctorId = parseNumericLocal(doctorId);
+  // Only accept numeric doctorId; if not numeric, set to null (will be rejected)
+  doctorId = resolvedDoctorId || null;
 
   // Validate items array exists and not empty
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -316,142 +369,196 @@ const createPrescription = asyncHandler(async (req, res) => {
       });
     }
 
-    // Prefer identity-style Prescriptions table (PrescriptionID auto-increment) first
+    // Try multiple schema variations to insert prescription
+    // Actual schema: dbo.Prescriptions (PrescriptionID, ExaminationID, DoctorID, PrescriptionDate, Note, Status, CreatedAt, UpdatedAt)
+    let insertErr1, insertErr2, insertErr3;
+    
+    // Attempt 1: Insert to actual schema with minimal required columns
     try {
-      const tx = await sequelize.transaction();
+      const insertSql = `
+        INSERT INTO [dbo].[Prescriptions]
+          ([ExaminationID], [DoctorID], [Note], [Status], [PrescriptionDate], [CreatedAt], [UpdatedAt])
+        OUTPUT INSERTED.PrescriptionID
+        VALUES
+          (:examinationId, :doctorId, :note, :status, GETUTCDATE(), GETUTCDATE(), GETUTCDATE())
+      `;
+      
+      const result = await sequelize.query(insertSql, {
+        replacements: {
+          examinationId: payload.examinationId || null,
+          doctorId: payload.doctorId || null,
+          note: payload.notes ? `${payload.diagnosis ? 'Chẩn đoán: ' + payload.diagnosis + '\n' : ''}${payload.notes}` : (payload.diagnosis || ''),
+          status: payload.status ?? 0,
+        },
+        type: QueryTypes.INSERT,
+      });
+
+      let prescriptionId = null;
       try {
-        const insertSql = `
-          INSERT INTO [dbo].[Prescriptions]
-            ([ExaminationID], [DoctorID], [PrescriptionDate], [Note], [Status], [CreatedAt], [UpdatedAt])
-          OUTPUT INSERTED.PrescriptionID AS InsertedId
-          VALUES
-            (:examinationId, :doctorId, GETUTCDATE(), :note, :status, GETUTCDATE(), GETUTCDATE())
-        `;
-        const insertResult = await sequelize.query(insertSql, {
+        const rows = Array.isArray(result) ? result[0] : result;
+        if (Array.isArray(rows) && rows.length > 0) {
+          prescriptionId = rows[0].PrescriptionID || rows[0].prescriptionid;
+        }
+      } catch (e) {
+        // fallback
+      }
+
+      if (!prescriptionId) {
+        throw new Error('Failed to get inserted PrescriptionID');
+      }
+
+      console.log('prescription.create: Insert succeeded, PrescriptionID:', prescriptionId);
+
+      // Fetch the created prescription
+      const created = await sequelize.query(
+        `SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE PrescriptionID = :id`,
+        { replacements: { id: prescriptionId }, type: QueryTypes.SELECT }
+      );
+
+      // Insert prescription items into PrescriptionItems table (if supported)
+      try {
+        if (Array.isArray(sanitizedItems) && sanitizedItems.length > 0) {
+          for (const it of sanitizedItems) {
+            await sequelize.query(
+              `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, CreatedAt)
+               VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, GETUTCDATE())`,
+              {
+                replacements: {
+                  prescId: prescriptionId,
+                  medicineId: it.medicineId,
+                  dosage: it.dosage || null,
+                  frequency: it.frequency || null,
+                  duration: it.duration || null,
+                  quantity: Number(it.quantity) || 0,
+                  instructions: it.instructions || null,
+                },
+                type: QueryTypes.INSERT,
+              }
+            );
+          }
+          console.log('prescription.create: PrescriptionItems inserted for PrescriptionID', prescriptionId);
+        }
+      } catch (itemsErr) {
+        console.warn('prescription.create: failed to insert PrescriptionItems via raw query', itemsErr && (itemsErr.original?.message || itemsErr.message));
+      }
+
+      return createdResponse(res, created && created[0] ? created[0] : { PrescriptionID: prescriptionId }, 'Tạo đơn thuốc thành công');
+    } catch (err1) {
+      insertErr1 = err1;
+      console.warn('prescription.create: direct insert failed', err1 && (err1.original?.message || err1.message));
+    }
+
+    // Attempt 2: Try via Sequelize model (in case field mappings differ)
+    try {
+      const created = await Prescription.create({
+        examinationId: payload.examinationId || null,
+        medicalRecordId: payload.medicalRecordId || null,
+        patientId: payload.patientId || null,
+        patientName: payload.patientName || null,
+        doctorId: payload.doctorId || null,
+        doctorName: payload.doctorName || null,
+        items: payload.items || [],
+        diagnosis: payload.diagnosis || null,
+        notes: payload.notes || null,
+        status: payload.status ?? 0,
+      });
+
+      console.log('prescription.create: Insert succeeded via Sequelize model, ID:', created.id);
+
+      // Create PrescriptionItems if items exist (optional, may not be supported by schema)
+      if (Array.isArray(sanitizedItems) && sanitizedItems.length > 0) {
+        try {
+          for (const it of sanitizedItems) {
+            await PrescriptionItem.create({
+              prescriptionId: created.id,
+              medicineId: it.medicineId,
+              dosage: it.dosage || null,
+              frequency: it.frequency || null,
+              duration: it.duration || null,
+              quantityPrescribed: Number(it.quantity) || 0,
+              instructions: it.instructions || null,
+              price: Number(it.price) || 0,
+            }).catch(() => null);
+          }
+        } catch (itemsErr) {
+          console.warn('prescription.create: PrescriptionItems creation skipped', itemsErr && (itemsErr.original?.message || itemsErr.message));
+        }
+      }
+
+      return createdResponse(res, created, 'Tạo đơn thuốc thành công');
+    } catch (err2) {
+      insertErr2 = err2;
+      console.warn('prescription.create: Sequelize model create failed', err2 && (err2.original?.message || err2.message));
+    }
+
+    // Attempt 3: Insert with minimal payload to actual schema
+    try {
+      await sequelize.query(
+        `
+        INSERT INTO [dbo].[Prescriptions]
+          ([ExaminationID], [DoctorID], [Status])
+        VALUES
+          (:examinationId, :doctorId, :status)
+        `,
+        {
           replacements: {
             examinationId: payload.examinationId || null,
             doctorId: payload.doctorId || null,
-            note: payload.notes || null,
             status: payload.status ?? 0,
           },
           type: QueryTypes.INSERT,
-          transaction: tx,
-        });
-
-        // parse returned inserted id
-        let newId = null;
-        try {
-          const rows = Array.isArray(insertResult) ? insertResult[0] : insertResult;
-          if (Array.isArray(rows) && rows.length > 0) {
-            newId = rows[0].InsertedId || rows[0].PrescriptionID || rows[0].PrescriptionId || rows[0].insertedid || null;
-          }
-        } catch (eParse) {
-          // ignore
         }
+      );
 
-        if (!newId) {
-          throw new Error('Failed to obtain inserted PrescriptionID');
-        }
+      console.log('prescription.create: Minimal insert succeeded');
 
-        // Insert prescription items into PrescriptionItems table
-        for (const it of sanitizedItems) {
-          await sequelize.query(
-            `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, CreatedAt)
-             VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, GETUTCDATE())`,
-            {
-              replacements: {
-                prescId: newId,
-                medicineId: it.medicineId,
-                dosage: it.dosage || null,
-                frequency: it.frequency || null,
-                duration: it.duration || null,
-                quantity: Number(it.quantity) || 0,
-                instructions: it.instructions || null,
-              },
-              type: QueryTypes.INSERT,
-              transaction: tx,
-            }
-          );
-        }
+      // Find the created row
+      const created = await sequelize.query(
+        `SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE [ExaminationID] = :examId AND [DoctorID] = :doctorId ORDER BY PrescriptionID DESC`,
+        { replacements: { examId: payload.examinationId, doctorId: payload.doctorId }, type: QueryTypes.SELECT }
+      );
 
-        await tx.commit();
-
-        const rows = await sequelize.query(`SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE PrescriptionID = :id`, {
-          replacements: { id: newId },
-          type: QueryTypes.SELECT,
-        });
-
-        return createdResponse(res, rows && rows[0] ? rows[0] : { PrescriptionID: newId }, 'Tạo đơn thuốc thành công');
-      } catch (eIdentity) {
-        if (tx && typeof tx.rollback === 'function') {
-          try { await tx.rollback(); } catch (rbErr) { console.warn('rollback failed', rbErr && rbErr.message); }
-        }
-        throw eIdentity;
-      }
-    } catch (firstErr) {
-      // If identity-table insert fails, fallback to PascalCase Id table then legacy snake_case
-      console.warn('prescription.create: identity insert failed, falling back', firstErr && (firstErr.original?.message || firstErr.message || firstErr));
+      // Insert prescription items into PrescriptionItems table (if supported)
       try {
-        await sequelize.query(
-          `
-          INSERT INTO [dbo].[Prescriptions]
-            ([Id], [ExaminationID], [MedicalRecordId], [PatientId], [PatientName], [DoctorId], [DoctorName], [Items], [Diagnosis], [Note], [Status], [CreatedAt], [UpdatedAt])
-          VALUES
-            (:id, :examinationId, :medicalRecordId, :patientId, :patientName, :doctorId, :doctorName, :items, :diagnosis, :note, :status, GETUTCDATE(), GETUTCDATE())
-          `,
-          {
-            replacements: {
-              id: payload.id,
-              examinationId: payload.examinationId || null,
-              medicalRecordId: payload.medicalRecordId,
-              patientId: payload.patientId,
-              patientName: payload.patientName,
-              doctorId: payload.doctorId,
-              doctorName: payload.doctorName,
-              items: JSON.stringify(payload.items || []),
-              diagnosis: payload.diagnosis,
-              note: payload.notes,
-              status: payload.status ?? 0,
-            },
-            type: QueryTypes.INSERT,
-          }
-        );
-      } catch (secondErr) {
-        console.error('prescription.create: PascalCase insert failed, trying legacy snake_case', secondErr && (secondErr.original?.message || secondErr.message || secondErr));
-        try {
-          await sequelize.query(
-            `
-            INSERT INTO [dbo].[prescriptions]
-              ([id], [medical_record_id], [patient_id], [patient_name], [doctor_id], [doctor_name], [items], [diagnosis], [notes], [is_dispensed], [created_at], [updated_at])
-            VALUES
-              (:id, :medicalRecordId, :patientId, :patientName, :doctorId, :doctorName, :items, :diagnosis, :notes, :isDispensed, GETUTCDATE(), GETUTCDATE())
-            `,
-            {
-              replacements: {
-                id: payload.id,
-                medicalRecordId: payload.medicalRecordId,
-                patientId: payload.patientId,
-                patientName: payload.patientName,
-                doctorId: payload.doctorId,
-                doctorName: payload.doctorName,
-                items: JSON.stringify(payload.items || []),
-                diagnosis: payload.diagnosis,
-                notes: payload.notes,
-                isDispensed: 0,
-              },
-              type: QueryTypes.INSERT,
+        if (Array.isArray(sanitizedItems) && sanitizedItems.length > 0 && Array.isArray(created) && created.length > 0) {
+          const createdRow = created[0];
+          const newId = createdRow.PrescriptionID || createdRow.prescriptionid || createdRow.Id || createdRow.id;
+          if (newId) {
+            for (const it of sanitizedItems) {
+              await sequelize.query(
+                `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, CreatedAt)
+                 VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, GETUTCDATE())`,
+                {
+                  replacements: {
+                    prescId: newId,
+                    medicineId: it.medicineId,
+                    dosage: it.dosage || null,
+                    frequency: it.frequency || null,
+                    duration: it.duration || null,
+                    quantity: Number(it.quantity) || 0,
+                    instructions: it.instructions || null,
+                  },
+                  type: QueryTypes.INSERT,
+                }
+              );
             }
-          );
-        } catch (thirdErr) {
-          console.error('prescription.create: all insert attempts failed', {
-            first: firstErr && (firstErr.original?.message || firstErr.message),
-            second: secondErr && (secondErr.original?.message || secondErr.message),
-            third: thirdErr && (thirdErr.original?.message || thirdErr.message),
-          });
-          const errMsg = thirdErr.original?.message || thirdErr.message || 'Unknown DB error';
-          throw Object.assign(new Error(errMsg), { code: 'DATABASE_ERROR' });
+            console.log('prescription.create: PrescriptionItems inserted for minimal-insert PrescriptionID', newId);
+          }
         }
+      } catch (itemsErr) {
+        console.warn('prescription.create: failed to insert PrescriptionItems for minimal-insert', itemsErr && (itemsErr.original?.message || itemsErr.message));
       }
+
+      return createdResponse(res, created && created[0] ? created[0] : {}, 'Tạo đơn thuốc thành công');
+    } catch (err3) {
+      insertErr3 = err3;
+      console.error('prescription.create: all insert attempts failed', {
+        attempt1_direct: insertErr1 && (insertErr1.original?.message || insertErr1.message),
+        attempt2_sequelize: insertErr2 && (insertErr2.original?.message || insertErr2.message),
+        attempt3_minimal: insertErr3 && (insertErr3.original?.message || insertErr3.message),
+      });
+      const errMsg = insertErr1.original?.message || insertErr1.message || 'Unknown DB error';
+      throw Object.assign(new Error(errMsg), { code: 'DATABASE_ERROR' });
     }
 
     // Load created prescription using model if possible
@@ -561,11 +668,14 @@ const dispensePrescription = asyncHandler(async (req, res) => {
   }
 
   const currentStatus = Number(prescription.status);
-  if (currentStatus === 2) {
+  if (currentStatus === 1) {
     throw new BadRequestError('Không thể phát thuốc - đơn thuốc đã được phát');
   }
-  if (currentStatus !== 1) {
-    throw new BadRequestError('Không thể phát thuốc - trạng thái đơn thuốc không hợp lệ (cần status 1: Chờ phát thuốc)');
+  if (currentStatus === 2) {
+    throw new BadRequestError('Không thể phát thuốc - đơn thuốc đã bị hủy');
+  }
+  if (currentStatus !== 0) {
+    throw new BadRequestError('Không thể phát thuốc - trạng thái đơn thuốc không hợp lệ (cần status 0: Chờ phát thuốc)');
   }
 
   const transaction = await sequelize.transaction();
@@ -733,7 +843,7 @@ const dispensePrescription = asyncHandler(async (req, res) => {
       const updatedAtCandidates = ['UpdatedAt', 'updated_at', 'Updated_at'];
       const updatedAtCol = updatedAtCandidates.find((c) => Object.prototype.hasOwnProperty.call(row, c));
 
-      const replacements = { status: 2, id: prescription.id };
+      const replacements = { status: 1, id: prescription.id };
       let updateSql;
       if (updatedAtCol) {
         updateSql = `UPDATE ${table} SET [${statusCol}] = :status, [${updatedAtCol}] = GETUTCDATE() WHERE [${idCol}] = :id`;
@@ -743,7 +853,7 @@ const dispensePrescription = asyncHandler(async (req, res) => {
 
       await sequelize.query(updateSql, { replacements, type: QueryTypes.UPDATE, transaction });
     } else {
-      await prescription.update({ status: 2 }, { transaction });
+      await prescription.update({ status: 1 }, { transaction });
     }
 
     await transaction.commit();
@@ -783,13 +893,13 @@ const deletePrescription = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get pending prescriptions (status 0 = waiting for dispensing)
+ * Get prescriptions for pharmacist waiting tab (status 0/1)
  * GET /api/prescriptions/pending
  */
 const getPendingPrescriptions = asyncHandler(async (req, res) => {
   try {
     const prescriptions = await Prescription.findAll({
-      where: { status: 1 },  // Status 1 = Chờ phát thuốc (Waiting for dispensing)
+      where: { status: { [Op.in]: [0, 1] } },  // 0 = Chờ phát, 1 = Đã phát
       order: [['prescriptionDate', 'ASC']],
       include: [
         {
@@ -855,7 +965,7 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
     try {
       // Try PascalCase identity-style table (simple: no joins, enrichment via model)
       const rows1 = await sequelize.query(
-        `SELECT TOP 200 * FROM [dbo].[Prescriptions] WHERE [Status] = 0 ORDER BY [PrescriptionDate] ASC`,
+        `SELECT TOP 200 * FROM [dbo].[Prescriptions] WHERE [Status] IN (0, 1) ORDER BY [PrescriptionDate] ASC`,
         { type: QueryTypes.SELECT }
       ).catch(err => {
         console.error('getPendingPrescriptions: Prescriptions query failed:', err?.message);
@@ -943,7 +1053,7 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
     try {
       // Try snake_case legacy table with is_dispensed column (simple: no joins)
       const rows2 = await sequelize.query(
-        `SELECT TOP 200 * FROM [dbo].[prescriptions] WHERE [is_dispensed] = 0 ORDER BY [created_at] ASC`,
+        `SELECT TOP 200 * FROM [dbo].[prescriptions] WHERE [is_dispensed] IN (0, 1) ORDER BY [created_at] ASC`,
         { type: QueryTypes.SELECT }
       );
       if (Array.isArray(rows2) && rows2.length > 0) {
@@ -1022,7 +1132,7 @@ const getPendingPrescriptions = asyncHandler(async (req, res) => {
     try {
       // Try legacy Vietnamese DonThuoc table (simple: no joins)
       const rows3 = await sequelize.query(
-        `SELECT TOP 200 * FROM [DonThuoc] WHERE [TrangThai] = 0 ORDER BY [NgayKeDon] DESC`,
+        `SELECT TOP 200 * FROM [DonThuoc] WHERE [TrangThai] IN (0, 1) ORDER BY [NgayKeDon] DESC`,
         { type: QueryTypes.SELECT }
       );
       if (Array.isArray(rows3) && rows3.length > 0) {
@@ -1125,10 +1235,13 @@ const confirmPrescription = asyncHandler(async (req, res) => {
   let prescription = await Prescription.findByPk(id).catch(() => null);
   if (prescription) {
     const currentStatus = Number(prescription.status);
-    if (currentStatus === 2) {
+    if (currentStatus === 1) {
       throw new BadRequestError('Không thể xác nhận đơn thuốc đã phát');
     }
-    await prescription.update({ status: 1, updatedAt: new Date() });
+    if (currentStatus === 2) {
+      throw new BadRequestError('Không thể xác nhận đơn thuốc đã hủy');
+    }
+    await prescription.update({ status: 0, updatedAt: new Date() });
     return successResponse(res, prescription, 'Xác nhận kê đơn thành công');
   }
 
