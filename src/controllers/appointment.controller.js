@@ -171,6 +171,7 @@ const getAllAppointments = asyncHandler(async (req, res) => {
   });
 });
 
+
 /**
  * Get appointment by ID
  * GET /api/appointments/:id
@@ -554,7 +555,8 @@ const deleteAppointment = asyncHandler(async (req, res) => {
  * GET /api/appointments/today
  */
 const getTodayAppointments = asyncHandler(async (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  // Compute today's date in Vietnam timezone (YYYY-MM-DD)
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
   const { doctorId, status } = req.query;
 
   const where = { appointmentDate: today };
@@ -571,7 +573,7 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
   // Doctors should see:
   // 1. Appointments assigned to them
   // 2. All waiting (status=2) appointments (receptionist check-ins), even if not assigned
-  if (req.user.role === ROLES.DOCTOR) {
+  if (req.user && req.user.role === ROLES.DOCTOR) {
     const waitingCode = labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
     where[Op.or] = [
       { assignedDoctorId: req.user.id },
