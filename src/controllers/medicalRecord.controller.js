@@ -273,6 +273,27 @@ const getAllRecords = asyncHandler(async (req, res) => {
 const getRecordById = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const idText = String(id || '').trim();
+
+  const parseExaminationPk = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    if (/^\d+$/.test(raw)) {
+      const n = Number(raw);
+      return Number.isSafeInteger(n) && n > 0 ? String(n) : null;
+    }
+
+    const codeMatch = /^PK-\d{8}-(\d+)$/i.exec(raw);
+    if (codeMatch) {
+      const n = Number(codeMatch[1]);
+      return Number.isSafeInteger(n) && n > 0 ? String(n) : null;
+    }
+
+    return null;
+  };
+
+  const normalizedPkId = parseExaminationPk(idText);
   const PreferredRecordForGet = (models && models.MedicalExamination) || MedicalRecord;
   if (!PreferredRecordForGet || typeof PreferredRecordForGet.findByPk !== 'function') {
     return successResponse(res, null);
@@ -319,7 +340,7 @@ const getRecordById = asyncHandler(async (req, res) => {
   const pkAttr = (PreferredRecordForGet.primaryKeyAttributes || [])[0];
   const pkTypeKey = pkAttr && rawAttrs[pkAttr] && rawAttrs[pkAttr].type && rawAttrs[pkAttr].type.key;
   const pkIsNumeric = ['INTEGER', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(String(pkTypeKey || '').toUpperCase());
-  const canUsePkLookup = !pkIsNumeric || /^\d+$/.test(idText);
+  const canUsePkLookup = !pkIsNumeric || Boolean(normalizedPkId);
 
   const findByPkWithSafeInclude = async (lookupId) => {
     try {
@@ -344,7 +365,7 @@ const getRecordById = asyncHandler(async (req, res) => {
   let rec;
   if (canUsePkLookup) {
     try {
-      rec = await findByPkWithSafeInclude(idText);
+      rec = await findByPkWithSafeInclude(pkIsNumeric ? normalizedPkId : idText);
     } catch (e) {
       console.error('getRecordById: DB error during PK lookup - message:', e && e.message);
       console.error('getRecordById: DB error during PK lookup - name:', e && e.name);
@@ -359,7 +380,7 @@ const getRecordById = asyncHandler(async (req, res) => {
     try {
       const tmpMatch = /^TMP-([A-Za-z0-9_-]+)-\d+$/.exec(idText);
       const derivedAppointmentId = tmpMatch ? tmpMatch[1] : null;
-      const idAsInt = /^\d+$/.test(idText) ? Number(idText) : null;
+      const idAsInt = normalizedPkId ? Number(normalizedPkId) : null;
       const aptFromPrefixedId = /^APT-(\d+)$/i.test(idText) ? Number(String(idText).replace(/^APT-/i, '')) : null;
       const altOr = [];
       const pushIfAttr = (attr, value) => {

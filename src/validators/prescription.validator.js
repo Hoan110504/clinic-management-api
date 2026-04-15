@@ -33,6 +33,10 @@ const createPrescriptionValidator = [
     .withMessage('Số lượng không được để trống')
     .isInt({ min: 1 })
     .withMessage('Số lượng phải lớn hơn 0'),
+  body('items.*.status')
+    .optional()
+    .isInt({ min: 0, max: 2 })
+    .withMessage('Trạng thái thuốc không hợp lệ (0, 1 hoặc 2)'),
   body('diagnosis')
     .optional()
     .isString()
@@ -51,6 +55,10 @@ const updatePrescriptionValidator = [
     .optional()
     .isArray()
     .withMessage('Danh sách thuốc phải là mảng'),
+  body('items.*.status')
+    .optional()
+    .isInt({ min: 0, max: 2 })
+    .withMessage('Trạng thái thuốc không hợp lệ (0, 1 hoặc 2)'),
   body('notes')
     .optional()
     .isString()

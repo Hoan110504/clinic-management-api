@@ -84,10 +84,11 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
   let count = 0; let rows = [];
 
   try {
-    const result = await Prescription.findAndCountAll({ where, order, limit, offset, include: [
-      { model: Patient, as: 'patient', attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'], required: false },
-      { model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false },
-    ] });
+    const listIncludes = [];
+    if (Patient) listIncludes.push({ model: Patient, as: 'patient', attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'], required: false });
+    if (User) listIncludes.push({ model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false });
+
+    const result = await Prescription.findAndCountAll({ where, order, limit, offset, include: listIncludes });
     ({ count, rows } = result);
   } catch (err) {
     // Log for diagnosis
@@ -177,26 +178,39 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
 const getPrescriptionById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const prescription = await Prescription.findByPk(id, {
-    include: [
-      {
-        model: Patient,
-        as: 'patient',
-        required: false,
-      },
-      {
-        model: User,
-        as: 'doctor',
-        attributes: ['id', 'fullName', 'phone', 'email', 'signature'],
-        required: false,
-      },
-      {
-        model: MedicalRecord,
-        as: 'medicalRecord',
-        required: false,
-      },
-    ],
-  });
+  const includes = [];
+  if (Patient) includes.push({ model: Patient, as: 'patient', required: false });
+  if (User) includes.push({ model: User, as: 'doctor', attributes: ['id', 'fullName', 'phone', 'email', 'signature'], required: false });
+  if (MedicalRecord) includes.push({ model: MedicalRecord, as: 'medicalRecord', required: false });
+
+  let prescription = null;
+  try {
+    prescription = await Prescription.findByPk(id, { include: includes });
+  } catch (dbErr) {
+    console.error('getPrescriptionById: Prescription.findByPk failed', { id, message: dbErr?.message, original: dbErr?.original?.message || dbErr, sql: dbErr?.sql });
+    // Try legacy/raw table fallbacks for deployments with different schemas
+    const candidates = [
+      `SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE [Id] = :id`,
+      `SELECT TOP 1 * FROM [dbo].[Prescriptions] WHERE [PrescriptionID] = :id`,
+      `SELECT TOP 1 * FROM [dbo].[prescriptions] WHERE [id] = :id`,
+      `SELECT TOP 1 * FROM [dbo].[prescriptions] WHERE [prescriptionid] = :id`,
+      `SELECT TOP 1 * FROM [DonThuoc] WHERE [Id] = :id`,
+      `SELECT TOP 1 * FROM [DonThuoc] WHERE [PrescriptionID] = :id`,
+    ];
+
+    for (const sql of candidates) {
+      try {
+        const rows = await sequelize.query(sql, { replacements: { id }, type: QueryTypes.SELECT });
+        if (Array.isArray(rows) && rows.length > 0) {
+          const mapped = mapRawPrescriptionRow(rows[0]);
+          // attach the raw row info to help clients debug if necessary
+          return successResponse(res, mapped);
+        }
+      } catch (e) {
+        console.warn('getPrescriptionById: fallback query failed', { sql, err: e?.message || e });
+      }
+    }
+  }
 
   if (!prescription) {
     throw new NotFoundError('Không tìm thấy đơn thuốc');
@@ -304,7 +318,9 @@ const createPrescription = asyncHandler(async (req, res) => {
     frequency: String(item.frequency || ''),
     duration: Number(item.duration) || 0,
     quantity: Number(item.quantity) || 0,
-    instructions: String(item.instructions || '')
+    instructions: String(item.instructions || ''),
+    // PrescriptionItems.Status mapping: 0=Chờ phát, 1=Đã phát, 2=Đã hủy
+    status: Number(item.status) === 1 ? 1 : (Number(item.status) === 2 ? 2 : 0),
   }));
 
   // Generate prescription ID from code or create new one
@@ -420,8 +436,8 @@ const createPrescription = asyncHandler(async (req, res) => {
         if (Array.isArray(sanitizedItems) && sanitizedItems.length > 0) {
           for (const it of sanitizedItems) {
             await sequelize.query(
-              `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, CreatedAt)
-               VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, GETUTCDATE())`,
+              `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, Status, CreatedAt)
+               VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, :status, GETUTCDATE())`,
               {
                 replacements: {
                   prescId: prescriptionId,
@@ -431,6 +447,7 @@ const createPrescription = asyncHandler(async (req, res) => {
                   duration: it.duration || null,
                   quantity: Number(it.quantity) || 0,
                   instructions: it.instructions || null,
+                  status: Number(it.status) === 1 ? 1 : (Number(it.status) === 2 ? 2 : 0),
                 },
                 type: QueryTypes.INSERT,
               }
@@ -478,6 +495,7 @@ const createPrescription = asyncHandler(async (req, res) => {
               quantityPrescribed: Number(it.quantity) || 0,
               instructions: it.instructions || null,
               price: Number(it.price) || 0,
+              status: Number(it.status) === 1 ? 1 : (Number(it.status) === 2 ? 2 : 0),
             }).catch(() => null);
           }
         } catch (itemsErr) {
@@ -526,8 +544,8 @@ const createPrescription = asyncHandler(async (req, res) => {
           if (newId) {
             for (const it of sanitizedItems) {
               await sequelize.query(
-                `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, CreatedAt)
-                 VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, GETUTCDATE())`,
+                `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, Status, CreatedAt)
+                   VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, :status, GETUTCDATE())`,
                 {
                   replacements: {
                     prescId: newId,
@@ -537,6 +555,7 @@ const createPrescription = asyncHandler(async (req, res) => {
                     duration: it.duration || null,
                     quantity: Number(it.quantity) || 0,
                     instructions: it.instructions || null,
+                      status: Number(it.status) === 1 ? 1 : (Number(it.status) === 2 ? 2 : 0),
                   },
                   type: QueryTypes.INSERT,
                 }
@@ -591,7 +610,7 @@ const createPrescription = asyncHandler(async (req, res) => {
  */
 const updatePrescription = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const updateData = req.body;
+  const updateData = { ...(req.body || {}) };
 
   const prescription = await Prescription.findByPk(id);
   if (!prescription) {
@@ -603,7 +622,63 @@ const updatePrescription = asyncHandler(async (req, res) => {
     throw new BadRequestError('Không thể cập nhật đơn thuốc đã phát hoặc đã hủy');
   }
 
+  if (Array.isArray(updateData.items)) {
+    updateData.items = updateData.items.map((item) => ({
+      medicineId: item?.medicineId,
+      medicineName: item?.medicineName || '',
+      unit: item?.unit || '',
+      price: Number(item?.price) || 0,
+      dosage: String(item?.dosage || ''),
+      frequency: String(item?.frequency || ''),
+      duration: Number(item?.duration) || 0,
+      quantity: Number(item?.quantity) || 0,
+      instructions: String(item?.instructions || ''),
+      status: Number(item?.status) === 1 ? 1 : (Number(item?.status) === 2 ? 2 : 0),
+    }));
+  }
+
   await prescription.update(updateData);
+
+  // Keep dbo.PrescriptionItems synchronized with updated item statuses/details.
+  if (Array.isArray(updateData.items)) {
+    try {
+      const tx = await sequelize.transaction();
+      try {
+        await sequelize.query(
+          `DELETE FROM [dbo].[PrescriptionItems] WHERE [PrescriptionID] = :prescId`,
+          { replacements: { prescId: id }, type: QueryTypes.DELETE, transaction: tx }
+        );
+
+        for (const it of updateData.items) {
+          await sequelize.query(
+            `INSERT INTO [dbo].[PrescriptionItems] (PrescriptionID, MedicineId, Dosage, Frequency, Duration, QuantityPrescribed, Instructions, Status, CreatedAt)
+             VALUES (:prescId, :medicineId, :dosage, :frequency, :duration, :quantity, :instructions, :status, GETUTCDATE())`,
+            {
+              replacements: {
+                prescId: id,
+                medicineId: it.medicineId,
+                dosage: it.dosage || null,
+                frequency: it.frequency || null,
+                duration: it.duration || null,
+                quantity: Number(it.quantity) || 0,
+                instructions: it.instructions || null,
+                status: Number(it.status) === 1 ? 1 : (Number(it.status) === 2 ? 2 : 0),
+              },
+              type: QueryTypes.INSERT,
+              transaction: tx,
+            }
+          );
+        }
+
+        await tx.commit();
+      } catch (syncErr) {
+        try { await tx.rollback(); } catch (rbErr) { /* ignore */ }
+        console.warn('updatePrescription: failed to sync PrescriptionItems, keeping Prescriptions.Items updated only', syncErr?.message || syncErr);
+      }
+    } catch (txErr) {
+      console.warn('updatePrescription: transaction init failed for PrescriptionItems sync', txErr?.message || txErr);
+    }
+  }
 
   return successResponse(res, prescription, 'Cập nhật đơn thuốc thành công');
 });
@@ -700,9 +775,18 @@ const dispensePrescription = asyncHandler(async (req, res) => {
       throw new BadRequestError('Đơn thuốc không có thuốc để phát');
     }
 
+    const activePrescriptionItems = prescriptionItems.filter((item) => {
+      const st = Number(item?.status ?? item?.Status ?? 0);
+      // Dispense pending items only (0 = Chờ phát)
+      return st === 0;
+    });
+    if (activePrescriptionItems.length === 0) {
+      throw new BadRequestError('Đơn thuốc không có thuốc đang được chọn để phát');
+    }
+
     const performedByUserId = req.user?.id ? String(req.user.id) : null;
 
-    for (const item of prescriptionItems) {
+    for (const item of activePrescriptionItems) {
       const medicineId = Number(item.medicineId);
       const quantityToDispense = Number(item.quantityPrescribed || 0);
 
@@ -824,6 +908,17 @@ const dispensePrescription = asyncHandler(async (req, res) => {
       }
     }
 
+    // Update all PrescriptionItems Status to 1 (Đã phát thuốc)
+    try {
+      await PrescriptionItem.update(
+        { status: 1 },
+        { where: { prescriptionId: prescription.id }, transaction }
+      );
+    } catch (updateItemErr) {
+      console.error('[dispensePrescription] Failed to update PrescriptionItems status:', updateItemErr?.message);
+      throw updateItemErr;
+    }
+
     if (prescription && prescription.isRaw) {
       // Update legacy/raw prescription table using detected columns
       const row = prescription.rawRow || {};
@@ -898,23 +993,14 @@ const deletePrescription = asyncHandler(async (req, res) => {
  */
 const getPendingPrescriptions = asyncHandler(async (req, res) => {
   try {
+    const pendingIncludes = [];
+    if (Patient) pendingIncludes.push({ model: Patient, as: 'patient', attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'], required: false });
+    if (User) pendingIncludes.push({ model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false });
+
     const prescriptions = await Prescription.findAll({
       where: { status: { [Op.in]: [0, 1] } },  // 0 = Chờ phát, 1 = Đã phát
       order: [['prescriptionDate', 'ASC']],
-      include: [
-        {
-          model: Patient,
-          as: 'patient',
-          attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
-          required: false,
-        },
-        {
-          model: User,
-          as: 'doctor',
-          attributes: ['id', 'fullName'],
-          required: false,
-        },
-      ],
+      include: pendingIncludes,
     });
 
     try {
@@ -1241,6 +1327,7 @@ const confirmPrescription = asyncHandler(async (req, res) => {
     if (currentStatus === 2) {
       throw new BadRequestError('Không thể xác nhận đơn thuốc đã hủy');
     }
+    await PrescriptionItem.update({ status: 0 }, { where: { prescriptionId: prescription.id } });
     await prescription.update({ status: 0, updatedAt: new Date() });
     return successResponse(res, prescription, 'Xác nhận kê đơn thành công');
   }
@@ -1265,6 +1352,10 @@ const confirmPrescription = asyncHandler(async (req, res) => {
 
     await sequelize.query(
       `UPDATE [dbo].[Prescriptions] SET [Status] = 0, [UpdatedAt] = GETUTCDATE() WHERE [PrescriptionID] = :id`,
+      { replacements: { id }, type: QueryTypes.UPDATE }
+    );
+    await sequelize.query(
+      `UPDATE [dbo].[PrescriptionItems] SET [Status] = 0 WHERE [PrescriptionID] = :id`,
       { replacements: { id }, type: QueryTypes.UPDATE }
     );
 
@@ -1304,6 +1395,7 @@ const completePrescription = asyncHandler(async (req, res) => {
     throw new BadRequestError('Trạng thái đơn thuốc không hợp lệ');
   }
 
+  await PrescriptionItem.update({ status: 1 }, { where: { prescriptionId: prescription.id } });
   await prescription.update({ status: 1, updatedAt: new Date() });
 
   return successResponse(res, prescription, 'Xác nhận phát thuốc thành công');
@@ -1328,6 +1420,7 @@ const cancelPrescription = asyncHandler(async (req, res) => {
   }
 
   // Update status to 2 (cancelled)
+  await PrescriptionItem.update({ status: 2 }, { where: { prescriptionId: prescription.id } });
   await prescription.update({ 
     status: 2,
     notes: (prescription.notes ? prescription.notes + '\n' : '') + `Hủy: ${reason || 'No reason provided'}`

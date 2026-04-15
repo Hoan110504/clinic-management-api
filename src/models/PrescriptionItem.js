@@ -62,6 +62,13 @@ export default (sequelize) => {
       type: DataTypes.STRING(1000),
       allowNull: true,
       field: 'Instructions'
+    },
+
+    status: {
+      type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 0,
+      field: 'Status'
     }
   }, {
     tableName: 'PrescriptionItems',
