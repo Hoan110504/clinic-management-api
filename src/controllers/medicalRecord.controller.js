@@ -854,6 +854,8 @@ const completeExamination = asyncHandler(async (req, res) => {
     // Normalize updates for MedicalExamination table
     let updates = {};
     if (models && models.MedicalExamination && PreferredRecordForComplete === models.MedicalExamination) {
+      // Mark examination as completed (Status = 1)
+      updates.Status = 1;
       if (payload.symptoms) updates.Symptoms = payload.symptoms;
       if (payload.diagnosis) updates.Diagnosis = payload.diagnosis;
       if (payload.icdCode || payload.icd10Code || payload.ICD10Code) updates.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
@@ -943,6 +945,32 @@ const cancelExamination = asyncHandler(async (req, res) => {
   try {
     // update medical examination status to '2' (cancelled)
     await rec.update({ Status: 2 });
+
+    // cancel related prescriptions and prescription items (set to 2)
+    try {
+      const Prescription = models && models.Prescription;
+      const PrescriptionItem = models && models.PrescriptionItem;
+      if (Prescription && PrescriptionItem) {
+        const prescriptions = await Prescription.findAll({ where: { examinationId: examId } });
+        for (const pres of prescriptions || []) {
+          try {
+            // Cancel all prescription items that are not already cancelled (status != 2)
+            const presId = pres.get ? pres.get('id') : (pres.id || pres.Id);
+            await PrescriptionItem.update(
+              { status: 2 },
+              { where: { prescriptionId: presId, status: { [Op.ne]: 2 } } }
+            );
+            // Cancel the prescription itself
+            try { await pres.update({ status: 2 }); } catch (e) { /* ignore */ }
+          } catch (e) {
+            const presId = pres.get ? pres.get('id') : (pres.id || pres.Id);
+            console.warn('cancelExamination: failed updating PrescriptionItem for Prescription', presId, e?.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('cancelExamination: prescription cancellation step failed', e?.message);
+    }
 
     // cancel related lab order items (set to 3) and mark lab orders cancelled
     try {
