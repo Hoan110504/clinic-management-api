@@ -10,12 +10,14 @@
  * @param {string} message - Success message
  * @param {number} statusCode - HTTP status code
  */
+import { formatToVietnamISOString } from './timezone.js';
+
 const successResponse = (res, data = null, message = 'Thành công', statusCode = 200) => {
   const response = {
     success: true,
     message,
     data,
-    timestamp: new Date().toISOString(),
+    timestamp: formatToVietnamISOString(),
   };
 
   return res.status(statusCode).json(response);
@@ -65,7 +67,7 @@ const paginatedResponse = (res, {
       hasNextPage: page < totalPages,
       hasPrevPage: page > 1,
     },
-    timestamp: new Date().toISOString(),
+    timestamp: formatToVietnamISOString(),
   };
 
   return res.status(200).json(response);
@@ -86,13 +88,13 @@ const errorResponse = (
   code = 'INTERNAL_ERROR',
   details = null
 ) => {
-  const response = {
+    const response = {
     success: false,
     error: {
       code,
       message,
       statusCode,
-      timestamp: new Date().toISOString(),
+      timestamp: formatToVietnamISOString(),
     },
   };
 

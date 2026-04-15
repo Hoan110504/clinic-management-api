@@ -116,7 +116,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const formatDate = (date) => {
   if (!date) return null;
   const d = new Date(date);
-  return d.toISOString().split('T')[0];
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const map = {};
+  parts.forEach(p => { map[p.type] = p.value; });
+  return `${map.year}-${map.month}-${map.day}`;
 };
 
 /**

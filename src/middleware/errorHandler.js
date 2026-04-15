@@ -5,6 +5,7 @@
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
+import { formatToVietnamISOString } from '../utils/timezone.js';
 
 /**
  * Xử lý 404 - Không tìm thấy endpoint
@@ -17,7 +18,7 @@ const notFoundHandler = (req, res, next) => {
       code: 'NOT_FOUND',
       message: `Không tìm thấy endpoint: ${req.method} ${req.originalUrl}`,
       statusCode: 404,
-      timestamp: new Date().toISOString(),
+      timestamp: formatToVietnamISOString(),
     },
   });
 };
@@ -159,7 +160,7 @@ const errorHandler = (err, req, res, next) => {
       code,
       message,
       statusCode,
-      timestamp: new Date().toISOString(),
+      timestamp: formatToVietnamISOString(),
     },
   };
 

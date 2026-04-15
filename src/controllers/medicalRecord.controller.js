@@ -9,6 +9,7 @@ import { successResponse, createdResponse, paginatedResponse, errorResponse } fr
 import { APPOINTMENT_STATUS, MEDICAL_RECORD_STATUS } from '../config/constants.js';
 import { labelToCode, codeToLabel, normalizeStatus } from '../utils/statusHelpers.js';
 import { parsePagination, parseSort, buildWhereClause } from '../utils/helpers.js';
+import { formatToVietnamISOString } from '../utils/timezone.js';
 
 // Helper: calculate BMI from weight (kg) and height (m or cm). Returns null if inputs invalid.
 function calculateBMI(weight, height) {
@@ -47,7 +48,7 @@ function normalizeDateOnly(value) {
 
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString().slice(0, 10);
+    return formatToVietnamISOString(parsed).slice(0, 10);
   }
   return null;
 }
@@ -187,6 +188,46 @@ const getTodayQueue = asyncHandler(async (req, res) => {
       status: a.status,
       raw: a,
     });
+  }
+
+  // 4) Load today's COMPLETED appointments (for UI count display)
+  try {
+    const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED);
+    if (completedCode != null) {
+      const completedApptWhere = {
+        appointmentDate: { [Op.gte]: today, [Op.lt]: tomorrow },
+        status: completedCode,
+      };
+      if (req.user && req.user.role === 'doctor') {
+        completedApptWhere.assignedDoctorId = req.user.id;
+      }
+      const completedAppts = await Appointment.findAll({
+        where: completedApptWhere,
+        include: [
+          { model: Patient, as: 'patient', required: false },
+          { model: User, as: 'assignedDoctor', required: false },
+        ],
+        order: [['timeSlot', 'ASC']],
+      });
+      const completedApptList = (completedAppts || []).map(a => (a && a.get ? a.get({ plain: true }) : a));
+      for (const a of completedApptList) {
+        merged.push({
+          id: `APT-${a.id}`,
+          _source: 'appointment',
+          _isCompleted: true,
+          appointmentRef: a,
+          patientId: a.patientId || (a.patient && a.patient.id) || null,
+          patientName: a.patientName || (a.patient && (a.patient.fullName || a.patient.HoTen)) || null,
+          purpose: a.symptoms || a.purpose || 'Khám theo lịch hẹn',
+          timeSlot: a.timeSlot,
+          createdAt: a.createdAt,
+          status: a.status,
+          raw: a,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('medicalRecord.controller.getTodayQueue: failed to load completed Appointment rows', e?.message || e);
   }
 
   return successResponse(res, merged);
@@ -663,7 +704,7 @@ const createRecord = asyncHandler(async (req, res) => {
   const syntheticId = `REC${Date.now()}`;
   // ensure fallback also includes a generated maPhieuKham for UI display
   const fallbackCode = payload.maPhieuKham || payload.visitCode || payload.recordCode || generateVisitCode();
-  const created = { id: syntheticId, maPhieuKham: fallbackCode, ...payload, createdAt: new Date().toISOString() };
+  const created = { id: syntheticId, maPhieuKham: fallbackCode, ...payload, createdAt: formatToVietnamISOString() };
   return createdResponse(res, created, 'Đã tạo hồ sơ khám (tạm, không lưu DB)');
 });
 
@@ -794,7 +835,7 @@ const updateRecord = asyncHandler(async (req, res) => {
   if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
     payload.maPhieuKham = generateVisitCode();
   }
-  const updated = { id, ...payload, updatedAt: new Date().toISOString() };
+  const updated = { id, ...payload, updatedAt: formatToVietnamISOString() };
   return successResponse(res, updated);
 });
 
@@ -830,7 +871,7 @@ const startExamination = asyncHandler(async (req, res) => {
     return successResponse(res, plain);
   }
   // Fallback: echo object with status
-  const out = { id, status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: new Date().toISOString(), doctorId: actorId };
+  const out = { id, status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: formatToVietnamISOString(), doctorId: actorId };
   return successResponse(res, out);
 });
 
@@ -896,7 +937,7 @@ const completeExamination = asyncHandler(async (req, res) => {
         nextAppointment: payload.nextAppointment || rec.nextAppointment,
         vitalSigns: payload.vitalSigns || rec.vitalSigns,
         status: MEDICAL_RECORD_STATUS.COMPLETED,
-        completedAt: new Date(),
+        completedAt: formatToVietnamISOString(),
         confirmedBy: actorId,
       };
     }
@@ -916,7 +957,7 @@ const completeExamination = asyncHandler(async (req, res) => {
     id,
     ...payload,
     status: MEDICAL_RECORD_STATUS.COMPLETED,
-    completedAt: new Date().toISOString(),
+    completedAt: formatToVietnamISOString(),
     confirmedBy: actorId,
   };
   return successResponse(res, out);

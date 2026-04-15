@@ -20,12 +20,14 @@ import { QueryTypes } from 'sequelize';
 
 const router = express.Router();
 
+import { formatToVietnamISOString } from '../utils/timezone.js';
+
 // Health check route
 router.get('/health', (req, res) => {
   res.json({
     success: true,
     message: 'API is running',
-    timestamp: new Date().toISOString(),
+    timestamp: formatToVietnamISOString(),
     environment: process.env.NODE_ENV,
   });
 });

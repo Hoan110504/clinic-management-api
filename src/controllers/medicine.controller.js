@@ -15,6 +15,7 @@ import {
 } from '../utils/response.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
+import { formatToVietnamISOString } from '../utils/timezone.js';
 
 const normalizeIdKey = (id) => String(id || '').trim().toLowerCase();
 
@@ -438,12 +439,13 @@ const adjustInventory = asyncHandler(async (req, res) => {
   // Determine or create a batch (MaLoThuoc) to associate the transaction with.
   let batch = null;
   try {
-    // Helper to safely parse dates
+    // Helper to safely parse dates (Vietnam timezone)
     const parseDateSafe = (v) => {
       if (!v) return null;
       const d = new Date(v);
       if (!Number.isFinite(d.getTime())) return null;
-      return d.toISOString().slice(0, 10);
+      const formatted = formatToVietnamISOString(d);
+      return formatted ? formatted.slice(0, 10) : null;
     };
 
     // IMPORT: find or create target batch, increment its QuantityInStock

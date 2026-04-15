@@ -6,6 +6,7 @@ import { Op, QueryTypes } from 'sequelize';
 import { Prescription, Patient, User, MedicalRecord, Medicine, InventoryTransaction, PrescriptionItem, MedicineBatch } from '../models/index.js';
 import { sequelize } from '../models/database.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
+import { formatToVietnamISOString } from '../utils/timezone.js';
 import {
   successResponse,
   createdResponse,
@@ -38,8 +39,8 @@ const mapRawPrescriptionRow = (r) => {
   const rawDate = safe(['PrescriptionDate', 'prescription_date', 'NgayKeDon', 'CreatedAt', 'created_at']);
   let prescriptionDate = null;
   try {
-    if (rawDate instanceof Date) prescriptionDate = rawDate.toISOString();
-    else if (typeof rawDate === 'number' && !Number.isNaN(rawDate)) prescriptionDate = new Date(rawDate).toISOString();
+    if (rawDate instanceof Date) prescriptionDate = formatToVietnamISOString(rawDate);
+    else if (typeof rawDate === 'number' && !Number.isNaN(rawDate)) prescriptionDate = formatToVietnamISOString(new Date(rawDate));
     else if (typeof rawDate === 'string' && rawDate.trim()) prescriptionDate = rawDate;
   } catch (e) { prescriptionDate = null; }
 
@@ -370,7 +371,7 @@ const createPrescription = asyncHandler(async (req, res) => {
     try {
       const safePayloadString = JSON.stringify(
         payload,
-        (key, value) => (value instanceof Date ? value.toISOString() : value),
+        (key, value) => (value instanceof Date ? formatToVietnamISOString(value) : value),
         2
       );
       console.log('Creating prescription - full payload:', safePayloadString);

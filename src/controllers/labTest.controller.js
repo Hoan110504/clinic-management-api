@@ -12,6 +12,7 @@ import { Op } from 'sequelize';
 import { Appointment, Patient, User, sequelize } from '../models/index.js';
 import models from '../models/index.js';
 import { asyncHandler, parsePagination } from '../utils/helpers.js';
+import { formatToVietnamISOString } from '../utils/timezone.js';
 import {
   successResponse,
   createdResponse,
@@ -1024,7 +1025,7 @@ const completeLabTest = asyncHandler(async (req, res) => {
     notes,
     conclusion,
     images,
-    resultDate: new Date().toISOString(),
+    resultDate: formatToVietnamISOString(),
   };
 
   const row = await updateLabTestCore({ itemId, payload, user: req.user });
@@ -1045,7 +1046,7 @@ const returnLabTest = asyncHandler(async (req, res) => {
 
   ensureMutatePermission(req.user, item?.LabOrder?.DoctorID);
 
-  const nowIso = new Date().toISOString();
+  const nowIso = formatToVietnamISOString();
   await item.update({ Status: LAB_ITEM_STATUS.COMPLETED });
 
   const existing = await LabResult.findOne({
@@ -1114,10 +1115,10 @@ const deleteLabTestCore = async ({ itemId, user }) => {
 
   ensureMutatePermission(user, item?.LabOrder?.DoctorID);
 
-  const noteValue = buildMetaNote(item.Note, {
+    const noteValue = buildMetaNote(item.Note, {
     cancelReason: 'Cancelled by delete action',
     canceledBy: user?.fullName || null,
-    canceledAt: new Date().toISOString(),
+    canceledAt: formatToVietnamISOString(),
   });
 
   await item.update({
