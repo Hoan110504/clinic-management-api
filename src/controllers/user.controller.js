@@ -80,7 +80,7 @@ const getAllUsers = asyncHandler(async (req, res) => {
   }
 
   // Parse sort
-  const order = parseSort(sort, ['createdAt', 'fullName', 'username', 'role']);
+  const order = parseSort(sort, ['created_at', 'full_name', 'username', 'role']);
 
   // Include Patient association for patients to get patientCode
   const include = [];

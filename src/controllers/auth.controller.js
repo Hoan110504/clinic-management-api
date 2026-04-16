@@ -129,6 +129,33 @@ const login = asyncHandler(async (req, res) => {
     }, 'Bạn cần đổi mật khẩu trước khi tiếp tục');
   }
 
+  // Check for missing required profile fields on first login (for patients)
+  if (user.role === ROLES.PATIENT || (!user.role && user.VaiTro === 5)) {
+    const missing = [];
+    const dobAttr = getAttr(User, ['dateOfBirth', 'date_of_birth', 'NgaySinh']);
+    const genderAttr = getAttr(User, ['gender', 'gioi_tinh', 'Gender']);
+    const addressAttr = getAttr(User, ['address', 'dia_chi', 'Address']);
+    const idNumAttr = getAttr(User, ['idNumber', 'id_number', 'cccd', 'cmnd']);
+
+    if (!dobAttr || !user[dobAttr]) missing.push('date_of_birth');
+    if (!genderAttr || !user[genderAttr]) missing.push('gender');
+    if (!addressAttr || !user[addressAttr]) missing.push('address');
+    if (!idNumAttr || !user[idNumAttr]) missing.push('id_number');
+
+    if (missing.length > 0) {
+      // Do not issue tokens; track login attempt for profile completion
+      const lastLoginAttr = getAttr(User, ['lastLoginAt', 'last_login_at', 'NgayCapNhat']);
+      if (lastLoginAttr) user[lastLoginAttr] = new Date();
+      try { await user.save(); } catch (e) { /* ignore save errors */ }
+
+      return successResponse(res, {
+        user: { ...user.toJSON() },
+        mustCompleteProfile: true,
+        missingFields: missing,
+      }, 'Vui lòng hoàn thiện hồ sơ trước khi tiếp tục');
+    }
+  }
+
   const { accessToken, refreshToken } = generateTokens(user);
 
   // Lưu refresh token vào DB để kiểm tra khi refresh
@@ -435,7 +462,20 @@ const completeChangePassword = asyncHandler(async (req, res) => {
  * PUT /api/auth/profile
  */
 const updateProfile = asyncHandler(async (req, res) => {
-  const { fullName, phone, email, address, signature } = req.body;
+  const {
+    fullName,
+    phone,
+    email,
+    address,
+    signature,
+    medicalHistory,
+    medical_history,
+    allergies,
+    emergencyContact,
+    emergency_contact,
+    emergencyPhone,
+    emergency_phone,
+  } = req.body;
   // Normalize email: convert empty string or whitespace-only to empty string
   const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
   const user = req.user;
@@ -457,12 +497,35 @@ const updateProfile = asyncHandler(async (req, res) => {
     signature: signature || user.signature,
   });
 
-  // Update patient record if exists
+  // Update patient record if exists (include medical history and allergies)
+  let updatedPatient = null;
   if (user.role === ROLES.PATIENT) {
-    await Patient.update(
-      { fullName, phone, email: normalizedEmail ?? user.email, address },
-      { where: { userId: user.id } }
-    );
+    const patientUpdate = {
+      fullName: fullName || undefined,
+      phone: phone || undefined,
+      email: normalizedEmail ?? undefined,
+      address: address || undefined,
+      // Use model attribute names (camelCase) so Sequelize maps to DB fields
+      medicalHistory: medicalHistory || medical_history || undefined,
+      allergies: allergies || undefined,
+      emergencyContact: emergencyContact || emergency_contact || undefined,
+      emergencyPhone: emergencyPhone || emergency_phone || undefined,
+    };
+    // Remove undefined keys to avoid overwriting with null
+    Object.keys(patientUpdate).forEach((k) => patientUpdate[k] === undefined && delete patientUpdate[k]);
+
+    try {
+      await Patient.update(patientUpdate, { where: { userId: user.id } });
+      updatedPatient = await Patient.findOne({ where: { userId: user.id } });
+    } catch (e) {
+      // ignore patient update errors but log for debugging
+      console.warn('patient update failed', e.message || e);
+    }
+  }
+
+  // Return merged user + patient info when available so frontend can update UI
+  if (updatedPatient) {
+    return successResponse(res, { ...user.toJSON(), ...updatedPatient.toJSON() }, 'Cập nhật hồ sơ thành công');
   }
 
   return successResponse(res, user.toJSON(), 'Cập nhật hồ sơ thành công');
@@ -570,6 +633,77 @@ const resetPassword = asyncHandler(async (req, res) => {
   return successResponse(res, null, 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.');
 });
 
+/**
+ * Complete profile on first login
+ * POST /api/auth/complete-profile
+ * Public endpoint - allows completing profile without full auth token
+ */
+const completeProfile = asyncHandler(async (req, res) => {
+  const { userId, dateOfBirth, gender, address, idNumber } = req.body;
+
+  if (!userId) {
+    throw new BadRequestError('userId không được cung cấp');
+  }
+
+  // Find user without auth requirement (public endpoint but needs userId validation)
+  const user = await User.findByPk(userId);
+
+  if (!user) {
+    throw new NotFoundError('Người dùng không tồn tại');
+  }
+
+  // Update user with provided fields
+  const updateData = {};
+  if (dateOfBirth) updateData.dateOfBirth = dateOfBirth;
+  if (gender) updateData.gender = gender;
+  if (address) updateData.address = address;
+  if (idNumber) updateData.idNumber = idNumber;
+
+  await user.update(updateData);
+
+  // Update patient record if user is patient
+  if (user.role === ROLES.PATIENT) {
+    await Patient.update(
+      {
+        dateOfBirth: dateOfBirth || undefined,
+        gender: gender || undefined,
+        address: address || undefined,
+        idNumber: idNumber || undefined,
+      },
+      { where: { userId: user.id } }
+    ).catch(() => {
+      // Ignore patient update errors
+    });
+  }
+
+  // Generate tokens to allow login to proceed
+  const { accessToken, refreshToken } = generateTokens(user);
+
+  // Save refresh token
+  user.refreshToken = refreshToken;
+  await user.save();
+
+  // Get patient info if patient
+  let patientInfo = null;
+  if (user.role === ROLES.PATIENT) {
+    const patientWhere = { userId: user.id };
+    try {
+      patientInfo = await Patient.findOne({ where: patientWhere });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return successResponse(res, {
+    user: {
+      ...user.toJSON(),
+      patientId: patientInfo?.id,
+    },
+    accessToken,
+    refreshToken,
+  }, 'Hồ sơ đã được hoàn thiện');
+});
+
 export {
   login,
   register,
@@ -581,4 +715,5 @@ export {
   forgotPassword,
   resetPassword,
   completeChangePassword,
+  completeProfile,
 };

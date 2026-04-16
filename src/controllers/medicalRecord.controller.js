@@ -74,94 +74,121 @@ const updateAppointmentStatusSafely = async (appointmentId, statusCode) => {
   }
 };
 
+// Helper: Calculate today's date range in Vietnam timezone (UTC+7)
+function getVietnamTodayRange() {
+  const now = new Date();
+  
+  // Get today's date in VN timezone using Intl
+  const vnDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const [year, month, day] = vnDateStr.split('-').map(Number);
+  
+  // Create UTC date for start of that calendar day
+  // Then subtract 7 hours to get UTC time when VN was at midnight
+  // (because 00:00 VN = 17:00 UTC on previous day)
+  const startOfDayUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+  const todayUTC = new Date(startOfDayUTC.getTime() - (7 * 60 * 60 * 1000));
+  
+  // Same for tomorrow
+  const startOfTomorrowUTC = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0));
+  const tomorrowUTC = new Date(startOfTomorrowUTC.getTime() - (7 * 60 * 60 * 1000));
+  
+  console.log(`[Vietnam Timezone] Today's VN calendar day: ${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+  console.log(`[UTC Query Range] Start: ${todayUTC.toISOString()}, End: ${tomorrowUTC.toISOString()}`);
+  
+  return { start: todayUTC, end: tomorrowUTC };
+}
+
+function mapMedicalExamStatus(rawStatus) {
+  if (rawStatus === null || rawStatus === undefined || rawStatus === '') {
+    return { statusCode: null, statusLabel: null };
+  }
+
+  const parsed = Number(rawStatus);
+  if (Number.isFinite(parsed)) {
+    if (parsed === 0) return { statusCode: 0, statusLabel: 'Chờ khám' };
+    if (parsed === 1) return { statusCode: 1, statusLabel: 'Hoàn thành' };
+    if (parsed === 2) return { statusCode: 2, statusLabel: 'Đã hủy' };
+    return { statusCode: parsed, statusLabel: String(rawStatus) };
+  }
+
+  const s = String(rawStatus).toLowerCase();
+  if (s.includes('hoàn thành') || s.includes('hoan thanh') || s.includes('complete')) {
+    return { statusCode: 1, statusLabel: 'Hoàn thành' };
+  }
+  if (s.includes('hủy') || s.includes('huy') || s.includes('cancel')) {
+    return { statusCode: 2, statusLabel: 'Đã hủy' };
+  }
+  if (s.includes('đang khám') || s.includes('dang kham') || s.includes('in progress')) {
+    return { statusCode: 0, statusLabel: 'Đang khám' };
+  }
+  if (s.includes('chờ') || s.includes('cho') || s.includes('wait')) {
+    return { statusCode: 0, statusLabel: 'Chờ khám' };
+  }
+
+  return { statusCode: null, statusLabel: String(rawStatus) };
+}
+
 const getTodayQueue = asyncHandler(async (req, res) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // Get today's date range in Vietnam timezone (UTC+7)
+  const { start: today, end: tomorrow } = getVietnamTodayRange();
 
-  // 1) Try to load medical records that indicate waiting/in-progress for today (if model available)
+  // Source queue strictly from MedicalExaminations created today (VN timezone)
   let records = [];
-  // prefer a dedicated MedicalExamination model if available in models
-  const PreferredRecord = (models && models.MedicalExamination) || MedicalRecord;
+  const PreferredRecord = models && models.MedicalExamination;
+  if (!PreferredRecord || typeof PreferredRecord.findAll !== 'function') {
+    console.warn('medicalRecord.controller.getTodayQueue: MedicalExamination model unavailable');
+    return successResponse(res, []);
+  }
+
   try {
-    if (PreferredRecord && typeof PreferredRecord.findAll === 'function') {
-      // Build where clause: always filter by createdAt (uses model's createdAt mapping)
-      const whereClause = { createdAt: { [Op.gte]: today, [Op.lt]: tomorrow } };
-      // Only add status filter when the model actually exposes a `status` attribute/column
-      const hasStatusAttr = PreferredRecord.rawAttributes && Object.prototype.hasOwnProperty.call(PreferredRecord.rawAttributes, 'status');
-      if (hasStatusAttr) {
-        whereClause.status = { [Op.in]: [MEDICAL_RECORD_STATUS.WAITING, MEDICAL_RECORD_STATUS.IN_PROGRESS] };
-      }
+    // Determine the actual attribute name for createdAt (legacy tables may use 'CreatedAt')
+    const preferredRawAttrs = PreferredRecord.rawAttributes || {};
+    const createdAtAttr = Object.prototype.hasOwnProperty.call(preferredRawAttrs, 'createdAt')
+      ? 'createdAt'
+      : (Object.prototype.hasOwnProperty.call(preferredRawAttrs, 'CreatedAt') ? 'CreatedAt' : 'createdAt');
 
-      // Use the exact Sequelize model instances from the PreferredRecord's sequelize
-      const sequelizeModelsForPreferred = (PreferredRecord && PreferredRecord.sequelize && PreferredRecord.sequelize.models) ? PreferredRecord.sequelize.models : (models || {});
-      const PatientModelForPreferred = sequelizeModelsForPreferred.Patient || sequelizeModelsForPreferred.BenhNhan || Patient;
-      const UserModelForPreferred = sequelizeModelsForPreferred.User || sequelizeModelsForPreferred.NguoiDung || User;
+    // Build where clause using the model's createdAt attribute name
+    const whereClause = { [createdAtAttr]: { [Op.gte]: today, [Op.lt]: tomorrow } };
 
-      records = await PreferredRecord.findAll({
-        where: whereClause,
-        include: [
-          { model: PatientModelForPreferred, as: 'patient', required: false },
-          { model: UserModelForPreferred, as: 'doctor', required: false },
-        ],
-        order: [['createdAt', 'ASC']],
-      });
-      // normalize
-      records = (records || []).map(r => (r && r.get ? r.get({ plain: true }) : r));
-    }
+    // Use the exact Sequelize model instances from the PreferredRecord's sequelize
+    const sequelizeModelsForPreferred = (PreferredRecord && PreferredRecord.sequelize && PreferredRecord.sequelize.models) ? PreferredRecord.sequelize.models : (models || {});
+    const PatientModelForPreferred = sequelizeModelsForPreferred.Patient || sequelizeModelsForPreferred.BenhNhan || Patient;
+    const UserModelForPreferred = sequelizeModelsForPreferred.User || sequelizeModelsForPreferred.NguoiDung || User;
+
+    console.log('medicalRecord.controller.getTodayQueue: querying PreferredRecord with createdAtAttr=', createdAtAttr, 'where=', whereClause);
+    records = await PreferredRecord.findAll({
+      where: whereClause,
+      include: [
+        { model: PatientModelForPreferred, as: 'patient', required: false },
+        { model: UserModelForPreferred, as: 'doctor', required: false },
+      ],
+      order: [[createdAtAttr, 'ASC']],
+    });
+    // normalize
+    records = (records || []).map(r => (r && r.get ? r.get({ plain: true }) : r));
+    console.log('medicalRecord.controller.getTodayQueue: PreferredRecord returned', (records || []).length, 'rows');
   } catch (e) {
-    console.warn('medicalRecord.controller.getTodayQueue: failed to query PreferredRecord, falling back to appointments only', e?.message || e);
+    console.warn('medicalRecord.controller.getTodayQueue: failed to query MedicalExaminations', e?.message || e);
     records = [];
   }
 
-  // 2) Load today's appointments (scheduled/confirmed/waiting)
-  const notInStatuses = [];
-  const cancelledCode = labelToCode(APPOINTMENT_STATUS.CANCELLED);
-  const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED);
-  if (cancelledCode != null) notInStatuses.push(cancelledCode);
-  if (completedCode != null) notInStatuses.push(completedCode);
-
-  const apptWhere = {
-    appointmentDate: { [Op.gte]: today, [Op.lt]: tomorrow },
-    status: { [Op.notIn]: notInStatuses.length ? notInStatuses : [APPOINTMENT_STATUS.CANCELLED, APPOINTMENT_STATUS.COMPLETED] },
-  };
-  // If doctor role, scope to that doctor
-  if (req.user && req.user.role === 'doctor') {
-    apptWhere.assignedDoctorId = req.user.id;
-  }
-
-  let appointments = [];
-  try {
-    const appts = await Appointment.findAll({
-      where: apptWhere,
-      include: [
-        { model: Patient, as: 'patient', required: false },
-        { model: User, as: 'assignedDoctor', required: false },
-      ],
-      order: [['timeSlot', 'ASC']],
-    });
-    appointments = (appts || []).map(a => (a && a.get ? a.get({ plain: true }) : a));
-  } catch (e) {
-    console.warn('medicalRecord.controller.getTodayQueue: failed to load Appointment rows', e?.message || e);
-    appointments = [];
-  }
-
-  // 3) Merge results: prefer records when they reference an appointmentId, otherwise include appointments
+  // Build queue response strictly from MedicalExaminations created today (VN timezone)
   const merged = [];
-  const seenApptIds = new Set();
 
   for (const rec of records) {
-    const recAppointmentId = rec && (rec.appointmentId || rec.AppointmentID);
-    const recPatientId = rec && (rec.patientId || rec.PatientId || (rec.patient && rec.patient.id));
-    const recPatientName = rec && (rec.patientName || (rec.patient && (rec.patient.fullName || rec.patient.HoTen)) || null);
-    const recSymptoms = rec && (rec.symptoms || rec.Symptoms || rec.purpose || '');
-    const recCreatedAt = rec && (rec.createdAt || rec.CreatedAt || rec.ExaminationDate || null);
-    const recStatus = rec && (rec.status || rec.Status || null);
+    const recAppointmentId = rec ? (rec.AppointmentID ?? rec.appointmentId ?? null) : null;
+    const recPatientId = rec ? (rec.PatientId ?? rec.patientId ?? (rec.patient && rec.patient.id) ?? null) : null;
+    const recPatientName = rec ? (rec.patientName ?? (rec.patient && (rec.patient.fullName || rec.patient.HoTen)) ?? null) : null;
+    const recSymptoms = rec ? (rec.Symptoms ?? rec.symptoms ?? rec.purpose ?? '') : '';
+    const recCreatedAt = rec ? (rec.CreatedAt ?? rec.createdAt ?? rec.ExaminationDate ?? null) : null;
+    const recStatus = rec ? (rec.Status ?? rec.status ?? null) : null;
+    const recExaminationId = rec ? (rec.ExaminationID ?? rec.id ?? rec.Id ?? null) : null;
+    const { statusCode, statusLabel } = mapMedicalExamStatus(recStatus);
 
-    if (recAppointmentId) seenApptIds.add(String(recAppointmentId));
     merged.push({
-      id: rec.id || rec.ExaminationID || rec.Id || `REC-${rec.id || rec.ExaminationID || ''}`,
+      id: recExaminationId || `REC-${recExaminationId || ''}`,
+      recordId: recExaminationId,
+      examinationId: recExaminationId,
       _source: 'record',
       appointmentRef: recAppointmentId ? { id: recAppointmentId } : null,
       appointmentId: recAppointmentId || null,
@@ -170,65 +197,13 @@ const getTodayQueue = asyncHandler(async (req, res) => {
       purpose: recSymptoms,
       createdAt: recCreatedAt,
       status: recStatus,
+      statusCode,
+      statusLabel,
       raw: rec,
     });
   }
 
-  for (const a of appointments) {
-    if (a && a.id && seenApptIds.has(String(a.id))) continue;
-    merged.push({
-      id: `APT-${a.id}`,
-      _source: 'appointment',
-      appointmentRef: a,
-      patientId: a.patientId || (a.patient && a.patient.id) || null,
-      patientName: a.patientName || (a.patient && (a.patient.fullName || a.patient.HoTen)) || null,
-      purpose: a.symptoms || a.purpose || 'Khám theo lịch hẹn',
-      timeSlot: a.timeSlot,
-      createdAt: a.createdAt,
-      status: a.status,
-      raw: a,
-    });
-  }
-
-  // 4) Load today's COMPLETED appointments (for UI count display)
-  try {
-    const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED);
-    if (completedCode != null) {
-      const completedApptWhere = {
-        appointmentDate: { [Op.gte]: today, [Op.lt]: tomorrow },
-        status: completedCode,
-      };
-      if (req.user && req.user.role === 'doctor') {
-        completedApptWhere.assignedDoctorId = req.user.id;
-      }
-      const completedAppts = await Appointment.findAll({
-        where: completedApptWhere,
-        include: [
-          { model: Patient, as: 'patient', required: false },
-          { model: User, as: 'assignedDoctor', required: false },
-        ],
-        order: [['timeSlot', 'ASC']],
-      });
-      const completedApptList = (completedAppts || []).map(a => (a && a.get ? a.get({ plain: true }) : a));
-      for (const a of completedApptList) {
-        merged.push({
-          id: `APT-${a.id}`,
-          _source: 'appointment',
-          _isCompleted: true,
-          appointmentRef: a,
-          patientId: a.patientId || (a.patient && a.patient.id) || null,
-          patientName: a.patientName || (a.patient && (a.patient.fullName || a.patient.HoTen)) || null,
-          purpose: a.symptoms || a.purpose || 'Khám theo lịch hẹn',
-          timeSlot: a.timeSlot,
-          createdAt: a.createdAt,
-          status: a.status,
-          raw: a,
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('medicalRecord.controller.getTodayQueue: failed to load completed Appointment rows', e?.message || e);
-  }
+  console.log('medicalRecord.controller.getTodayQueue: returning MedicalExaminations only, count=', merged.length);
 
   return successResponse(res, merged);
 });
@@ -538,11 +513,14 @@ const createRecord = asyncHandler(async (req, res) => {
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
       toCreate = {};
       // Do not persist ExaminationCode column (may have been removed). We'll compute maPhieuKham from ExaminationID after create.
-      const appointmentRaw = payload.appointmentId || payload.appointmentRef?.id || payload.AppointmentID || payload.id;
+      const appointmentRaw = payload.appointmentId || payload.appointmentRef?.id || payload.AppointmentID;
       const patientRaw = payload.patientId || payload.patient?.id || payload.PatientId;
       const doctorRaw = payload.doctorId || payload.DoctorID || req.user?.id;
 
-      toCreate.AppointmentID = parsePositiveInt(appointmentRaw, { allowAppointmentPrefix: true });
+      const normalizedAppointmentId = parsePositiveInt(appointmentRaw, { allowAppointmentPrefix: true });
+      if (normalizedAppointmentId) {
+        toCreate.AppointmentID = normalizedAppointmentId;
+      }
       toCreate.PatientId = parsePositiveInt(patientRaw);
 
       const doctorId = parsePositiveInt(doctorRaw);
@@ -581,10 +559,6 @@ const createRecord = asyncHandler(async (req, res) => {
     }
     // Validate required NOT NULL columns for MedicalExamination table
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
-      if (!toCreate.AppointmentID) {
-        console.error('createRecord: AppointmentID is missing/invalid');
-        return errorResponse(res, 'Thiếu hoặc sai AppointmentID trong payload', 400, 'VALIDATION_ERROR');
-      }
       if (!toCreate.PatientId) {
         console.error('createRecord: PatientId is null - cannot create record without patient');
         return errorResponse(res, 'Thiếu PatientId trong payload - không thể tạo hồ sơ khám', 400, 'VALIDATION_ERROR');
@@ -592,11 +566,11 @@ const createRecord = asyncHandler(async (req, res) => {
 
       // Validate referenced rows early to avoid opaque SQL 500 errors (FK/type issues)
       const [appointmentExists, patientExists] = await Promise.all([
-        Appointment.findByPk(toCreate.AppointmentID).catch(() => null),
+        toCreate.AppointmentID ? Appointment.findByPk(toCreate.AppointmentID).catch(() => null) : Promise.resolve(null),
         Patient.findByPk(toCreate.PatientId).catch(() => null),
       ]);
 
-      if (!appointmentExists) {
+      if (toCreate.AppointmentID && !appointmentExists) {
         console.error('createRecord: Appointment not found for AppointmentID=', toCreate.AppointmentID);
         return errorResponse(res, 'AppointmentID không tồn tại', 400, 'VALIDATION_ERROR');
       }
@@ -612,13 +586,11 @@ const createRecord = asyncHandler(async (req, res) => {
     // If the record already exists (same AppointmentID / PatientId / maPhieuKham), update it instead of creating a new one
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
       try {
-        const existingWhere = {};
-        if (toCreate.AppointmentID) existingWhere.AppointmentID = toCreate.AppointmentID;
-        if (toCreate.PatientId) existingWhere.PatientId = toCreate.PatientId;
-
-        // Only perform findOne when we have at least one lookup key
+        // Only dedupe when linked to an appointment; walk-in visits should create new rows.
         let existing = null;
-        if (Object.keys(existingWhere).length > 0) {
+        if (toCreate.AppointmentID) {
+          const existingWhere = { AppointmentID: toCreate.AppointmentID };
+          if (toCreate.PatientId) existingWhere.PatientId = toCreate.PatientId;
           existing = await PreferredRecordForCreate.findOne({ where: existingWhere });
         }
 

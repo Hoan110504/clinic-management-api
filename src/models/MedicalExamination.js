@@ -9,7 +9,8 @@ export default (sequelize) => {
     'MedicalExamination',
     {
       ExaminationID: { type: DataTypes.BIGINT, primaryKey: true, allowNull: false, autoIncrement: true, field: 'ExaminationID' },
-      AppointmentID: { type: DataTypes.BIGINT, allowNull: false, field: 'AppointmentID' },
+      // Walk-in receptions may not have an appointment
+      AppointmentID: { type: DataTypes.BIGINT, allowNull: true, field: 'AppointmentID' },
       PatientId: { type: DataTypes.BIGINT, allowNull: true, field: 'PatientId' },
       DoctorID: { type: DataTypes.BIGINT, allowNull: true, field: 'DoctorID' },
       ExaminationDate: { type: DataTypes.DATE, allowNull: true, field: 'ExaminationDate' },

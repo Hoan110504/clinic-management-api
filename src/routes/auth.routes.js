@@ -103,4 +103,11 @@ router.post('/forgot-password', authLimiter, authController.forgotPassword);
  */
 router.post('/reset-password', authLimiter, authController.resetPassword);
 
+/**
+ * @route POST /api/auth/complete-profile
+ * @desc Complete profile on first login
+ * @access Public
+ */
+router.post('/complete-profile', authController.completeProfile);
+
 export default router;
