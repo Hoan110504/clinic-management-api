@@ -229,15 +229,13 @@ const createPatient = asyncHandler(async (req, res) => {
     throw new BadRequestError('Giới tính không hợp lệ');
   }
 
-  // Check existing patient with same ID number
-  // ID number is required for reception flows — validate presence and uniqueness
-  if (!idNumber || String(idNumber).trim() === '') {
-    throw new BadRequestError('Số CCCD/CMND là bắt buộc');
-  }
-
-  const existingPatient = await Patient.findOne({ where: { idNumber } });
-  if (existingPatient) {
-    throw new ConflictError('Số CCCD đã được đăng ký');
+  // Check existing patient with same ID number only when provided.
+  // Make `idNumber` optional for patient creation flows.
+  if (idNumber && String(idNumber).trim() !== '') {
+    const existingPatient = await Patient.findOne({ where: { idNumber } });
+    if (existingPatient) {
+      throw new ConflictError('Số CCCD đã được đăng ký');
+    }
   }
 
   // Check phone uniqueness if provided

@@ -343,6 +343,12 @@ const updateAppointment = asyncHandler(async (req, res) => {
     updateData.timeSlot ||
     updateData.assignedDoctorId
   ) {
+    // Prepare list of status codes to exclude from conflict checks (cancelled/completed)
+    const cancelledCode = labelToCode(APPOINTMENT_STATUS.CANCELLED);
+    const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED);
+    const notInStatusCodes = [];
+    if (cancelledCode != null) notInStatusCodes.push(cancelledCode);
+    if (completedCode != null) notInStatusCodes.push(completedCode);
     const conflictWhere = {
       id: { [Op.ne]: id },
       appointmentDate: updateData.appointmentDate || appointment.appointmentDate,
@@ -566,21 +572,21 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
   }
 
   if (status) {
+    // allow numeric or string status; leave normalization to caller
     where.status = status;
   }
 
   // Role-based filtering
-  // Doctors should see:
-  // 1. Appointments assigned to them
-  // 2. All waiting (status=2) appointments (receptionist check-ins), even if not assigned
   if (req.user && req.user.role === ROLES.DOCTOR) {
     const waitingCode = labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
+    // doctor sees their appointments or any waiting appointment
     where[Op.or] = [
       { assignedDoctorId: req.user.id },
-      { status: waitingCode }
+      { status: waitingCode },
     ];
   }
 
+  // Return model instances and convert to plain objects (camelCase keys)
   const appointments = await Appointment.findAll({
     where,
     order: [['timeSlot', 'ASC']],
@@ -595,25 +601,13 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
   });
 
   // Normalize appointments to plain objects and ensure status is present
-  const safeAppointments = appointments.map(a => {
-    try {
-      const obj = a && a.get ? a.get({ plain: true }) : a;
-      if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
-      const norm = normalizeStatus(obj.status);
-      obj.statusCode = norm.code;
-      obj.statusLabel = norm.label;
-      return obj;
-    } catch (e) {
-      if (a && a.dataValues) {
-        const obj = { ...a.dataValues };
-        if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
-        const norm = normalizeStatus(obj.status);
-        obj.statusCode = norm.code;
-        obj.statusLabel = norm.label;
-        return obj;
-      }
-      return a;
-    }
+  const safeAppointments = (appointments || []).map((a) => {
+    const obj = a && a.get ? a.get({ plain: true }) : (a || {});
+    if (!obj.status) obj.status = APPOINTMENT_STATUS.SCHEDULED;
+    const norm = normalizeStatus(obj.status);
+    obj.statusCode = norm.code;
+    obj.statusLabel = norm.label;
+    return obj;
   });
 
   return successResponse(res, safeAppointments);
@@ -631,18 +625,22 @@ const getAvailableSlots = asyncHandler(async (req, res) => {
   }
 
   // Get booked slots (TIME_SLOTS imported at top)
-  const bookedAppointments = await Appointment.findAll({
-    where: {
-      appointmentDate: date,
-      ...(doctorId && { assignedDoctorId: doctorId }),
-      status: {
-        [Op.notIn]: [labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED],
-      },
+ const bookedAppointments = await Appointment.findAll({
+  where: {
+    appointment_date: date,                 // đổi sang snake_case
+    ...(doctorId && { assigned_doctor_id: doctorId }),
+    status: {
+      [Op.notIn]: [
+        labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED,
+      ],
     },
-    attributes: ['timeSlot', 'assignedDoctorId'],
-  });
+  },
+  attributes: ['time_slot', 'assigned_doctor_id'], // snake_case
+  raw: true,
+  mapToModel: false,
+});
 
-  const bookedSlots = bookedAppointments.map((a) => a.timeSlot);
+  const bookedSlots = bookedAppointments.map((a) => a.time_slot);
   const availableSlots = TIME_SLOTS.filter((slot) => !bookedSlots.includes(slot));
 
   return successResponse(res, {

@@ -62,7 +62,7 @@ router.post(
 
 /**
  * @route PUT /api/lab-tests/:id
- * @desc Update lab test
+ * @desc Update lab test (status, note, roomId only)
  * @access Admin, Doctor
  */
 router.put(
@@ -73,8 +73,19 @@ router.put(
 );
 
 /**
+ * @route PUT /api/lab-tests/:id/result
+ * @desc Update/create lab result (resultText, imageUrl, conclusion, note, resultDate)
+ * @access Admin, Doctor
+ */
+router.put(
+  '/:id/result',
+  authorize(ROLES.ADMIN, ROLES.DOCTOR),
+  labTestController.updateLabResult
+);
+
+/**
  * @route DELETE /api/lab-tests/:id
- * @desc Delete lab test
+ * @desc Delete lab test (cancel)
  * @access Admin or Doctor (controller enforces ownership)
  */
 router.delete(
@@ -86,45 +97,13 @@ router.delete(
 
 /**
  * @route POST /api/lab-tests/batch-delete
- * @desc Batch delete lab tests by ids
+ * @desc Batch delete lab tests
  * @access Admin, Doctor
  */
 router.post(
   '/batch-delete',
   authorize(ROLES.ADMIN, ROLES.DOCTOR),
   labTestController.batchDeleteLabTests
-);
-
-/**
- * @route POST /api/lab-tests/:id/start
- * @desc Start lab test
- * @access Doctor
- */
-router.post(
-  '/:id/start',
-  authorize(ROLES.DOCTOR),
-  labTestController.startLabTest
-);
-
-/**
- * @route POST /api/lab-tests/:id/complete
- * @desc Complete lab test with results
- * @access Doctor
- */
-router.post(
-  '/:id/complete',
-  authorize(ROLES.DOCTOR),
-  labTestController.completeLabTest
-);
-
-/**
- * @route POST /api/lab-tests/:id/return
- * @desc Mark lab test as returned/delivered to patient (doctor action)
- */
-router.post(
-  '/:id/return',
-  authorize(ROLES.DOCTOR),
-  labTestController.returnLabTest
 );
 
 export default router;

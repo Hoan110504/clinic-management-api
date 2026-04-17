@@ -34,6 +34,17 @@ router.post(
 );
 
 /**
+ * @route GET /api/lab-services/:id
+ * @desc Get lab service by ID
+ * @access Admin, Doctor, Receptionist
+ */
+router.get(
+  '/:id',
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST),
+  labTestController.getLabServiceById
+);
+
+/**
  * @route PUT /api/lab-services/:id
  * @desc Update lab service
  * @access Admin only
@@ -42,6 +53,17 @@ router.put(
   '/:id',
   authorize(ROLES.ADMIN),
   labTestController.updateLabService
+);
+
+/**
+ * @route DELETE /api/lab-services/:id
+ * @desc Delete lab service
+ * @access Admin only
+ */
+router.delete(
+  '/:id',
+  authorize(ROLES.ADMIN),
+  labTestController.deleteLabService
 );
 
 export default router;

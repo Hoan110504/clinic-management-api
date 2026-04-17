@@ -1,132 +1,52 @@
 /**
- * MedicalRecord controller - cung cấp hàng chờ khám hôm nay
+ * Medical Record Controller - Canonical Implementation
+ * Uses MedicalExaminations table only (PascalCase schema).
+ * No legacy fallbacks or alternate models.
  */
-import { Op, QueryTypes } from 'sequelize';
-import { Appointment, Patient, User, MedicalRecord } from '../models/index.js';
-import models from '../models/index.js';
-import { asyncHandler } from '../utils/helpers.js';
+import { Op } from 'sequelize';
+import { MedicalExamination, Appointment, Patient, User } from '../models/index.js';
+import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import { successResponse, createdResponse, paginatedResponse, errorResponse } from '../utils/response.js';
-import { APPOINTMENT_STATUS, MEDICAL_RECORD_STATUS } from '../config/constants.js';
-import { labelToCode, codeToLabel, normalizeStatus } from '../utils/statusHelpers.js';
-import { parsePagination, parseSort, buildWhereClause } from '../utils/helpers.js';
 import { formatToVietnamISOString } from '../utils/timezone.js';
+import { NotFoundError, BadRequestError } from '../utils/errors.js';
 
-// Helper: calculate BMI from weight (kg) and height (m or cm). Returns null if inputs invalid.
-function calculateBMI(weight, height) {
-  if (weight === null || weight === undefined || height === null || height === undefined) return null;
-  const w = Number(String(weight).trim());
-  const h = Number(String(height).trim());
-  if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) return null;
-  // If height looks like cm (greater than 3 meters), convert to meters
+
+const calculateBMI = (weight, height) => {
+  if (!weight || !height) return null;
+  const w = Number(weight);
+  const h = Number(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
   const heightMeters = h > 3 ? h / 100 : h;
-  if (heightMeters <= 0) return null;
-  const bmi = w / (heightMeters * heightMeters);
-  // round to one decimal place
-  return Math.round(bmi * 10) / 10;
-}
+  return Math.round((w / (heightMeters * heightMeters)) * 10) / 10;
+};
 
-// Normalize date input to YYYY-MM-DD for DATE columns.
-// Accepts ISO date, ISO datetime, and dd/MM/yyyy.
-function normalizeDateOnly(value) {
-  if (value === null || value === undefined || value === '') return null;
+const normalizeDateOnly = (value) => {
+  if (!value) return null;
   const raw = String(value).trim();
-  if (!raw) return null;
-
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw.slice(0, 10);
-
   const viMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raw);
   if (viMatch) {
-    const dd = Number(viMatch[1]);
-    const mm = Number(viMatch[2]);
-    const yyyy = Number(viMatch[3]);
+    const [, dd, mm, yyyy] = viMatch.map(Number);
     const d = new Date(yyyy, mm - 1, dd);
     if (d.getFullYear() === yyyy && d.getMonth() === mm - 1 && d.getDate() === dd) {
       return `${String(yyyy).padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
     }
   }
-
   const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) {
-    return formatToVietnamISOString(parsed).slice(0, 10);
-  }
-  return null;
-}
-
-const getAppointmentStatusCode = (label, fallback) => {
-  const mapped = labelToCode(label);
-  return Number.isInteger(mapped) ? mapped : fallback;
+  return !Number.isNaN(parsed.getTime()) ? formatToVietnamISOString(parsed).slice(0, 10) : null;
 };
 
-const updateAppointmentStatusSafely = async (appointmentId, statusCode) => {
-  if (!appointmentId || !Number.isInteger(statusCode)) return;
-  try {
-    const appt = await Appointment.findByPk(appointmentId);
-    if (appt) {
-      await appt.update({ status: statusCode });
-    }
-  } catch (err) {
-    console.warn('medicalRecord.controller: failed to update appointment status', {
-      appointmentId,
-      statusCode,
-      message: err?.message,
-    });
-  }
-};
-
-// Helper: Calculate today's date range in Vietnam timezone (UTC+7)
-function getVietnamTodayRange() {
+const getVietnamTodayRange = () => {
   const now = new Date();
-  
-  // Get today's date in VN timezone using Intl
   const vnDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
   const [year, month, day] = vnDateStr.split('-').map(Number);
-  
-  // Create UTC date for start of that calendar day
-  // Then subtract 7 hours to get UTC time when VN was at midnight
-  // (because 00:00 VN = 17:00 UTC on previous day)
   const startOfDayUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-  const todayUTC = new Date(startOfDayUTC.getTime() - (7 * 60 * 60 * 1000));
-  
-  // Same for tomorrow
+  const todayUTC = new Date(startOfDayUTC.getTime() - 7 * 60 * 60 * 1000);
   const startOfTomorrowUTC = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0));
-  const tomorrowUTC = new Date(startOfTomorrowUTC.getTime() - (7 * 60 * 60 * 1000));
-  
-  console.log(`[Vietnam Timezone] Today's VN calendar day: ${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
-  console.log(`[UTC Query Range] Start: ${todayUTC.toISOString()}, End: ${tomorrowUTC.toISOString()}`);
-  
+  const tomorrowUTC = new Date(startOfTomorrowUTC.getTime() - 7 * 60 * 60 * 1000);
   return { start: todayUTC, end: tomorrowUTC };
-}
-
-function mapMedicalExamStatus(rawStatus) {
-  if (rawStatus === null || rawStatus === undefined || rawStatus === '') {
-    return { statusCode: null, statusLabel: null };
-  }
-
-  const parsed = Number(rawStatus);
-  if (Number.isFinite(parsed)) {
-    if (parsed === 0) return { statusCode: 0, statusLabel: 'Chờ khám' };
-    if (parsed === 1) return { statusCode: 1, statusLabel: 'Hoàn thành' };
-    if (parsed === 2) return { statusCode: 2, statusLabel: 'Đã hủy' };
-    return { statusCode: parsed, statusLabel: String(rawStatus) };
-  }
-
-  const s = String(rawStatus).toLowerCase();
-  if (s.includes('hoàn thành') || s.includes('hoan thanh') || s.includes('complete')) {
-    return { statusCode: 1, statusLabel: 'Hoàn thành' };
-  }
-  if (s.includes('hủy') || s.includes('huy') || s.includes('cancel')) {
-    return { statusCode: 2, statusLabel: 'Đã hủy' };
-  }
-  if (s.includes('đang khám') || s.includes('dang kham') || s.includes('in progress')) {
-    return { statusCode: 0, statusLabel: 'Đang khám' };
-  }
-  if (s.includes('chờ') || s.includes('cho') || s.includes('wait')) {
-    return { statusCode: 0, statusLabel: 'Chờ khám' };
-  }
-
-  return { statusCode: null, statusLabel: String(rawStatus) };
-}
+};
 
 const formatExaminationCode = (examinationId, createdAt) => {
   if (!examinationId) return null;
@@ -137,909 +57,270 @@ const formatExaminationCode = (examinationId, createdAt) => {
   return `PK-${y}${m}${day}-${String(examinationId).padStart(6, '0')}`;
 };
 
-const toMedicalExaminationContract = (row = {}) => {
-  const examinationId = row.ExaminationID ?? null;
-  const appointmentId = row.AppointmentID ?? null;
-  const patientId = row.PatientId ?? null;
-  const doctorId = row.DoctorID ?? null;
-  const examinationDate = row.ExaminationDate ?? null;
-  const createdAt = row.CreatedAt ?? null;
-  const updatedAt = row.UpdatedAt ?? null;
-
+const toMedicalExaminationContract = (row) => {
+  if (!row) return null;
   return {
-    id: examinationId,
-    examinationId,
-    examinationCode: formatExaminationCode(examinationId, createdAt || examinationDate),
-    appointmentId,
-    patientId,
-    doctorId,
-    examinationDate,
-    symptoms: row.Symptoms ?? '',
-    bloodPressure: row.BloodPressure ?? '',
-    pulse: row.Pulse ?? null,
-    temperature: row.Temperature ?? null,
-    spO2: row.SpO2 ?? null,
-    respirationRate: row.RespirationRate ?? null,
-    weight: row.Weight ?? null,
-    height: row.Height ?? null,
-    bmi: row.BMI ?? null,
-    diagnosis: row.Diagnosis ?? '',
-    icd10Code: row.ICD10Code ?? '',
-    treatmentAdvice: row.TreatmentAdvice ?? '',
-    notes: row.Notes ?? '',
-    reExaminationDate: row.ReExaminationDate ?? null,
-    prescriptionStatus: row.PrescriptionStatus ?? null,
-    status: row.Status ?? null,
-    createdAt,
-    updatedAt,
+    id: row.ExaminationID,
+    examinationId: row.ExaminationID,
+    examinationCode: formatExaminationCode(row.ExaminationID, row.CreatedAt),
+    appointmentId: row.AppointmentID || null,
+    patientId: row.PatientId || null,
+    doctorId: row.DoctorID || null,
+    examinationDate: row.ExaminationDate ? formatToVietnamISOString(row.ExaminationDate) : null,
+    symptoms: row.Symptoms || '',
+    bloodPressure: row.BloodPressure || '',
+    pulse: row.Pulse || null,
+    temperature: row.Temperature || null,
+    spO2: row.SpO2 || null,
+    respirationRate: row.RespirationRate || null,
+    weight: row.Weight || null,
+    height: row.Height || null,
+    bmi: row.BMI || null,
+    diagnosis: row.Diagnosis || '',
+    icd10Code: row.ICD10Code || '',
+    treatmentAdvice: row.TreatmentAdvice || '',
+    notes: row.Notes || '',
+    reExaminationDate: row.ReExaminationDate ? formatToVietnamISOString(row.ReExaminationDate) : null,
+    prescriptionStatus: row.PrescriptionStatus || null,
+    status: row.Status || 0,
+    createdAt: row.CreatedAt ? formatToVietnamISOString(row.CreatedAt) : null,
+    updatedAt: row.UpdatedAt ? formatToVietnamISOString(row.UpdatedAt) : null,
     vitalSigns: {
-      bloodPressure: row.BloodPressure ?? '',
-      pulse: row.Pulse ?? null,
-      temperature: row.Temperature ?? null,
-      spO2: row.SpO2 ?? null,
-      respiratoryRate: row.RespirationRate ?? null,
-      weight: row.Weight ?? null,
-      height: row.Height ?? null,
+      bloodPressure: row.BloodPressure || '',
+      pulse: row.Pulse || null,
+      temperature: row.Temperature || null,
+      spO2: row.SpO2 || null,
+      respiratoryRate: row.RespirationRate || null,
+      weight: row.Weight || null,
+      height: row.Height || null,
     },
   };
 };
 
-const toMedicalExaminationQueueItem = (row = {}) => {
-  const contract = toMedicalExaminationContract(row);
-  const { statusCode, statusLabel } = mapMedicalExamStatus(contract.status);
-  return {
-    id: contract.id,
-    examinationId: contract.examinationId,
-    appointmentId: contract.appointmentId,
-    patientId: contract.patientId,
-    patientName: row?.patient?.fullName ?? null,
-    symptoms: contract.symptoms,
-    createdAt: contract.createdAt,
-    status: contract.status,
-    statusCode,
-    statusLabel,
-    source: 'medicalExamination',
-  };
-};
-
 const getTodayQueue = asyncHandler(async (req, res) => {
-  // Get today's date range in Vietnam timezone (UTC+7)
   const { start: today, end: tomorrow } = getVietnamTodayRange();
-
-  // Source queue strictly from MedicalExaminations created today (VN timezone)
-  let records = [];
-  const PreferredRecord = models && models.MedicalExamination;
-  if (!PreferredRecord || typeof PreferredRecord.findAll !== 'function') {
-    console.warn('medicalRecord.controller.getTodayQueue: MedicalExamination model unavailable');
-    return successResponse(res, []);
-  }
-
-  try {
-    // Determine the actual attribute name for createdAt (legacy tables may use 'CreatedAt')
-    const preferredRawAttrs = PreferredRecord.rawAttributes || {};
-    const createdAtAttr = Object.prototype.hasOwnProperty.call(preferredRawAttrs, 'createdAt')
-      ? 'createdAt'
-      : (Object.prototype.hasOwnProperty.call(preferredRawAttrs, 'CreatedAt') ? 'CreatedAt' : 'createdAt');
-
-    // Build where clause using the model's createdAt attribute name
-    const whereClause = { [createdAtAttr]: { [Op.gte]: today, [Op.lt]: tomorrow } };
-
-    // Use the exact Sequelize model instances from the PreferredRecord's sequelize
-    const sequelizeModelsForPreferred = (PreferredRecord && PreferredRecord.sequelize && PreferredRecord.sequelize.models) ? PreferredRecord.sequelize.models : (models || {});
-    const PatientModelForPreferred = sequelizeModelsForPreferred.Patient || sequelizeModelsForPreferred.BenhNhan || Patient;
-    const UserModelForPreferred = sequelizeModelsForPreferred.User || sequelizeModelsForPreferred.NguoiDung || User;
-
-    console.log('medicalRecord.controller.getTodayQueue: querying PreferredRecord with createdAtAttr=', createdAtAttr, 'where=', whereClause);
-    records = await PreferredRecord.findAll({
-      where: whereClause,
-      include: [
-        { model: PatientModelForPreferred, as: 'patient', required: false },
-        { model: UserModelForPreferred, as: 'doctor', required: false },
-      ],
-      order: [[createdAtAttr, 'ASC']],
-    });
-    // normalize
-    records = (records || []).map(r => (r && r.get ? r.get({ plain: true }) : r));
-    console.log('medicalRecord.controller.getTodayQueue: PreferredRecord returned', (records || []).length, 'rows');
-  } catch (e) {
-    console.warn('medicalRecord.controller.getTodayQueue: failed to query MedicalExaminations', e?.message || e);
-    records = [];
-  }
-
-  // Build queue response strictly from MedicalExaminations created today (VN timezone)
-  const merged = records
-    .map((rec) => toMedicalExaminationQueueItem(rec))
-    .filter((item) => item.id !== null && item.id !== undefined);
-
-  console.log('medicalRecord.controller.getTodayQueue: returning MedicalExaminations only, count=', merged.length);
-
-  return successResponse(res, merged);
+  const records = await MedicalExamination.findAll({
+    where: { CreatedAt: { [Op.gte]: today, [Op.lt]: tomorrow } },
+    include: [
+      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone'], required: false },
+      { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+    ],
+    order: [['CreatedAt', 'ASC']],
+  });
+  const data = (records || []).map((r) => {
+    const plain = r.get ? r.get({ plain: true }) : r;
+    return {
+      id: plain.ExaminationID,
+      examinationId: plain.ExaminationID,
+      examinationCode: formatExaminationCode(plain.ExaminationID, plain.CreatedAt),
+      appointmentId: plain.AppointmentID,
+      patientId: plain.PatientId,
+      patientName: plain.patient?.full_name || null,
+      symptoms: plain.Symptoms || '',
+      createdAt: plain.CreatedAt ? formatToVietnamISOString(plain.CreatedAt) : null,
+      status: plain.Status || 0,
+      source: 'medicalExamination',
+    };
+  });
+  return successResponse(res, data);
 });
 
-// Helper: generate human-friendly visit code (Mã phiếu khám)
-function generateVisitCode() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  // Use higher-entropy suffix: last 8 digits of epoch ms + 3-digit random number
-  // This ensures uniqueness even for records created within the same millisecond
-  const msSuffix = now.getTime().toString().slice(-8);
-  const rand = String(Math.floor(100 + Math.random() * 900));
-  return `PK-${y}${m}${d}-${msSuffix}${rand}`;
-}
-
-// GET /api/medical-records
 const getAllRecords = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const { patientId, sort } = req.query;
 
-  // If model missing, return empty paginated response
-  const PreferredRecordForList = (models && models.MedicalExamination) || MedicalRecord;
-  if (!PreferredRecordForList || typeof PreferredRecordForList.findAndCountAll !== 'function') {
-    return paginatedResponse(res, { data: [], page, limit, total: 0 });
-  }
-
   const where = {};
-  if (patientId) {
-    const usingMedModel = Boolean(models && models.MedicalExamination && PreferredRecordForList === models.MedicalExamination);
-    where[usingMedModel ? 'PatientId' : 'patientId'] = patientId;
-  }
+  if (patientId) where.PatientId = patientId;
 
-  const order = parseSort(sort, ['createdAt', 'id', 'completedAt']);
+  const order = parseSort(sort, ['CreatedAt', 'ExaminationID'], 'CreatedAt:desc');
 
-  // Ensure includes use the sequelize model instances from the preferred model
-  const sequelizeModelsForList = (PreferredRecordForList && PreferredRecordForList.sequelize && PreferredRecordForList.sequelize.models) ? PreferredRecordForList.sequelize.models : (models || {});
-  const PatientModelForList = sequelizeModelsForList.Patient || sequelizeModelsForList.BenhNhan || Patient;
-  const UserModelForList = sequelizeModelsForList.User || sequelizeModelsForList.NguoiDung || User;
+  const { count, rows } = await MedicalExamination.findAndCountAll({
+    where,
+    include: [
+      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone'], required: false },
+      { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+    ],
+    order,
+    limit,
+    offset,
+  });
 
-  let result;
-  try {
-    result = await PreferredRecordForList.findAndCountAll({
-      where,
-      include: [
-        { model: PatientModelForList, as: 'patient', required: false },
-        { model: UserModelForList, as: 'doctor', required: false },
-      ],
-      order: (function mapOrderForModel(o) {
-        try {
-          const usingMedModel = Boolean(models && models.MedicalExamination && PreferredRecordForList === models.MedicalExamination);
-          if (!usingMedModel) return o;
-          if (!Array.isArray(o)) return o;
-          return o.map(([fld, dir]) => {
-            const f = String(fld || '');
-            if (f === 'id') return ['ExaminationID', dir];
-            if (f === 'createdAt') return ['CreatedAt', dir];
-            if (f === 'completedAt') return ['UpdatedAt', dir];
-            // preserve other fields
-            return [fld, dir];
-          });
-        } catch (e) {
-          return o;
-        }
-      })(order),
-      limit,
-      offset,
-    });
-  } catch (dbErr) {
-    console.error('getAllRecords: DB error during findAndCountAll', dbErr && dbErr.message);
-    console.error('getAllRecords: DB error original:', dbErr && dbErr.original && dbErr.original.message);
-    console.error('getAllRecords: DB error sql:', dbErr && dbErr.sql);
-    // Return empty paginated result instead of throwing to keep frontend usable
-    return paginatedResponse(res, { data: [], page, limit, total: 0 });
-  }
+  const data = (rows || []).map((r) => {
+    const plain = r.get ? r.get({ plain: true }) : r;
+    return toMedicalExaminationContract(plain);
+  });
 
-  const rows = (result.rows || []).map(r => (r && r.get ? r.get({ plain: true }) : r));
-  return paginatedResponse(res, { data: rows, page, limit, total: result.count || 0 });
+  return paginatedResponse(res, { data, page, limit, total: count });
 });
 
-// GET /api/medical-records/:id
 const getRecordById = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const idText = String(id || '').trim();
+  const examination = await MedicalExamination.findOne({
+    where: { ExaminationID: id },
+    include: [
+      { model: Patient, as: 'patient', required: false },
+      { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+      { model: Appointment, as: 'appointment', required: false },
+    ],
+  });
 
-  const parseExaminationPk = (value) => {
-    if (value === null || value === undefined || value === '') return null;
-    const raw = String(value).trim();
-    if (!raw) return null;
+  if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-    if (/^\d+$/.test(raw)) {
-      const n = Number(raw);
-      return Number.isSafeInteger(n) && n > 0 ? String(n) : null;
-    }
-
-    const codeMatch = /^PK-\d{8}-(\d+)$/i.exec(raw);
-    if (codeMatch) {
-      const n = Number(codeMatch[1]);
-      return Number.isSafeInteger(n) && n > 0 ? String(n) : null;
-    }
-
-    return null;
-  };
-
-  const normalizedPkId = parseExaminationPk(idText);
-  const PreferredRecordForGet = (models && models.MedicalExamination) || MedicalRecord;
-  if (!PreferredRecordForGet || typeof PreferredRecordForGet.findByPk !== 'function') {
-    return successResponse(res, null);
-  }
-
-  // Build includes using the sequelize model instances from the preferred record to ensure associations match
-  const sequelizeModelsForGet = (PreferredRecordForGet && PreferredRecordForGet.sequelize && PreferredRecordForGet.sequelize.models) ? PreferredRecordForGet.sequelize.models : (models || {});
-  const PatientModelForGet = sequelizeModelsForGet.Patient || sequelizeModelsForGet.BenhNhan || Patient;
-  const UserModelForGet = sequelizeModelsForGet.User || sequelizeModelsForGet.NguoiDung || User;
-  const includes = [
-    { model: PatientModelForGet, as: 'patient', required: false },
-    { model: UserModelForGet, as: 'doctor', required: false },
-  ];
-
-  // If legacy models exist and the physical tables are present, include service requests and results
-  const usingMedicalExaminationModel = Boolean(models && models.MedicalExamination && PreferredRecordForGet === models.MedicalExamination);
-  if (!usingMedicalExaminationModel) {
-    try {
-      const sequelizeInstance = PreferredRecordForGet && PreferredRecordForGet.sequelize ? PreferredRecordForGet.sequelize : (MedicalRecord && MedicalRecord.sequelize);
-      const rawTables = await (sequelizeInstance && sequelizeInstance.getQueryInterface && sequelizeInstance.getQueryInterface().showAllTables ? sequelizeInstance.getQueryInterface().showAllTables() : []);
-      const tableNames = (rawTables || []).map(t => (t && (t.tableName || t.name)) || t).map(String).map(s => s.toLowerCase());
-      const hasYeuCau = tableNames.includes('yeucaudichvu');
-      const hasCanLamSang = tableNames.includes('canlamsang');
-      const hasChiTietYeuCau = tableNames.includes('chitietyeucaudichvu');
-
-      if (models && models.YeuCauDichVu && hasYeuCau) {
-        const ycInclude = { model: models.YeuCauDichVu, as: 'YeuCauDichVu', required: false, include: [] };
-        if (models && models.ChiTietYeuCauDichVu && hasChiTietYeuCau) {
-          ycInclude.include.push({ model: models.ChiTietYeuCauDichVu, as: 'ChiTietYeuCau', required: false });
-        }
-        if (models && models.CanLamSang && hasCanLamSang) {
-          ycInclude.include.push({ model: models.CanLamSang, as: 'KetQuaCanLamSang', required: false, include: [
-            { model: models.NguoiDung, as: 'NguoiXacNhan', required: false }
-          ] });
-        }
-        includes.push(ycInclude);
-      }
-    } catch (e) {
-      console.warn('getRecordById: could not enumerate tables for legacy includes', e && e.message);
-    }
-  }
-
-  const rawAttrs = PreferredRecordForGet.rawAttributes || {};
-  const pkAttr = (PreferredRecordForGet.primaryKeyAttributes || [])[0];
-  const pkTypeKey = pkAttr && rawAttrs[pkAttr] && rawAttrs[pkAttr].type && rawAttrs[pkAttr].type.key;
-  const pkIsNumeric = ['INTEGER', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(String(pkTypeKey || '').toUpperCase());
-  const canUsePkLookup = !pkIsNumeric || Boolean(normalizedPkId);
-
-  const findByPkWithSafeInclude = async (lookupId) => {
-    try {
-      return await PreferredRecordForGet.findByPk(lookupId, { include: includes });
-    } catch (e) {
-      console.warn('getRecordById: findByPk with include failed, retrying without include -', e && e.message);
-      return await PreferredRecordForGet.findByPk(lookupId);
-    }
-  };
-
-  const findOneWithSafeInclude = async (whereClause, orderClause = null) => {
-    const baseOptions = { where: whereClause };
-    if (Array.isArray(orderClause) && orderClause.length > 0) baseOptions.order = orderClause;
-    try {
-      return await PreferredRecordForGet.findOne({ ...baseOptions, include: includes });
-    } catch (e) {
-      console.warn('getRecordById: findOne with include failed, retrying without include -', e && e.message);
-      return await PreferredRecordForGet.findOne(baseOptions);
-    }
-  };
-
-  let rec;
-  if (canUsePkLookup) {
-    try {
-      rec = await findByPkWithSafeInclude(pkIsNumeric ? normalizedPkId : idText);
-    } catch (e) {
-      console.error('getRecordById: DB error during PK lookup - message:', e && e.message);
-      console.error('getRecordById: DB error during PK lookup - name:', e && e.name);
-      console.error('getRecordById: DB error during PK lookup - stack:', e && e.stack);
-      // Continue to alternate key lookup below.
-      rec = null;
-    }
-  }
-
-  // If not found by PK, try common alternate keys (AppointmentID / PatientID)
-  if (!rec) {
-    try {
-      const tmpMatch = /^TMP-([A-Za-z0-9_-]+)-\d+$/.exec(idText);
-      const derivedAppointmentId = tmpMatch ? tmpMatch[1] : null;
-      const idAsInt = normalizedPkId ? Number(normalizedPkId) : null;
-      const aptFromPrefixedId = /^APT-(\d+)$/i.test(idText) ? Number(String(idText).replace(/^APT-/i, '')) : null;
-      const altOr = [];
-      const pushIfAttr = (attr, value) => {
-        if (value && Object.prototype.hasOwnProperty.call(rawAttrs, attr)) {
-          altOr.push({ [attr]: value });
-        }
-      };
-
-      // MedicalExamination attributes
-      if (idAsInt) {
-        pushIfAttr('AppointmentID', idAsInt);
-        pushIfAttr('PatientId', idAsInt);
-      }
-      if (aptFromPrefixedId) pushIfAttr('AppointmentID', aptFromPrefixedId);
-      if (derivedAppointmentId && /^\d+$/.test(String(derivedAppointmentId))) {
-        pushIfAttr('AppointmentID', Number(derivedAppointmentId));
-      }
-
-      // Legacy MedicalRecord attributes (if present)
-      pushIfAttr('recordCode', idText);
-      pushIfAttr('appointmentId', idAsInt || aptFromPrefixedId || idText);
-      pushIfAttr('patientId', idAsInt || idText);
-      if (derivedAppointmentId) pushIfAttr('appointmentId', derivedAppointmentId);
-
-      if (altOr.length > 0) {
-        const orderClause = [];
-        if (Object.prototype.hasOwnProperty.call(rawAttrs, 'createdAt')) {
-          orderClause.push(['createdAt', 'DESC']);
-        } else if (Object.prototype.hasOwnProperty.call(rawAttrs, 'ExaminationID')) {
-          orderClause.push(['ExaminationID', 'DESC']);
-        } else if (Object.prototype.hasOwnProperty.call(rawAttrs, 'id')) {
-          orderClause.push(['id', 'DESC']);
-        }
-
-        rec = await findOneWithSafeInclude(
-          { [Op.or]: altOr },
-          orderClause
-        );
-      }
-    } catch (e) {
-      console.error('getRecordById (alt lookup) DB error -', e && e.message);
-      console.error('getRecordById (alt lookup) stack -', e && e.stack);
-      // Be forgiving: return null so frontend can continue with draft-only "Tiếp tục khám" flows
-      return successResponse(res, null);
-    }
-  }
-
-  if (!rec) return successResponse(res, null);
-  const plain = rec.get ? rec.get({ plain: true }) : rec;
-
-  // Keep a stable response shape for frontend resume flow.
-  if (usingMedicalExaminationModel) {
-    return successResponse(res, toMedicalExaminationContract(plain));
-  }
-
-  return successResponse(res, plain);
+  const plain = examination.get ? examination.get({ plain: true }) : examination;
+  return successResponse(res, toMedicalExaminationContract(plain));
 });
 
 
-// Create medical record (supports DB if model exists, else returns synthetic object)
 const createRecord = asyncHandler(async (req, res) => {
-  const payload = req.body || {};
-  const waitingAppointmentStatus = getAppointmentStatusCode(APPOINTMENT_STATUS.WAITING, 2);
-  // Ensure visit code exists (backend-generated if caller didn't provide)
-  if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
-    payload.maPhieuKham = generateVisitCode();
-  }
-  
-  // Debug: log which model is being used
-  console.log('createRecord: models loaded:', Object.keys(models || {}));
-  console.log('createRecord: models.MedicalExamination exists?', !!(models && models.MedicalExamination));
-  
-  // If model exists, create in DB (prefer MedicalExamination if available)
-  const PreferredRecordForCreate = (models && models.MedicalExamination) || MedicalRecord;
-  console.log('createRecord: using model:', PreferredRecordForCreate?.name || 'unknown');
-  
-  if (PreferredRecordForCreate && typeof PreferredRecordForCreate.create === 'function') {
-    const parsePositiveInt = (value, { allowAppointmentPrefix = false } = {}) => {
-      if (value === null || value === undefined || value === '') return null;
-      const raw = String(value).trim();
-      if (!raw) return null;
-      const normalized = allowAppointmentPrefix && /^APT-/i.test(raw) ? raw.replace(/^APT-/i, '') : raw;
-      if (!/^\d+$/.test(normalized)) return null;
-      const n = Number(normalized);
-      return Number.isSafeInteger(n) && n > 0 ? n : null;
-    };
+  const {
+    patientId,
+    appointmentId,
+    doctorId,
+    examinationDate,
+    symptoms,
+    bloodPressure,
+    pulse,
+    temperature,
+    spO2,
+    respirationRate,
+    weight,
+    height,
+    diagnosis,
+    icd10Code,
+    treatmentAdvice,
+    notes,
+    reExaminationDate,
+  } = req.body;
 
-    // Normalize payload keys when persisting to MedicalExamination table
-    let toCreate = payload;
-    if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
-      toCreate = {};
-      const appointmentRaw = payload.appointmentId;
-      const patientRaw = payload.patientId;
-      const doctorRaw = payload.doctorId ?? req.user?.id;
+  if (!patientId || !doctorId) throw new BadRequestError('patientId và doctorId là bắt buộc');
 
-      const normalizedAppointmentId = parsePositiveInt(appointmentRaw, { allowAppointmentPrefix: true });
-      if (normalizedAppointmentId) {
-        toCreate.AppointmentID = normalizedAppointmentId;
-      }
-      toCreate.PatientId = parsePositiveInt(patientRaw);
-
-      const doctorId = parsePositiveInt(doctorRaw);
-      if (doctorId) toCreate.DoctorID = doctorId;
-
-      toCreate.ExaminationDate = payload.examinationDate ?? new Date();
-      if (Object.prototype.hasOwnProperty.call(payload, 'symptoms')) toCreate.Symptoms = payload.symptoms;
-      if (Object.prototype.hasOwnProperty.call(payload, 'diagnosis')) toCreate.Diagnosis = payload.diagnosis;
-      if (Object.prototype.hasOwnProperty.call(payload, 'icd10Code')) toCreate.ICD10Code = payload.icd10Code;
-      if (Object.prototype.hasOwnProperty.call(payload, 'treatmentAdvice')) toCreate.TreatmentAdvice = payload.treatmentAdvice;
-      if (Object.prototype.hasOwnProperty.call(payload, 'notes')) toCreate.Notes = payload.notes;
-
-      const normalizedNextAppointment = normalizeDateOnly(payload.reExaminationDate);
-      if (normalizedNextAppointment) {
-        toCreate.ReExaminationDate = normalizedNextAppointment;
-      }
-      // Map vital signs if provided as object
-      if (payload.vitalSigns && typeof payload.vitalSigns === 'object') {
-        const vs = payload.vitalSigns;
-        if (Object.prototype.hasOwnProperty.call(vs, 'bloodPressure')) toCreate.BloodPressure = vs.bloodPressure;
-        if (Object.prototype.hasOwnProperty.call(vs, 'pulse')) toCreate.Pulse = vs.pulse;
-        if (Object.prototype.hasOwnProperty.call(vs, 'temperature')) toCreate.Temperature = vs.temperature;
-        if (Object.prototype.hasOwnProperty.call(vs, 'spO2')) toCreate.SpO2 = vs.spO2;
-        if (Object.prototype.hasOwnProperty.call(vs, 'respirationRate')) toCreate.RespirationRate = vs.respirationRate;
-        if (Object.prototype.hasOwnProperty.call(vs, 'weight')) toCreate.Weight = vs.weight;
-        if (Object.prototype.hasOwnProperty.call(vs, 'height')) toCreate.Height = vs.height;
-        if (Object.prototype.hasOwnProperty.call(vs, 'bmi')) toCreate.BMI = vs.bmi;
-        // Compute BMI automatically when weight and height available and BMI not provided
-        if (!toCreate.BMI) {
-          const calc = calculateBMI(toCreate.Weight, toCreate.Height);
-          if (calc !== null) toCreate.BMI = calc;
-        }
-      }
-      console.log('createRecord: toCreate payload after normalization:', JSON.stringify(toCreate, null, 2));
-    }
-    // Validate required NOT NULL columns for MedicalExamination table
-    if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
-      if (!toCreate.PatientId) {
-        console.error('createRecord: PatientId is null - cannot create record without patient');
-        return errorResponse(res, 'Thiếu PatientId trong payload - không thể tạo hồ sơ khám', 400, 'VALIDATION_ERROR');
-      }
-
-      // Validate referenced rows early to avoid opaque SQL 500 errors (FK/type issues)
-      const [appointmentExists, patientExists] = await Promise.all([
-        toCreate.AppointmentID ? Appointment.findByPk(toCreate.AppointmentID).catch(() => null) : Promise.resolve(null),
-        Patient.findByPk(toCreate.PatientId).catch(() => null),
-      ]);
-
-      if (toCreate.AppointmentID && !appointmentExists) {
-        console.error('createRecord: Appointment not found for AppointmentID=', toCreate.AppointmentID);
-        return errorResponse(res, 'AppointmentID không tồn tại', 400, 'VALIDATION_ERROR');
-      }
-
-      if (!patientExists) {
-        console.error('createRecord: Patient not found for PatientId=', toCreate.PatientId);
-        return errorResponse(res, 'PatientId không tồn tại', 400, 'VALIDATION_ERROR');
-      }
-    }
-
-    console.log('createRecord: attempting to create with toCreate=', JSON.stringify(toCreate, null, 2));
-
-    // If the record already exists (same AppointmentID / PatientId / maPhieuKham), update it instead of creating a new one
-    if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
-      try {
-        // Only dedupe when linked to an appointment; walk-in visits should create new rows.
-        let existing = null;
-        if (toCreate.AppointmentID) {
-          const existingWhere = { AppointmentID: toCreate.AppointmentID };
-          if (toCreate.PatientId) existingWhere.PatientId = toCreate.PatientId;
-          existing = await PreferredRecordForCreate.findOne({ where: existingWhere });
-        }
-
-        if (existing) {
-          try {
-            await existing.update(toCreate);
-            const plainExisting = existing.get ? existing.get({ plain: true }) : existing;
-            const examId = plainExisting && (plainExisting.ExaminationID || plainExisting.id);
-            const createdTime = plainExisting && (plainExisting.CreatedAt || plainExisting.createdAt || new Date());
-            let maPhieuKham = plainExisting && (plainExisting.maPhieuKham || plainExisting.ExaminationCode);
-            if (!maPhieuKham && examId) {
-              const d = createdTime ? new Date(createdTime) : new Date();
-              const y = d.getFullYear();
-              const m = String(d.getMonth() + 1).padStart(2, '0');
-              const day = String(d.getDate()).padStart(2, '0');
-              maPhieuKham = `PK-${y}${m}${day}-${String(examId).padStart(6, '0')}`;
-            }
-            if (!plainExisting.maPhieuKham) plainExisting.maPhieuKham = maPhieuKham;
-            const normalizedExisting = toMedicalExaminationContract(plainExisting);
-            await updateAppointmentStatusSafely(normalizedExisting.appointmentId, waitingAppointmentStatus);
-            console.log('createRecord: existing record updated instead of create, id=', examId, 'code=', maPhieuKham);
-            return successResponse(res, normalizedExisting, 'Đã cập nhật hồ sơ khám (đã tồn tại)');
-          } catch (updErr) {
-            console.error('createRecord: error updating existing record', updErr && updErr.message);
-            return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật hồ sơ khám', 500, 'DATABASE_ERROR');
-          }
-        }
-      } catch (checkErr) {
-        console.error('createRecord: error while checking for existing record', checkErr && checkErr.message);
-        // fall through to create attempt
-      }
-    }
-
-    try {
-      // Use PreferredRecordForCreate directly with Sequelize - it handles field mapping automatically
-      const created = await PreferredRecordForCreate.create(toCreate);
-      const plain = created.get ? created.get({ plain: true }) : created;
-      
-      // Generate examination code (maPhieuKham)
-      const examId = plain && (plain.ExaminationID || plain.ExaminationId || plain.id);
-      const createdTime = plain && (plain.CreatedAt || plain.createdAt || new Date());
-      let maPhieuKham = plain && (plain.maPhieuKham || plain.ExaminationCode);
-      
-      if (!maPhieuKham && examId) {
-        const d = createdTime ? new Date(createdTime) : new Date();
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        maPhieuKham = `PK-${y}${m}${day}-${String(examId).padStart(6, '0')}`;
-      }
-      
-      // Normalize response
-      const normalized = toMedicalExaminationContract(plain);
-      await updateAppointmentStatusSafely(normalized.appointmentId, waitingAppointmentStatus);
-      
-      console.log('createRecord: successfully created, id=', examId, 'code=', maPhieuKham);
-      return createdResponse(res, normalized, 'Đã tạo hồ sơ khám');
-    } catch (e) {
-      console.error('createRecord: DB error - message:', e && e.message);
-      console.error('createRecord: DB error - code:', e && e.code);
-      console.error('createRecord: DB error - name:', e && e.name);
-      console.error('createRecord: DB error - sql:', e && e.sql);
-      console.error('createRecord: DB error - original:', e && e.original && e.original.message);
-      if (e && e.errors && Array.isArray(e.errors)) {
-        console.error('createRecord: Sequelize validation errors:', e.errors.map(err => ({ path: err.path, message: err.message })));
-      }
-      console.error('createRecord: toCreate was:', JSON.stringify(toCreate, null, 2));
-
-      // Build details to help debugging in non-production environments
-      const details = {};
-      if (e && e.original && e.original.message) details.sqlError = e.original.message;
-      if (e && e.sql) details.sql = e.sql;
-      if (e && e.errors && Array.isArray(e.errors)) details.validation = e.errors.map(err => ({ path: err.path, message: err.message }));
-
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi tạo hồ sơ khám', 500, 'DATABASE_ERROR', details);
-    }
+  const numPatientId = Number(patientId);
+  const numDoctorId = Number(doctorId);
+  if (!Number.isFinite(numPatientId) || !Number.isFinite(numDoctorId)) {
+    throw new BadRequestError('patientId và doctorId phải là số');
   }
 
-  // Fallback: synthesize an id and return payload
-  const syntheticId = `REC${Date.now()}`;
-  // ensure fallback also includes a generated maPhieuKham for UI display
-  const fallbackCode = payload.maPhieuKham || payload.visitCode || payload.recordCode || generateVisitCode();
-  const created = { id: syntheticId, maPhieuKham: fallbackCode, ...payload, createdAt: formatToVietnamISOString() };
-  return createdResponse(res, created, 'Đã tạo hồ sơ khám (tạm, không lưu DB)');
+  const patient = await Patient.findByPk(numPatientId);
+  if (!patient) throw new NotFoundError('Không tìm thấy bệnh nhân');
+
+  const doctor = await User.findByPk(numDoctorId);
+  if (!doctor) throw new NotFoundError('Không tìm thấy bác sĩ');
+
+  const bmi = calculateBMI(weight, height);
+
+  const examination = await MedicalExamination.create({
+    PatientId: numPatientId,
+    DoctorID: numDoctorId,
+    AppointmentID: appointmentId ? Number(appointmentId) : null,
+    ExaminationDate: examinationDate ? new Date(examinationDate) : new Date(),
+    Symptoms: symptoms || '',
+    BloodPressure: bloodPressure || '',
+    Pulse: pulse ? Number(pulse) : null,
+    Temperature: temperature ? Number(temperature) : null,
+    SpO2: spO2 ? Number(spO2) : null,
+    RespirationRate: respirationRate ? Number(respirationRate) : null,
+    Weight: weight ? Number(weight) : null,
+    Height: height ? Number(height) : null,
+    BMI: bmi,
+    Diagnosis: diagnosis || '',
+    ICD10Code: icd10Code || '',
+    TreatmentAdvice: treatmentAdvice || '',
+    Notes: notes || '',
+    ReExaminationDate: reExaminationDate ? new Date(reExaminationDate) : null,
+    Status: 0,
+    CreatedAt: new Date(),
+    UpdatedAt: new Date(),
+  });
+
+  return createdResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Tạo phiếu khám thành công');
 });
 
-// Update medical record (DB if available, else echo back)
 const updateRecord = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const payload = req.body || {};
-  const waitingAppointmentStatus = getAppointmentStatusCode(APPOINTMENT_STATUS.WAITING, 2);
-  const PreferredRecordForUpdate = (models && models.MedicalExamination) || MedicalRecord;
-  if (PreferredRecordForUpdate && typeof PreferredRecordForUpdate.findByPk === 'function') {
-    const idText = String(id || '').trim();
-    let rec = null;
-    // Prefer numeric examinationId path param. If caller provided our generated visit code (PK-...), derive numeric suffix to use as PK lookup.
-    let lookupId = idText;
-    const pkMatch = /^PK-[0-9]{8}-([0-9]+)$/.exec(idText);
-    if (pkMatch) {
-      const candidate = pkMatch[1];
-      if (/^\d+$/.test(candidate)) lookupId = String(Number(candidate));
-    }
-    // Try PK lookup first (safe for numeric PKs)
-    try {
-      rec = await PreferredRecordForUpdate.findByPk(lookupId);
-    } catch (e) {
-      console.warn('updateRecord: PK lookup failed, will try alternate keys -', e && e.message);
-      rec = null;
-    }
+  const {
+    symptoms,
+    bloodPressure,
+    pulse,
+    temperature,
+    spO2,
+    respirationRate,
+    weight,
+    height,
+    diagnosis,
+    icd10Code,
+    treatmentAdvice,
+    notes,
+    reExaminationDate,
+  } = req.body;
 
-    // If not found by PK, try alternate common keys (AppointmentID / PatientId / legacy keys)
-    if (!rec) {
-      try {
-        const rawAttrs = PreferredRecordForUpdate.rawAttributes || {};
-        const altOr = [];
-        const idAsInt = /^\d+$/.test(idText) ? Number(idText) : null;
-        const aptFromPrefixedId = /^APT-(\d+)$/i.test(idText) ? Number(String(idText).replace(/^APT-/i, '')) : null;
-        const pushIfAttr = (attr, value) => {
-          if (value && Object.prototype.hasOwnProperty.call(rawAttrs, attr)) altOr.push({ [attr]: value });
-        };
+  const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
+  if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-        // Common MedicalExamination attributes
-        if (idAsInt) {
-          pushIfAttr('AppointmentID', idAsInt);
-          pushIfAttr('PatientId', idAsInt);
-        }
-        if (aptFromPrefixedId) {
-          pushIfAttr('AppointmentID', aptFromPrefixedId);
-        }
+  const bmi = calculateBMI(weight ?? examination.Weight, height ?? examination.Height);
 
-        // Legacy / fallback attributes
-        pushIfAttr('recordCode', idText);
-        pushIfAttr('appointmentId', idAsInt || aptFromPrefixedId || idText);
-        pushIfAttr('patientId', idAsInt || idText);
+  const updates = {};
+  if (symptoms !== undefined) updates.Symptoms = symptoms;
+  if (bloodPressure !== undefined) updates.BloodPressure = bloodPressure;
+  if (pulse !== undefined) updates.Pulse = pulse ? Number(pulse) : null;
+  if (temperature !== undefined) updates.Temperature = temperature ? Number(temperature) : null;
+  if (spO2 !== undefined) updates.SpO2 = spO2 ? Number(spO2) : null;
+  if (respirationRate !== undefined) updates.RespirationRate = respirationRate ? Number(respirationRate) : null;
+  if (weight !== undefined) updates.Weight = weight ? Number(weight) : null;
+  if (height !== undefined) updates.Height = height ? Number(height) : null;
+  if (bmi !== null) updates.BMI = bmi;
+  if (diagnosis !== undefined) updates.Diagnosis = diagnosis;
+  if (icd10Code !== undefined) updates.ICD10Code = icd10Code;
+  if (treatmentAdvice !== undefined) updates.TreatmentAdvice = treatmentAdvice;
+  if (notes !== undefined) updates.Notes = notes;
+  if (reExaminationDate !== undefined) updates.ReExaminationDate = reExaminationDate ? new Date(reExaminationDate) : null;
+  updates.UpdatedAt = new Date();
 
-        if (altOr.length > 0) {
-          const orderClause = [];
-          if (Object.prototype.hasOwnProperty.call(rawAttrs, 'createdAt')) orderClause.push(['createdAt', 'DESC']);
-          else if (Object.prototype.hasOwnProperty.call(rawAttrs, 'ExaminationID')) orderClause.push(['ExaminationID', 'DESC']);
-          else if (Object.prototype.hasOwnProperty.call(rawAttrs, 'id')) orderClause.push(['id', 'DESC']);
+  await examination.update(updates);
 
-          rec = await PreferredRecordForUpdate.findOne({ where: { [Op.or]: altOr }, order: orderClause });
-        }
-      } catch (e) {
-        console.error('updateRecord: DB error during alternate lookup -', e && e.message);
-        return errorResponse(res, 'Lỗi cơ sở dữ liệu khi đọc hồ sơ khám', 500, 'DATABASE_ERROR');
-      }
-    }
-
-    if (!rec) {
-      return successResponse(res, null);
-    }
-    // Preserve visit code (maPhieuKham) if already exists and not in payload
-    if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
-      const existing = rec.get ? rec.get({ plain: true }) : rec;
-      if (existing?.maPhieuKham || existing?.visitCode || existing?.recordCode) {
-        payload.maPhieuKham = existing.maPhieuKham || existing.visitCode || existing.recordCode;
-      } else {
-        // If still no code, generate one
-        payload.maPhieuKham = generateVisitCode();
-      }
-    }
-    // If updating MedicalExamination normalize update payload
-    let toUpdate = payload;
-    if (models && models.MedicalExamination && PreferredRecordForUpdate === models.MedicalExamination) {
-      toUpdate = {};
-      if (Object.prototype.hasOwnProperty.call(payload, 'symptoms')) toUpdate.Symptoms = payload.symptoms;
-      if (Object.prototype.hasOwnProperty.call(payload, 'diagnosis')) toUpdate.Diagnosis = payload.diagnosis;
-      if (Object.prototype.hasOwnProperty.call(payload, 'icd10Code')) toUpdate.ICD10Code = payload.icd10Code;
-      if (Object.prototype.hasOwnProperty.call(payload, 'treatmentAdvice')) toUpdate.TreatmentAdvice = payload.treatmentAdvice;
-      if (Object.prototype.hasOwnProperty.call(payload, 'notes')) toUpdate.Notes = payload.notes;
-      const normalizedNextAppointment = normalizeDateOnly(payload.reExaminationDate);
-      if (normalizedNextAppointment) toUpdate.ReExaminationDate = normalizedNextAppointment;
-      if (payload.vitalSigns && typeof payload.vitalSigns === 'object') {
-        const vs = payload.vitalSigns;
-        if (Object.prototype.hasOwnProperty.call(vs, 'bloodPressure')) toUpdate.BloodPressure = vs.bloodPressure;
-        if (Object.prototype.hasOwnProperty.call(vs, 'pulse')) toUpdate.Pulse = vs.pulse;
-        if (Object.prototype.hasOwnProperty.call(vs, 'temperature')) toUpdate.Temperature = vs.temperature;
-        if (Object.prototype.hasOwnProperty.call(vs, 'spO2')) toUpdate.SpO2 = vs.spO2;
-        if (Object.prototype.hasOwnProperty.call(vs, 'respirationRate')) toUpdate.RespirationRate = vs.respirationRate;
-        if (Object.prototype.hasOwnProperty.call(vs, 'weight')) toUpdate.Weight = vs.weight;
-        if (Object.prototype.hasOwnProperty.call(vs, 'height')) toUpdate.Height = vs.height;
-        if (Object.prototype.hasOwnProperty.call(vs, 'bmi')) toUpdate.BMI = vs.bmi;
-        // compute BMI using provided values or falling back to existing record values
-        try {
-          const existingPlainForBmi = rec && rec.get ? rec.get({ plain: true }) : rec || {};
-          const weightForBmi = (toUpdate.Weight !== undefined ? toUpdate.Weight : (existingPlainForBmi.Weight || existingPlainForBmi.weight));
-          const heightForBmi = (toUpdate.Height !== undefined ? toUpdate.Height : (existingPlainForBmi.Height || existingPlainForBmi.height));
-          if (!toUpdate.BMI) {
-            const calc = calculateBMI(weightForBmi, heightForBmi);
-            if (calc !== null) toUpdate.BMI = calc;
-          }
-        } catch (e) {
-          // ignore BMI calculation errors
-        }
-      }
-    }
-    try {
-      await rec.update(toUpdate);
-    } catch (e) {
-      console.error('updateRecord: DB error on update', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật hồ sơ khám', 500, 'DATABASE_ERROR');
-    }
-    const plain = rec.get ? rec.get({ plain: true }) : rec;
-    const normalized = toMedicalExaminationContract(plain);
-    await updateAppointmentStatusSafely(normalized.appointmentId, waitingAppointmentStatus);
-    return successResponse(res, normalized);
-  }
-
-  // Fallback: preserve visit code on update
-  if (!payload.maPhieuKham && !payload.visitCode && !payload.recordCode) {
-    payload.maPhieuKham = generateVisitCode();
-  }
-  const updated = { id, ...payload, updatedAt: formatToVietnamISOString() };
-  return successResponse(res, updated);
+  return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Cập nhật phiếu khám thành công');
 });
 
-// exports consolidated at end of file
-// Start examination (mark in-progress)
 const startExamination = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const actorId = req.user?.id || null;
-  const waitingAppointmentStatus = getAppointmentStatusCode(APPOINTMENT_STATUS.WAITING, 2);
-  const PreferredRecordForStart = (models && models.MedicalExamination) || MedicalRecord;
-  if (PreferredRecordForStart && typeof PreferredRecordForStart.findByPk === 'function') {
-    let rec;
-    try {
-      rec = await PreferredRecordForStart.findByPk(id);
-    } catch (e) {
-      console.error('startExamination: DB error', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi bắt đầu khám', 500, 'DATABASE_ERROR');
-    }
-    if (!rec) return successResponse(res, null);
-    try {
-      // For MedicalExamination table, map startedAt -> ExaminationDate and avoid status column
-      if (models && models.MedicalExamination && PreferredRecordForStart === models.MedicalExamination) {
-        await rec.update({ ExaminationDate: new Date(), DoctorID: actorId });
-      } else {
-        await rec.update({ status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: new Date(), doctorId: actorId });
-      }
-    } catch (e) {
-      console.error('startExamination: DB error on update', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật trạng thái khám', 500, 'DATABASE_ERROR');
-    }
-    const plain = rec.get ? rec.get({ plain: true }) : rec;
-    const normalized = toMedicalExaminationContract(plain);
-    await updateAppointmentStatusSafely(normalized.appointmentId, waitingAppointmentStatus);
-    return successResponse(res, normalized);
-  }
-  // Fallback: echo object with status
-  const out = { id, status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: formatToVietnamISOString(), doctorId: actorId };
-  return successResponse(res, out);
+  const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
+  if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
+
+  // Mark status as in-progress (assuming 1 = in progress based on context)
+  await examination.update({ Status: 1, UpdatedAt: new Date() });
+
+  return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Bắt đầu khám thành công');
 });
 
-// Complete examination (mark completed and save provided fields)
+
 const completeExamination = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const payload = req.body || {};
-  const actorId = req.user?.id || null;
-  const completedAppointmentStatus = getAppointmentStatusCode(APPOINTMENT_STATUS.COMPLETED, 3);
+  const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
+  if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  const PreferredRecordForComplete = (models && models.MedicalExamination) || MedicalRecord;
-  if (PreferredRecordForComplete && typeof PreferredRecordForComplete.findByPk === 'function') {
-    let rec;
-    try {
-      rec = await PreferredRecordForComplete.findByPk(id);
-    } catch (e) {
-      console.error('completeExamination: DB error', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi đọc hồ sơ khám', 500, 'DATABASE_ERROR');
-    }
-    if (!rec) return successResponse(res, null);
-    // Normalize updates for MedicalExamination table
-    let updates = {};
-    if (models && models.MedicalExamination && PreferredRecordForComplete === models.MedicalExamination) {
-      // Mark examination as completed (Status = 1)
-      updates.Status = 1;
-      if (Object.prototype.hasOwnProperty.call(payload, 'symptoms')) updates.Symptoms = payload.symptoms;
-      if (Object.prototype.hasOwnProperty.call(payload, 'diagnosis')) updates.Diagnosis = payload.diagnosis;
-      if (Object.prototype.hasOwnProperty.call(payload, 'icd10Code')) updates.ICD10Code = payload.icd10Code;
-      if (Object.prototype.hasOwnProperty.call(payload, 'treatmentAdvice')) updates.TreatmentAdvice = payload.treatmentAdvice;
-      if (Object.prototype.hasOwnProperty.call(payload, 'notes')) updates.Notes = payload.notes;
-      const normalizedNextAppointment = normalizeDateOnly(payload.reExaminationDate);
-      if (normalizedNextAppointment) updates.ReExaminationDate = normalizedNextAppointment;
-      if (actorId) updates.DoctorID = actorId;
-      if (payload.vitalSigns && typeof payload.vitalSigns === 'object') {
-        const vs = payload.vitalSigns;
-        if (Object.prototype.hasOwnProperty.call(vs, 'bloodPressure')) updates.BloodPressure = vs.bloodPressure;
-        if (Object.prototype.hasOwnProperty.call(vs, 'pulse')) updates.Pulse = vs.pulse;
-        if (Object.prototype.hasOwnProperty.call(vs, 'temperature')) updates.Temperature = vs.temperature;
-        if (Object.prototype.hasOwnProperty.call(vs, 'spO2')) updates.SpO2 = vs.spO2;
-        if (Object.prototype.hasOwnProperty.call(vs, 'respirationRate')) updates.RespirationRate = vs.respirationRate;
-        if (Object.prototype.hasOwnProperty.call(vs, 'weight')) updates.Weight = vs.weight;
-        if (Object.prototype.hasOwnProperty.call(vs, 'height')) updates.Height = vs.height;
-        if (Object.prototype.hasOwnProperty.call(vs, 'bmi')) updates.BMI = vs.bmi;
-        // compute BMI using provided values or existing record values
-        try {
-          const existingPlainForBmi = rec && rec.get ? rec.get({ plain: true }) : rec || {};
-          const weightForBmi = (updates.Weight !== undefined ? updates.Weight : (existingPlainForBmi.Weight || existingPlainForBmi.weight));
-          const heightForBmi = (updates.Height !== undefined ? updates.Height : (existingPlainForBmi.Height || existingPlainForBmi.height));
-          if (!updates.BMI) {
-            const calc = calculateBMI(weightForBmi, heightForBmi);
-            if (calc !== null) updates.BMI = calc;
-          }
-        } catch (e) {
-          // ignore BMI calculation errors
-        }
-      }
-    } else {
-      updates = {
-        diagnosis: payload.diagnosis || rec.diagnosis,
-        treatment: payload.treatment || rec.treatment,
-        notes: payload.notes || rec.notes,
-        nextAppointment: payload.nextAppointment || rec.nextAppointment,
-        vitalSigns: payload.vitalSigns || rec.vitalSigns,
-        status: MEDICAL_RECORD_STATUS.COMPLETED,
-        completedAt: formatToVietnamISOString(),
-        confirmedBy: actorId,
-      };
-    }
-    try {
-      await rec.update(updates);
-    } catch (e) {
-      console.error('completeExamination: DB error on update', e && e.message);
-      return errorResponse(res, 'Lỗi cơ sở dữ liệu khi hoàn tất khám', 500, 'DATABASE_ERROR');
-    }
-    const plain = rec.get ? rec.get({ plain: true }) : rec;
-    const normalized = toMedicalExaminationContract(plain);
-    await updateAppointmentStatusSafely(normalized.appointmentId, completedAppointmentStatus);
-    return successResponse(res, normalized);
-  }
+  // Mark status as complete (1 = completed based on schema)
+  await examination.update({ Status: 1, UpdatedAt: new Date() });
 
-  // Fallback: respond with synthesized completed object
-  const out = {
-    id,
-    ...payload,
-    status: MEDICAL_RECORD_STATUS.COMPLETED,
-    completedAt: formatToVietnamISOString(),
-    confirmedBy: actorId,
-  };
-  return successResponse(res, out);
+  return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hoàn thành khám thành công');
 });
 
-export { getTodayQueue, getAllRecords, getRecordById, createRecord, updateRecord, startExamination, completeExamination };
-
-// Cancel examination: set MedicalExamination.Status = 2 and cancel related lab order items
 const cancelExamination = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const Preferred = (models && models.MedicalExamination) || MedicalRecord;
-  if (!Preferred || typeof Preferred.findByPk !== 'function') return successResponse(res, null);
+  const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
+  if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  let rec = null;
-  try {
-    rec = await Preferred.findByPk(id);
-  } catch (e) {
-    console.warn('cancelExamination: PK lookup failed, id=', id, e?.message);
-    rec = null;
-  }
-  if (!rec) return successResponse(res, null);
+  // Mark status as cancelled (2 = cancelled)
+  await examination.update({ Status: 2, UpdatedAt: new Date() });
 
-  const plain = rec.get ? rec.get({ plain: true }) : rec;
-  const examId = plain.ExaminationID || plain.id || id;
-
-  try {
-    // update medical examination status to '2' (cancelled)
-    await rec.update({ Status: 2 });
-
-    // cancel related prescriptions and prescription items (set to 2)
-    try {
-      const Prescription = models && models.Prescription;
-      const PrescriptionItem = models && models.PrescriptionItem;
-      if (Prescription && PrescriptionItem) {
-        const prescriptions = await Prescription.findAll({ where: { examinationId: examId } });
-        for (const pres of prescriptions || []) {
-          try {
-            // Cancel all prescription items that are not already cancelled (status != 2)
-            const presId = pres.get ? pres.get('id') : (pres.id || pres.Id);
-            await PrescriptionItem.update(
-              { status: 2 },
-              { where: { prescriptionId: presId, status: { [Op.ne]: 2 } } }
-            );
-            // Cancel the prescription itself
-            try { await pres.update({ status: 2 }); } catch (e) { /* ignore */ }
-          } catch (e) {
-            const presId = pres.get ? pres.get('id') : (pres.id || pres.Id);
-            console.warn('cancelExamination: failed updating PrescriptionItem for Prescription', presId, e?.message);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('cancelExamination: prescription cancellation step failed', e?.message);
-    }
-
-    // cancel related lab order items (set to 3) and mark lab orders cancelled
-    try {
-      const LabOrder = models && models.LabOrder;
-      const LabOrderItem = models && models.LabOrderItem;
-      if (LabOrder && LabOrderItem) {
-        const labOrders = await LabOrder.findAll({ where: { ExaminationID: examId } });
-        for (const lo of labOrders || []) {
-          try {
-            await LabOrderItem.update(
-              { Status: 3 },
-              { where: { LabOrderID: lo.LabOrderID, Status: { [Op.ne]: 2 } } }
-            );
-            try { await lo.update({ Status: 3 }); } catch (e) { /* ignore */ }
-          } catch (e) {
-            console.warn('cancelExamination: failed updating LabOrderItem for LabOrder', lo && lo.LabOrderID, e?.message);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('cancelExamination: lab cancellation step failed', e?.message);
-    }
-
-    // update appointment status to CANCELLED if present
-    try {
-      const cancelledCode = getAppointmentStatusCode(APPOINTMENT_STATUS.CANCELLED, 4);
-      await updateAppointmentStatusSafely(plain.AppointmentID, cancelledCode);
-    } catch (e) { /* ignore */ }
-
-    const updated = await Preferred.findByPk(examId);
-    const out = updated && updated.get ? updated.get({ plain: true }) : updated;
-    return successResponse(res, out ? toMedicalExaminationContract(out) : { id: examId, status: 2 }, 'Đã hủy phiếu khám');
-  } catch (e) {
-    console.error('cancelExamination: DB error', e && e.message);
-    return errorResponse(res, 'Lỗi khi hủy phiếu khám', 500, 'DATABASE_ERROR');
-  }
+  return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hủy phiếu khám thành công');
 });
 
-export { cancelExamination };
+export {
+  getTodayQueue,
+  getAllRecords,
+  getRecordById,
+  createRecord,
+  updateRecord,
+  startExamination,
+  completeExamination,
+  cancelExamination,
+};

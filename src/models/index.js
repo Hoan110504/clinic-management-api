@@ -57,6 +57,7 @@ export { sequelize, Sequelize, connectDatabase, syncDatabase };
 export const User = models.User;
 export const Patient = models.Patient;
 export const Appointment = models.Appointment;
+export const MedicalExamination = models.MedicalExamination;
 // MedicalRecord uses the English model (STRING PK, patient_id / doctor_id columns)
 // If the project has the legacy Vietnamese models (HoSoKham), prefer exporting that
 // as the primary `MedicalRecord` export so existing DB schema (HoSoKham table)

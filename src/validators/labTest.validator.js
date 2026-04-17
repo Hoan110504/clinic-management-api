@@ -1,114 +1,104 @@
 /**
- * Lab Test Validators
+ * Lab Test Validators - Canonical Schema Only
  * Input validation for lab test endpoints
  */
 import { body, param, query } from 'express-validator';
-import { LAB_STATUS } from '../config/constants.js';
 
+// Create lab test - requires examinationId + serviceId from database
 const createLabTestValidator = [
-  body('patientId')
+  body('examinationId')
     .notEmpty()
-    .withMessage('ID bệnh nhân không được để trống'),
-  body('patientName')
+    .withMessage('ExaminationID khong duoc de trong')
+    .isInt({ min: 1 })
+    .withMessage('ExaminationID phai la so duong'),
+  body('serviceId')
     .notEmpty()
-    .withMessage('Tên bệnh nhân không được để trống'),
-  body('testType')
-    .notEmpty()
-    .withMessage('Loại xét nghiệm không được để trống'),
-  body('testName')
-    .notEmpty()
-    .withMessage('Tên xét nghiệm không được để trống'),
-  body('medicalRecordId')
+    .withMessage('ServiceID khong duoc de trong')
+    .isInt({ min: 1 })
+    .withMessage('ServiceID phai la so duong'),
+  body('roomId')
     .optional()
-    .custom((value) => {
-      if (value === null || value === undefined || value === '') return true;
-      if (typeof value === 'number' && Number.isFinite(value)) return true;
-      if (typeof value === 'string') return true;
-      throw new Error('ID phiếu khám không hợp lệ');
-    }),
+    .isInt({ min: 0 })
+    .withMessage('RoomID phai la so'),
+  body('status')
+    .optional()
+    .isInt({ min: 0, max: 3 })
+    .withMessage('Status phai la 0, 1, 2, hoac 3'),
+  body('note')
+    .optional()
+    .isString()
+    .withMessage('Note phai la chuoi'),
 ];
 
+// Update lab test - update canonical fields only
 const updateLabTestValidator = [
   param('id')
     .notEmpty()
-    .withMessage('ID xét nghiệm không được để trống'),
+    .withMessage('ID xet nghiem khong duoc de trong')
+    .isInt({ min: 1 })
+    .withMessage('ID phai la so duong'),
   body('status')
     .optional()
-    .custom((value) => {
-      if (value === null || value === undefined || value === '') return true;
-      if (Object.values(LAB_STATUS).includes(value)) return true;
-      if (typeof value === 'number' && [0, 1, 2, 3].includes(value)) return true;
-      if (typeof value === 'string' && (/^[0-3]$/.test(value.trim()) || value.trim().toLowerCase() === 'x' || value.trim() === '×')) return true;
-      throw new Error('Trạng thái không hợp lệ');
-    }),
-  body('results')
+    .isInt({ min: 0, max: 3 })
+    .withMessage('Status phai la 0, 1, 2, hoac 3'),
+  body('note')
     .optional()
     .isString()
-    .withMessage('Kết quả không hợp lệ'),
-  body('normalRange')
+    .withMessage('Note phai la chuoi'),
+  body('roomId')
     .optional()
-    .isString()
-    .withMessage('Khoảng bình thường không hợp lệ'),
-  body('notes')
-    .optional()
-    .isString()
-    .withMessage('Ghi chú không hợp lệ'),
-  body('conclusion')
-    .optional()
-    .isString()
-    .withMessage('Kết luận không hợp lệ'),
-  body('images')
-    .optional()
-    .isArray()
-    .withMessage('Danh sách ảnh không hợp lệ'),
+    .isInt({ min: 0 })
+    .withMessage('RoomID phai la so'),
 ];
 
+// Get lab test by ID
 const getLabTestValidator = [
   param('id')
     .notEmpty()
-    .withMessage('ID xét nghiệm không được để trống'),
+    .withMessage('ID xet nghiem khong duoc de trong')
+    .isInt({ min: 1 })
+    .withMessage('ID phai la so duong'),
 ];
 
+// List lab tests - use canonical fields only
 const listLabTestsValidator = [
   query('page')
     .optional()
     .isInt({ min: 1 })
-    .withMessage('Số trang không hợp lệ'),
+    .withMessage('So trang khong hop le'),
   query('limit')
     .optional()
     .isInt({ min: 1, max: 100 })
-    .withMessage('Số lượng mỗi trang phải từ 1-100'),
+    .withMessage('So luong moi trang phai tu 1-100'),
   query('status')
     .optional()
-    .custom((value) => {
-      if (value === null || value === undefined || value === '') return true;
-      if (Object.values(LAB_STATUS).includes(value)) return true;
-      if (/^[0-3]$/.test(String(value).trim())) return true;
-      throw new Error('Trạng thái không hợp lệ');
-    }),
-  query('patientId')
+    .isInt({ min: 0, max: 3 })
+    .withMessage('Status phai la 0, 1, 2, hoac 3'),
+  query('serviceId')
     .optional()
-    .custom((value) => {
-      if (value === null || value === undefined || value === '') return true;
-      if (typeof value === 'number' && Number.isFinite(value)) return true;
-      if (typeof value === 'string') return true;
-      throw new Error('ID bệnh nhân không hợp lệ');
-    }),
+    .isInt({ min: 1 })
+    .withMessage('ServiceID phai la so duong'),
+  query('labOrderId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('LabOrderID phai la so duong'),
+  query('examinationId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('ExaminationID phai la so duong'),
 ];
 
-// Short name aliases for routes (e.g. labTestValidator.create)
+// Short name aliases for routes
 const create = createLabTestValidator;
 const update = updateLabTestValidator;
 const getById = getLabTestValidator;
 const getList = listLabTestsValidator;
 
 export {
-  // Short names
   create,
   update,
   getById,
   getList,
-  // Original names
   createLabTestValidator,
   updateLabTestValidator,
   getLabTestValidator,

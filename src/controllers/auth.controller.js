@@ -61,8 +61,8 @@ const login = asyncHandler(async (req, res) => {
   };
 
   // Determine attribute names for username and active flag depending on model (DB schema variations)
-  const usernameAttr = getAttr(User, ['username', 'TenDangNhap', 'TenDangNhap']);
-  const isActiveAttr = getAttr(User, ['isActive', 'TrangThaiHoatDong', 'TrangThaiHoatDong']);
+const usernameAttr = 'username';
+const isActiveAttr = 'is_active';
 
   // Build where clause using detected attributes
   const where = {};
@@ -132,38 +132,37 @@ const login = asyncHandler(async (req, res) => {
   }
 
   // Check for missing required profile fields on first login (for patients)
-  if (roleId === ROLES.PATIENT) {
-    const missing = [];
-    const dobAttr = getAttr(User, ['dateOfBirth', 'date_of_birth', 'NgaySinh']);
-    const genderAttr = getAttr(User, ['gender', 'gioi_tinh', 'Gender']);
-    const addressAttr = getAttr(User, ['address', 'dia_chi', 'Address']);
-    const idNumAttr = getAttr(User, ['idNumber', 'id_number', 'cccd', 'cmnd']);
+if (roleId === ROLES.PATIENT) {
+  const missing = [];
 
-    if (!dobAttr || !user[dobAttr]) missing.push('date_of_birth');
-    if (!genderAttr || !user[genderAttr]) missing.push('gender');
-    if (!addressAttr || !user[addressAttr]) missing.push('address');
-    if (!idNumAttr || !user[idNumAttr]) missing.push('id_number');
+  if (!user.date_of_birth) missing.push('date_of_birth');
+  if (!user.gender) missing.push('gender');
+  if (!user.address) missing.push('address');
+  if (!user.id_number) missing.push('id_number');
 
-    if (missing.length > 0) {
-      // Do not issue tokens; track login attempt for profile completion
-      const lastLoginAttr = getAttr(User, ['lastLoginAt', 'last_login_at', 'NgayCapNhat']);
-      if (lastLoginAttr) user[lastLoginAttr] = new Date();
-      try { await user.save(); } catch (e) { /* ignore save errors */ }
+  if (missing.length > 0) {
+    // cập nhật last_login_at
+    user.last_login_at = new Date();
+    try { await user.save(); } catch (e) {}
 
-      return successResponse(res, {
-        user: { ...user.toJSON() },
+    return successResponse(
+      res,
+      {
+        user: user.toJSON(),
         mustCompleteProfile: true,
         missingFields: missing,
-      }, 'Vui lòng hoàn thiện hồ sơ trước khi tiếp tục');
-    }
+      },
+      'Vui lòng hoàn thiện hồ sơ trước khi tiếp tục'
+    );
   }
+}
 
   const { accessToken, refreshToken } = generateTokens(user);
 
   // Lưu refresh token vào DB để kiểm tra khi refresh
   // Try to persist refresh token + lastLogin in model-aware way; skip if model doesn't expose fields
-  const refreshAttr = getAttr(User, ['refreshToken', 'refresh_token', 'RefreshToken']);
-  const lastLoginAttr = getAttr(User, ['lastLoginAt', 'last_login_at', 'NgayCapNhat']);
+ const refreshAttr = 'refresh_token';
+const lastLoginAttr = 'last_login_at';
   if (refreshAttr) user[refreshAttr] = refreshToken;
   if (lastLoginAttr) user[lastLoginAttr] = new Date();
   try {
@@ -174,19 +173,17 @@ const login = asyncHandler(async (req, res) => {
   }
 
   // Nếu là bệnh nhân, lấy thêm patientId để FE định danh
-  let patientInfo = null;
-  if (roleId === ROLES.PATIENT) {
-    // Determine patient foreign key name for Patient model (userId vs MaNguoiDung)
-    const patientFk = getAttr(Patient, ['userId', 'MaNguoiDung']);
-    const patientWhere = {};
-    if (patientFk === 'userId') patientWhere.userId = user.id;
-    else if (patientFk === 'MaNguoiDung') patientWhere.MaNguoiDung = user.id;
-    try {
-      patientInfo = await Patient.findOne({ where: patientWhere });
-    } catch (e) {
-      // ignore
-    }
+let patientInfo = null;
+
+if (roleId === ROLES.PATIENT) {
+  try {
+    patientInfo = await Patient.findOne({
+      where: { user_id: user.id }
+    });
+  } catch (e) {
+    // ignore
   }
+}
 
   return successResponse(res, {
     user: {
@@ -491,39 +488,34 @@ const updateProfile = asyncHandler(async (req, res) => {
   }
 
   // Update user
-  await user.update({
-    fullName: fullName || user.fullName,
-    phone: phone || user.phone,
-    email: normalizedEmail ?? user.email,
-    address: address || user.address,
-    signature: signature || user.signature,
-  });
+ await user.update({
+  full_name: fullName || user.full_name,
+  phone: phone || user.phone,
+  email: normalizedEmail ?? user.email,
+  address: address || user.address,
+  signature: signature || user.signature,
+});
 
   // Update patient record if exists (include medical history and allergies)
-  let updatedPatient = null;
-  if (user.role === ROLES.PATIENT) {
-    const patientUpdate = {
-      fullName: fullName || undefined,
-      phone: phone || undefined,
-      email: normalizedEmail ?? undefined,
-      address: address || undefined,
-      // Use model attribute names (camelCase) so Sequelize maps to DB fields
-      medicalHistory: medicalHistory || medical_history || undefined,
-      allergies: allergies || undefined,
-      emergencyContact: emergencyContact || emergency_contact || undefined,
-      emergencyPhone: emergencyPhone || emergency_phone || undefined,
-    };
+ const patientUpdate = {
+  full_name: fullName || undefined,
+  phone: phone || undefined,
+  email: normalizedEmail ?? undefined,
+  address: address || undefined,
+  medical_history: medicalHistory || undefined,
+  allergies: allergies || undefined,
+  emergency_contact: emergencyContact || undefined,
+  emergency_phone: emergencyPhone || undefined,
+};
     // Remove undefined keys to avoid overwriting with null
-    Object.keys(patientUpdate).forEach((k) => patientUpdate[k] === undefined && delete patientUpdate[k]);
+   Object.keys(patientUpdate).forEach((k) => patientUpdate[k] === undefined && delete patientUpdate[k]);
 
-    try {
-      await Patient.update(patientUpdate, { where: { userId: user.id } });
-      updatedPatient = await Patient.findOne({ where: { userId: user.id } });
-    } catch (e) {
-      // ignore patient update errors but log for debugging
-      console.warn('patient update failed', e.message || e);
-    }
-  }
+try {
+  await Patient.update(patientUpdate, { where: { user_id: user.id } });
+  updatedPatient = await Patient.findOne({ where: { user_id: user.id } });
+} catch (e) {
+  console.warn('patient update failed', e.message || e);
+}
 
   // Return merged user + patient info when available so frontend can update UI
   if (updatedPatient) {
