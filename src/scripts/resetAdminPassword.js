@@ -3,6 +3,7 @@ import 'dotenv/config';
 import logger from '../utils/logger.js';
 import { connectDatabase } from '../models/database.js';
 import models from '../models/index.js';
+import { ROLES } from '../config/constants.js';
 
 async function run() {
   try {
@@ -25,7 +26,7 @@ async function run() {
         email: 'admin@phongkham.com',
         password: newPassword,
         fullName: 'Quản Trị Viên',
-        role: 'admin',
+        role: ROLES.ADMIN,
         isActive: true,
       });
       logger.info('Created admin user.');

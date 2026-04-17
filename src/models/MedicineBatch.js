@@ -9,7 +9,7 @@ export default (sequelize) => {
   const MedicineBatch = sequelize.define(
     'MedicineBatch',
     {
-      Id: {
+      id: {
         type: DataTypes.BIGINT,
         autoIncrement: true,
         primaryKey: true,
@@ -17,7 +17,7 @@ export default (sequelize) => {
         field: 'Id',
       },
 
-      MedicineId: {
+      medicineId: {
         type: DataTypes.BIGINT,
         allowNull: false,
         references: {
@@ -27,37 +27,37 @@ export default (sequelize) => {
         field: 'MedicineId',
       },
 
-      BatchNumber: {
+      batchNumber: {
         type: DataTypes.STRING(50),
         allowNull: false,
         field: 'BatchNumber',
       },
 
-      ExpiryDate: {
+      expiryDate: {
         type: DataTypes.DATEONLY,
         allowNull: true,
         field: 'ExpiryDate',
       },
 
-      ManufactureDate: {
+      manufactureDate: {
         type: DataTypes.DATEONLY,
         allowNull: true,
         field: 'ManufactureDate',
       },
 
-      QuantityInStock: {
+      quantityInStock: {
         type: DataTypes.INTEGER,
         allowNull: false,
         field: 'QuantityInStock',
       },
 
-      ImportPrice: {
+      importPrice: {
         type: DataTypes.DECIMAL(18, 2),
         allowNull: true,
         field: 'ImportPrice',
       },
 
-      Status: {
+      status: {
         type: DataTypes.TINYINT,
         allowNull: false,
         defaultValue: 1,

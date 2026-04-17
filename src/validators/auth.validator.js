@@ -48,6 +48,9 @@ const registerValidator = [
     .withMessage('Số điện thoại không hợp lệ'),
   body('role')
     .optional()
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Vai trò phải là roleId số nguyên từ 1-5')
+    .toInt()
     .isIn(Object.values(ROLES))
     .withMessage('Vai trò không hợp lệ'),
 ];

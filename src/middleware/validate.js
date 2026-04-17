@@ -49,21 +49,19 @@ const sanitize = (req, res, next) => {
   if (req.body && typeof req.body === 'object') {
     Object.keys(req.body).forEach((key) => {
       const value = req.body[key];
-      
-      // Remove undefined/null values
-      if (value === undefined || value === null) {
+
+      // Remove only undefined values. Keep explicit null so controllers
+      // can detect an explicit "clear" intent (e.g., email: null).
+      if (value === undefined) {
         delete req.body[key];
         return;
       }
 
-      // Trim strings
+      // Trim strings and convert empty strings to null to represent
+      // explicit clearing from the frontend.
       if (typeof value === 'string') {
-        req.body[key] = value.trim();
-        
-        // Remove empty strings
-        if (req.body[key] === '') {
-          delete req.body[key];
-        }
+        const trimmed = value.trim();
+        req.body[key] = trimmed === '' ? null : trimmed;
       }
     });
   }

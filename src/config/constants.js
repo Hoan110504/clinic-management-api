@@ -3,21 +3,30 @@
  * Centralized constant definitions
  */
 
-// User Roles
+// User Roles (Numeric values: 1=Admin, 2=Doctor, 3=Receptionist, 4=Pharmacist, 5=Patient)
 const ROLES = {
-  ADMIN: 'admin',
-  DOCTOR: 'doctor',
-  RECEPTIONIST: 'receptionist',
-  PHARMACIST: 'pharmacist',
-  PATIENT: 'patient',
+  ADMIN: 1,
+  DOCTOR: 2,
+  RECEPTIONIST: 3,
+  PHARMACIST: 4,
+  PATIENT: 5,
 };
 
 const ROLE_LABELS = {
-  [ROLES.ADMIN]: 'Quản trị viên',
-  [ROLES.DOCTOR]: 'Bác sĩ',
-  [ROLES.RECEPTIONIST]: 'Lễ tân',
-  [ROLES.PHARMACIST]: 'Dược sĩ',
-  [ROLES.PATIENT]: 'Bệnh nhân',
+  1: 'Quản trị viên',
+  2: 'Bác sĩ',
+  3: 'Lễ tân',
+  4: 'Dược sĩ',
+  5: 'Bệnh nhân',
+};
+
+// Role code prefixes (roleId -> staff code prefix)
+const ROLE_PREFIXES = {
+  1: 'AD',
+  2: 'BS',
+  3: 'LT',
+  4: 'DS',
+  5: 'BN',
 };
 
 // Appointment Status
@@ -124,6 +133,7 @@ const MEDICINE_CATEGORIES = [
 export {
   ROLES,
   ROLE_LABELS,
+  ROLE_PREFIXES,
   APPOINTMENT_STATUS,
   MEDICAL_RECORD_STATUS,
   LAB_STATUS,

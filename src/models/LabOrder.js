@@ -8,30 +8,30 @@ export default (sequelize) => {
   const LabOrder = sequelize.define(
     'LabOrder',
     {
-      LabOrderID: {
+      labOrderId: {
         type: DataTypes.BIGINT,
         autoIncrement: true,
         primaryKey: true,
         allowNull: false,
         field: 'LabOrderID',
       },
-      ExaminationID: {
+      examinationId: {
         type: DataTypes.BIGINT,
         allowNull: false,
         field: 'ExaminationID',
       },
-      DoctorID: {
+      doctorId: {
         type: DataTypes.BIGINT,
         allowNull: false,
         field: 'DoctorID',
       },
-      Status: {
+      status: {
         type: DataTypes.TINYINT,
         allowNull: false,
         defaultValue: 0,
         field: 'Status',
       },
-      CreatedAt: {
+      createdAt: {
         type: DataTypes.DATE,
         allowNull: true,
         field: 'CreatedAt',

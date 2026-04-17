@@ -57,12 +57,12 @@ export default (sequelize) => {
         field: 'full_name',
       },
       role: {
-        type: DataTypes.STRING(255),
+        type: DataTypes.TINYINT,
         allowNull: true,
-        defaultValue: ROLES.PATIENT,
+        defaultValue: 5, // ROLES.PATIENT
         validate: {
           isIn: {
-            args: [Object.values(ROLES)],
+            args: [[1, 2, 3, 4, 5]],
             msg: 'Vai trò không hợp lệ',
           },
         },
@@ -105,16 +105,6 @@ export default (sequelize) => {
       },
       avatar: {
         type: DataTypes.STRING(255),
-        allowNull: true,
-      },
-      // Patient specific fields
-      medicalHistory: {
-        type: DataTypes.TEXT,
-        allowNull: true,
-        field: 'medical_history',
-      },
-      allergies: {
-        type: DataTypes.TEXT,
         allowNull: true,
       },
       isActive: {

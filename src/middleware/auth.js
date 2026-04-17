@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
 import { User } from '../models/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
+import { ROLES } from '../config/constants.js';
 import { asyncHandler } from '../utils/helpers.js';
 
 /**
@@ -39,10 +40,16 @@ const authenticate = asyncHandler(async (req, res, next) => {
       throw new UnauthorizedError('Tài khoản đã bị vô hiệu hóa', 'ACCOUNT_DISABLED');
     }
 
-    // Gắn thông tin user vào request để các middleware/controller sau dùng
+    // RBAC roleId-only: chỉ chấp nhận role số hợp lệ 1-5
+    const roleId = Number(user.role);
+    if (!Number.isInteger(roleId) || !Object.values(ROLES).includes(roleId)) {
+      throw new UnauthorizedError('Vai trò tài khoản không hợp lệ', 'INVALID_ROLE');
+    }
+
     req.user = user;
+    req.user.role = roleId;
     req.userId = user.id;
-    req.userRole = user.role;
+    req.userRole = roleId;
 
     next();
   } catch (error) {
@@ -77,9 +84,14 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
 
     // Chỉ gắn user nếu tài khoản còn hoạt động
     if (user && user.isActive) {
+      const roleId = Number(user.role);
+      if (!Number.isInteger(roleId) || !Object.values(ROLES).includes(roleId)) {
+        return next();
+      }
       req.user = user;
+      req.user.role = roleId;
       req.userId = user.id;
-      req.userRole = user.role;
+      req.userRole = roleId;
     }
   } catch (error) {
     // Nuốt lỗi - token sai/hết hạn không ảnh hưởng request
@@ -90,9 +102,9 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
 
 /**
  * Phân quyền theo vai trò (RBAC)
- * Sử dụng closure pattern: authorize('admin', 'doctor') trả về middleware
+ * Sử dụng closure pattern: authorize(ROLES.ADMIN, ROLES.DOCTOR) trả về middleware
  * Phải đặt SAU authenticate trong chuỗi middleware
- * @param {...string} roles - Danh sách vai trò được phép (admin, doctor, receptionist, pharmacist, patient)
+ * @param {...number} roles - Danh sách roleId được phép (1-5)
  */
 const authorize = (...roles) => {
   return (req, res, next) => {
@@ -100,12 +112,8 @@ const authorize = (...roles) => {
       throw new UnauthorizedError('Yêu cầu đăng nhập', 'NOT_AUTHENTICATED');
     }
 
-    // Kiểm tra vai trò user có nằm trong danh sách được phép không
     if (!roles.includes(req.user.role)) {
-      throw new ForbiddenError(
-        'Bạn không có quyền thực hiện hành động này',
-        'INSUFFICIENT_PERMISSIONS'
-      );
+      throw new ForbiddenError('Bạn không có quyền thực hiện hành động này', 'INSUFFICIENT_PERMISSIONS');
     }
 
     next();
@@ -125,7 +133,7 @@ const authorizeOwnerOrAdmin = (getResourceUserId) => {
     }
 
     // Admin được phép truy cập mọi tài nguyên → bỏ qua kiểm tra
-    if (req.user.role === 'admin') {
+    if (req.user.role === ROLES.ADMIN) {
       return next();
     }
 

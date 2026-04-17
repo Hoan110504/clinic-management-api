@@ -8,7 +8,7 @@ export default (sequelize) => {
   const LabService = sequelize.define(
     'LabService',
     {
-      ServiceID: {
+      serviceId: {
         type: DataTypes.BIGINT,
         primaryKey: true,
         autoIncrement: true,
@@ -16,39 +16,39 @@ export default (sequelize) => {
         field: 'ServiceID',
       },
 
-      ServiceName: {
+      serviceName: {
         type: DataTypes.STRING(255),
         allowNull: false,
         field: 'ServiceName',
       },
 
-      RoomID: {
+      roomId: {
         type: DataTypes.BIGINT,
         allowNull: true,
         field: 'RoomID',
       },
 
-      Price: {
+      price: {
         type: DataTypes.DECIMAL(18, 2),
         allowNull: false,
         field: 'Price',
       },
 
-      ServiceType: {
+      serviceType: {
         type: DataTypes.TINYINT,
         allowNull: false,
         field: 'ServiceType',
         comment: '1=Ultrasound, 2=ECG, 3=Lab Test',
       },
 
-      IsActive: {
+      isActive: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: true,
         field: 'IsActive',
       },
 
-      CreatedAt: {
+      createdAt: {
         type: DataTypes.DATE,
         allowNull: false,
         field: 'CreatedAt',

@@ -485,8 +485,8 @@ const fetchLabTestRowsByItems = async (itemsInput) => {
     const order = item?.LabOrder || {};
     const exam = order?.examination || {};
     const service = item?.Service || {};
-    const patient = patientMap.get(String(exam.PatientId || '')) || {};
-    const appointment = appointmentMap.get(String(exam.AppointmentID || '')) || {};
+    const patient = patientMap.get(String(exam.PatientId ?? '')) || {};
+    const appointment = appointmentMap.get(String(exam.AppointmentID ?? '')) || {};
     const result = resultByPair.get(`${order.ExaminationID}::${item.ServiceID}`) || null;
 
     const itemMeta = parseMetaNote(item?.Note);
@@ -494,54 +494,54 @@ const fetchLabTestRowsByItems = async (itemsInput) => {
     const meta = { ...itemMeta, ...resultMeta };
 
     const images = parseImages(result?.ImageUrl);
-    const doctorOrder = doctorMap.get(String(order.DoctorID || '')) || null;
-    const doctorResult = doctorMap.get(String(result?.DoctorID || '')) || null;
+    const doctorOrder = doctorMap.get(String(order.DoctorID ?? '')) || null;
+    const doctorResult = doctorMap.get(String(result?.DoctorID ?? '')) || null;
 
-    const examinationDate = exam?.ExaminationDate || null;
-    const orderedDate = item?.CreatedAt || order?.CreatedAt || null;
-    const resultDate = result?.ResultDate || null;
+    const examinationDate = exam?.ExaminationDate ?? null;
+    const orderedDate = item?.CreatedAt ?? order?.CreatedAt ?? null;
+    const resultDate = result?.ResultDate ?? null;
+    const testTypeCode = service.ServiceType ?? 1;
 
     return {
       id: item.LabOrderItemID,
-      testId: item.LabOrderItemID,
       labOrderId: item.LabOrderID,
       serviceId: item.ServiceID,
       medicalRecordId: order.ExaminationID,
-      recordId: order.ExaminationID,
-      appointmentId: exam.AppointmentID || null,
+      appointmentId: exam.AppointmentID ?? null,
 
-      patientId: exam.PatientId || null,
-      patientName: appointment.patientName || patient.fullName || '',
-      patientPhone: appointment.patientPhone || patient.phone || '',
-      patientDob: appointment.patientBirthDate || patient.dateOfBirth || null,
-      gender: appointment.patientGender || patient.gender || '',
+      patientId: exam.PatientId ?? null,
+      patientName: appointment.patientName ?? patient.fullName ?? '',
+      patientPhone: appointment.patientPhone ?? patient.phone ?? '',
+      patientDob: appointment.patientBirthDate ?? patient.dateOfBirth ?? null,
+      gender: appointment.patientGender ?? patient.gender ?? '',
 
-      testType: mapTypeToLabel(service.ServiceType),
-      testTypeCode: service.ServiceType || 1,
-      room: mapTypeToLabel(service.ServiceType),
-      roomId: service.ServiceType || 1,
-      testName: service.ServiceName || '',
+      testType: mapTypeToLabel(testTypeCode),
+      testTypeCode,
+      room: mapTypeToLabel(testTypeCode),
+      roomId: item.RoomID ?? service.RoomID ?? null,
+      testName: service.ServiceName ?? '',
       status: mapStatusToLabel(item.Status),
       examinationDate,
 
-      orderedBy: doctorOrder?.fullName || '',
-      orderedById: order.DoctorID || null,
+      orderedBy: doctorOrder?.fullName ?? '',
+      orderedById: order.DoctorID ?? null,
       orderedDate,
 
-      results: result?.ResultText || '',
-      normalRange: meta.normalRange || '',
-      notes: meta.notes || '',
-      conclusion: result?.Conclusion || '',
+      results: result?.ResultText ?? '',
+      normalRange: meta.normalRange ?? '',
+      notes: meta.notes ?? '',
+      conclusion: result?.Conclusion ?? '',
       images,
-      imageUrl: images[0] || null,
+      imageUrl: images[0] ?? null,
       resultDate,
-      labResultLabOrderItemId: result?.LabOrderItemID || null,
-      labResultRoomId: result?.RoomID || null,
-      confirmedBy: meta.confirmedBy || doctorResult?.fullName || null,
-      confirmedAt: meta.confirmedAt || null,
-      cancelReason: meta.cancelReason || '',
-      canceledBy: meta.canceledBy || null,
-      canceledAt: meta.canceledAt || null,
+      labResultId: result?.LabResultID ?? null,
+      labResultLabOrderItemId: result?.LabOrderItemID ?? null,
+      labResultRoomId: result?.RoomID ?? null,
+      confirmedBy: meta.confirmedBy ?? doctorResult?.fullName ?? null,
+      confirmedAt: meta.confirmedAt ?? null,
+      cancelReason: meta.cancelReason ?? '',
+      canceledBy: meta.canceledBy ?? null,
+      canceledAt: meta.canceledAt ?? null,
 
       createdOnServer: true,
     };

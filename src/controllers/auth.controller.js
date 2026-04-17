@@ -112,6 +112,8 @@ const login = asyncHandler(async (req, res) => {
     throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
   }
 
+  const roleId = Number(user.role);
+
   // Tạo cặp access + refresh token
   // If user is required to change password, do not issue tokens
   if (user.mustChangePassword) {
@@ -130,7 +132,7 @@ const login = asyncHandler(async (req, res) => {
   }
 
   // Check for missing required profile fields on first login (for patients)
-  if (user.role === ROLES.PATIENT || (!user.role && user.VaiTro === 5)) {
+  if (roleId === ROLES.PATIENT) {
     const missing = [];
     const dobAttr = getAttr(User, ['dateOfBirth', 'date_of_birth', 'NgaySinh']);
     const genderAttr = getAttr(User, ['gender', 'gioi_tinh', 'Gender']);
@@ -173,7 +175,7 @@ const login = asyncHandler(async (req, res) => {
 
   // Nếu là bệnh nhân, lấy thêm patientId để FE định danh
   let patientInfo = null;
-  if ((user.role === ROLES.PATIENT) || (!user.role && user.VaiTro === 5)) {
+  if (roleId === ROLES.PATIENT) {
     // Determine patient foreign key name for Patient model (userId vs MaNguoiDung)
     const patientFk = getAttr(Patient, ['userId', 'MaNguoiDung']);
     const patientWhere = {};

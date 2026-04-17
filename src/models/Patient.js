@@ -17,9 +17,13 @@ export default (sequelize) => {
         field: 'id',
       },
       userId: {
-        type: DataTypes.CHAR(36),
+        type: DataTypes.BIGINT,
         allowNull: true,
         field: 'user_id',
+        references: {
+          model: 'users',
+          key: 'id',
+        },
       },
       fullName: {
         type: DataTypes.STRING(100),

@@ -30,6 +30,9 @@ const createUserValidator = [
   body('role')
     .notEmpty()
     .withMessage('Vai trò không được để trống')
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Vai trò phải là roleId số nguyên từ 1-5')
+    .toInt()
     .isIn(Object.values(ROLES))
     .withMessage('Vai trò không hợp lệ'),
   body('phone')
@@ -62,6 +65,9 @@ const updateUserValidator = [
     .withMessage('Họ tên phải từ 2-100 ký tự'),
   body('role')
     .optional()
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Vai trò phải là roleId số nguyên từ 1-5')
+    .toInt()
     .isIn(Object.values(ROLES))
     .withMessage('Vai trò không hợp lệ'),
   body('phone')
@@ -86,6 +92,17 @@ const getUserValidator = [
     .withMessage('ID không hợp lệ'),
 ];
 
+const getUsersByRoleValidator = [
+  param('role')
+    .notEmpty()
+    .withMessage('Vai trò không được để trống')
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Vai trò phải là roleId số nguyên từ 1-5')
+    .toInt()
+    .isIn(Object.values(ROLES))
+    .withMessage('Vai trò không hợp lệ'),
+];
+
 const listUsersValidator = [
   query('page')
     .optional()
@@ -97,6 +114,9 @@ const listUsersValidator = [
     .withMessage('Số lượng mỗi trang phải từ 1-100'),
   query('role')
     .optional()
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Vai trò phải là roleId số nguyên từ 1-5')
+    .toInt()
     .isIn(Object.values(ROLES))
     .withMessage('Vai trò không hợp lệ'),
   query('search')
@@ -109,6 +129,7 @@ export {
   createUserValidator,
   updateUserValidator,
   getUserValidator,
+  getUsersByRoleValidator,
   listUsersValidator,
 };
 
@@ -116,4 +137,5 @@ export {
 export const create = createUserValidator;
 export const update = updateUserValidator;
 export const getById = getUserValidator;
+export const getByRole = getUsersByRoleValidator;
 export const getList = listUsersValidator;

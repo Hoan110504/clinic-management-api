@@ -14,7 +14,7 @@ import {
   errorResponse,
 } from '../utils/response.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
-import { INVENTORY_TRANSACTION_TYPES } from '../config/constants.js';
+import { INVENTORY_TRANSACTION_TYPES, ROLES, ROLE_PREFIXES } from '../config/constants.js';
 import { formatToVietnamISOString } from '../utils/timezone.js';
 
 const normalizeIdKey = (id) => String(id || '').trim().toLowerCase();
@@ -22,22 +22,6 @@ const normalizeIdKey = (id) => String(id || '').trim().toLowerCase();
 const formatPerformerDisplay = (name, code) => {
   if (name && code) return `${name} - ${code}`;
   return name || code || null;
-};
-
-const ROLE_PREFIX_BY_ROLE = {
-  admin: 'AD',
-  doctor: 'BS',
-  receptionist: 'LT',
-  pharmacist: 'DS',
-  patient: 'BN',
-};
-
-const ROLE_PREFIX_BY_VAITRO = {
-  1: 'AD',
-  2: 'BS',
-  3: 'LT',
-  4: 'DS',
-  5: 'BN',
 };
 
 const buildPerformerLookup = async (performerIds = []) => {
@@ -50,45 +34,27 @@ const buildPerformerLookup = async (performerIds = []) => {
       console.error('buildPerformerLookup: failed to read users', err?.message || err);
       return [];
     }),
-    (sequelize.models && sequelize.models.NguoiDung && typeof sequelize.models.NguoiDung.findAll === 'function'
-      ? sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'HoTen', 'TenDangNhap', 'VaiTro', 'MaNguoiDung'], where: { Id: { [Op.in]: rawIds } }, raw: true }).catch(() => [])
-      : Promise.resolve([])),
+
   ]);
 
   // Precompute dynamic codes only for those without stored code
-  const appRoles = [...new Set(appUsers.map((u) => u.role).filter(Boolean))];
-  const legacyRoles = [...new Set(legacyUsers.map((u) => Number(u.VaiTro)).filter(Boolean))];
+  // RBAC roleId-only: keep only numeric roleId values (1-5)
+  const appRoles = [...new Set(appUsers.map((u) => Number(u.role)).filter((r) => Number.isInteger(r) && Object.values(ROLES).includes(r)))];
+
 
   const allAppUsersInRoles = appRoles.length
     ? await User.findAll({ attributes: ['id', 'role'], where: { role: { [Op.in]: appRoles } }, raw: true }).catch(() => [])
     : [];
 
-  const allLegacyUsersInRoles = legacyRoles.length
-    ? await (sequelize.models && sequelize.models.NguoiDung && typeof sequelize.models.NguoiDung.findAll === 'function'
-        ? sequelize.models.NguoiDung.findAll({ attributes: ['Id', 'VaiTro'], where: { VaiTro: { [Op.in]: legacyRoles } }, raw: true }).catch(() => [])
-        : Promise.resolve([]))
-    : [];
-
+ 
   const appCodeMap = new Map();
   for (const role of appRoles) {
-    const sameRole = allAppUsersInRoles.filter((u) => u.role === role).sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
-    const prefix = ROLE_PREFIX_BY_ROLE[role] || 'UN';
+    const sameRole = allAppUsersInRoles.filter((u) => Number(u.role) === role).sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+    const prefix = ROLE_PREFIXES[role] || 'UN';
     sameRole.forEach((u, index) => appCodeMap.set(normalizeIdKey(u.id), `${prefix}${String(index + 1).padStart(3, '0')}`));
   }
 
-  const legacyCodeMap = new Map();
-  for (const v of legacyRoles) {
-    const sameRole = allLegacyUsersInRoles.filter((u) => Number(u.VaiTro) === Number(v)).sort((a, b) => String(a.Id || '').localeCompare(String(b.Id || '')));
-    const prefix = ROLE_PREFIX_BY_VAITRO[v] || 'UN';
-    sameRole.forEach((u, index) => legacyCodeMap.set(normalizeIdKey(u.Id), `${prefix}${String(index + 1).padStart(3, '0')}`));
-  }
 
-  for (const lu of legacyUsers) {
-    const idKey = normalizeIdKey(lu.Id);
-    const name = lu.HoTen || null;
-    const code = lu.MaNguoiDung || legacyCodeMap.get(idKey) || lu.TenDangNhap || null;
-    performerMap.set(idKey, { name, code, display: formatPerformerDisplay(name, code) });
-  }
 
   for (const au of appUsers) {
     const idKey = normalizeIdKey(au.id);
@@ -110,26 +76,24 @@ const getAllMedicines = asyncHandler(async (req, res) => {
 
   // Build where clause
   const where = {};
-  // Map query params to available columns in DB (Thuoc): TenThuoc, DonVi, NhomThuoc, TrangThai
   if (isActive !== undefined) {
-    where.IsActive = isActive === 'true';
+    where.isActive = isActive === 'true';
   } else {
-    where.IsActive = true;
+    where.isActive = true;
   }
 
   if (category) {
-    where.Category = category;
+    where.category = category;
   }
 
   if (search) {
     const isNumeric = /^\d+$/.test(String(search));
     where[Op.or] = isNumeric
-      ? [{ Name: { [Op.like]: `%${search}%` } }, { Id: Number(search) }]
-      : [{ Name: { [Op.like]: `%${search}%` } }];
+      ? [{ name: { [Op.like]: `%${search}%` } }, { id: Number(search) }]
+      : [{ name: { [Op.like]: `%${search}%` } }];
   }
 
-  // Simple ordering fallback (default to Id:desc for global descending)
-  const order = parseSort(sort, ['Id', 'Name', 'Category', 'Unit', 'Price'], 'Id:desc');
+  const order = parseSort(sort, ['id', 'name', 'category', 'unit', 'price'], 'id:desc');
 
   try {
     const { count, rows } = await Medicine.findAndCountAll({
@@ -137,17 +101,16 @@ const getAllMedicines = asyncHandler(async (req, res) => {
       order,
       limit,
       offset,
-      attributes: ['Id', 'Name', 'Unit', 'Category', 'Price', 'IsActive'],
+      attributes: ['id', 'name', 'unit', 'category', 'price', 'isActive'],
     });
 
-    // Normalize result shape to { id, name, category, unit, price, isActive }
     const data = (rows || []).map(r => ({
-      id: r.Id,
-      name: r.Name,
-      category: r.Category,
-      unit: r.Unit,
-      price: r.Price,
-      isActive: r.IsActive,
+      id: r.id,
+      name: r.name,
+      category: r.category,
+      unit: r.unit,
+      price: r.price,
+      isActive: r.isActive,
     }));
 
     return paginatedResponse(res, {
@@ -225,19 +188,19 @@ const createMedicine = asyncHandler(async (req, res) => {
   } = req.body;
 
   const medicine = await Medicine.create({
-    Name: name,
-    Unit: unit,
-    Price: price,
-    Category: category,
-    IsActive: true,
+    name,
+    unit,
+    price,
+    category,
+    isActive: true,
   });
 
   // Create initial inventory transaction if quantity > 0
   if (quantity > 0) {
-    const batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id } });
+    const batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.id } });
     await InventoryTransaction.create({
-      MedicineBatchId: batch ? batch.Id : null,
-      MedicineId: medicine.Id,
+      MedicineBatchId: batch ? batch.id : null,
+      MedicineId: medicine.id,
       TransactionType: InventoryTransaction.TRANSACTION_TYPE.IMPORT || 1,
       Quantity: quantity,
       QuantityBefore: 0,
@@ -262,42 +225,20 @@ const updateMedicine = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const updateData = req.body;
 
-  let medicine = await Medicine.findByPk(id);
+  const medicine = await Medicine.findByPk(id);
   if (!medicine) {
-    // Try flexible lookups: numeric id, alternative keys (MaThuoc/Code/Name)
-    console.warn(`adjustInventory: Medicine.findByPk(${id}) returned null, attempting fallback lookups`);
-    const numId = Number(id);
-    if (!Number.isNaN(numId)) {
-      medicine = await Medicine.findByPk(numId).catch(() => null);
-    }
-    if (!medicine) {
-      const rawAttrs = Medicine.rawAttributes || {};
-      const altFields = ['Id', 'MaThuoc', 'Code', 'code', 'Name', 'name'];
-      const orClauses = [];
-      for (const f of altFields) {
-        if (Object.prototype.hasOwnProperty.call(rawAttrs, f)) {
-          orClauses.push({ [f]: id });
-        }
-      }
-      if (orClauses.length) {
-        medicine = await Medicine.findOne({ where: { [Op.or]: orClauses } }).catch(() => null);
-      }
-    }
-    if (!medicine) {
-      console.error(`adjustInventory: unable to resolve Medicine for id='${id}'`);
-      throw new NotFoundError('Không tìm thấy thuốc');
-    }
+    throw new NotFoundError('Không tìm thấy thuốc');
   }
 
   // Don't allow direct quantity update - stock is tracked by transactions
   delete updateData.quantity;
 
   const mappedUpdate = {};
-  if (Object.prototype.hasOwnProperty.call(updateData, 'name')) mappedUpdate.Name = updateData.name;
-  if (Object.prototype.hasOwnProperty.call(updateData, 'unit')) mappedUpdate.Unit = updateData.unit;
-  if (Object.prototype.hasOwnProperty.call(updateData, 'category')) mappedUpdate.Category = updateData.category;
-  if (Object.prototype.hasOwnProperty.call(updateData, 'price')) mappedUpdate.Price = updateData.price;
-  if (Object.prototype.hasOwnProperty.call(updateData, 'isActive')) mappedUpdate.IsActive = updateData.isActive;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'name')) mappedUpdate.name = updateData.name;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'unit')) mappedUpdate.unit = updateData.unit;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'category')) mappedUpdate.category = updateData.category;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'price')) mappedUpdate.price = updateData.price;
+  if (Object.prototype.hasOwnProperty.call(updateData, 'isActive')) mappedUpdate.isActive = updateData.isActive;
 
   await medicine.update(mappedUpdate);
 

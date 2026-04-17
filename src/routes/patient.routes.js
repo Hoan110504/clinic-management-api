@@ -43,7 +43,7 @@ router.get(
  */
 router.get(
   '/:id',
-  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST),
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT),
   validate(patientValidator.getById),
   patientController.getPatientById
 );
@@ -63,11 +63,11 @@ router.post(
 /**
  * @route PUT /api/patients/:id
  * @desc Update patient
- * @access Admin, Receptionist
+ * @access Admin, Receptionist, Patient (patient can only edit own profile with restrictions)
  */
 router.put(
   '/:id',
-  authorize(ROLES.ADMIN, ROLES.RECEPTIONIST),
+  authorize(ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.PATIENT),
   validate(patientValidator.update),
   patientController.updatePatient
 );

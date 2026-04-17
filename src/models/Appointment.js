@@ -100,9 +100,13 @@ export default (sequelize) => {
       },
       // Doctor assignment
       preferredDoctorId: {
-        type: DataTypes.CHAR(36),
+        type: DataTypes.BIGINT,
         allowNull: true,
         field: 'preferred_doctor_id',
+        references: {
+          model: 'users',
+          key: 'id',
+        },
       },
       preferredDoctorName: {
         type: DataTypes.STRING(100),
@@ -110,9 +114,13 @@ export default (sequelize) => {
         field: 'preferred_doctor_name',
       },
       assignedDoctorId: {
-        type: DataTypes.CHAR(36),
+        type: DataTypes.BIGINT,
         allowNull: true,
         field: 'assigned_doctor_id',
+        references: {
+          model: 'users',
+          key: 'id',
+        },
       },
       assignedDoctorName: {
         type: DataTypes.STRING(100),
@@ -122,7 +130,7 @@ export default (sequelize) => {
       // Status and notes
       status: {
         // Persist numeric codes in DB: 1=Đã đặt lịch, 2=Chờ khám, 3=Hoàn thành, 4=Đã hủy
-        type: DataTypes.INTEGER,
+        type: DataTypes.TINYINT,
         allowNull: false,
         defaultValue: 1,
         field: 'Status',
@@ -158,15 +166,14 @@ export default (sequelize) => {
         allowNull: true,
         field: 'cancel_reason',
       },
-      cancelledReason: {
-        type: DataTypes.STRING(50),
-        allowNull: true,
-        field: 'cancelled_reason',
-      },
       cancelledBy: {
-        type: DataTypes.CHAR(36),
+        type: DataTypes.BIGINT,
         allowNull: true,
         field: 'cancelled_by',
+        references: {
+          model: 'users',
+          key: 'id',
+        },
       },
       rescheduledFrom: {
         type: DataTypes.DATEONLY,

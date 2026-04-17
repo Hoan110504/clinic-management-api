@@ -6,7 +6,7 @@ import { DataTypes } from 'sequelize';
 
 export default (sequelize) => {
   const LabResult = sequelize.define('LabResult', {
-    LabResultID: {
+    labResultId: {
       type: DataTypes.BIGINT,
       autoIncrement: true,
       primaryKey: true,
@@ -14,7 +14,7 @@ export default (sequelize) => {
       field: 'LabResultID'
     },
 
-    ExaminationID: {
+    examinationId: {
       type: DataTypes.BIGINT,
       allowNull: false,
       field: 'ExaminationID',
@@ -24,7 +24,7 @@ export default (sequelize) => {
       }
     },
 
-    ServiceID: {
+    serviceId: {
       type: DataTypes.BIGINT,
       allowNull: false,
       field: 'ServiceID',
@@ -34,68 +34,67 @@ export default (sequelize) => {
       }
     },
 
-    LabOrderItemID: {
+    labOrderItemId: {
       type: DataTypes.BIGINT,
       allowNull: true,
       field: 'LabOrderItemID',
     },
 
-    RoomID: {
+    roomId: {
       type: DataTypes.BIGINT,
       allowNull: true,
       field: 'RoomID',
     },
 
-    ResultText: {
+    resultText: {
       type: DataTypes.TEXT('long'),
       allowNull: false,
       field: 'ResultText'
     },
 
-    ImageUrl: {
-      // Allow long image URLs (data URLs / base64) by using TEXT
+    imageUrl: {
       type: DataTypes.TEXT('long'),
       allowNull: true,
       field: 'ImageUrl'
     },
 
-    Conclusion: {
+    conclusion: {
       type: DataTypes.STRING(1000),
       allowNull: true,
       field: 'Conclusion'
     },
 
-    Note: {
+    note: {
       type: DataTypes.STRING(1000),
       allowNull: true,
       field: 'Note'
     },
 
-    DoctorID: {
+    doctorId: {
       type: DataTypes.BIGINT,
       allowNull: false,
       field: 'DoctorID',
       references: {
-        model: 'Users', // hoặc 'Staff' nếu bác sĩ lưu ở đó
+        model: 'Users',
         key: 'id'
       }
     },
 
-    ResultDate: {
+    resultDate: {
       type: DataTypes.DATE,
       allowNull: true,
       defaultValue: DataTypes.NOW,
       field: 'ResultDate'
     },
 
-    CreatedAt: {
+    createdAt: {
       type: DataTypes.DATE,
       allowNull: true,
       defaultValue: DataTypes.NOW,
       field: 'CreatedAt'
     },
 
-    UpdatedAt: {
+    updatedAt: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'UpdatedAt'

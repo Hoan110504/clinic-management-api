@@ -33,6 +33,7 @@ router.get(
 router.get(
   '/role/:role',
   authorize(ROLES.ADMIN, ROLES.RECEPTIONIST),
+  validate(userValidator.getByRole),
   userController.getUsersByRole
 );
 

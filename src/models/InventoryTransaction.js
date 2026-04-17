@@ -76,10 +76,13 @@ export default (sequelize) => {
       // Reference information is captured via `ReferenceType` and `Note`.
 
       PerformedByUserId: {
-        // legacy column stores GUIDs (char(36)) in some deployments; keep flexible
-        type: DataTypes.CHAR(36),
+        type: DataTypes.BIGINT,
         allowNull: true,
         field: 'PerformedByUserId',
+        references: {
+          model: 'users',
+          key: 'id',
+        },
       },
 
       CreatedAt: {

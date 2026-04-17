@@ -6,14 +6,14 @@ import { Op } from 'sequelize';
 import { Patient, User, MedicalRecord, Appointment, LabTest, Payment } from '../models/index.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import logger from '../utils/logger.js';
-import { GENDER } from '../config/constants.js';
+import { GENDER, ROLES } from '../config/constants.js';
 import {
   successResponse,
   createdResponse,
   paginatedResponse,
   noContentResponse,
 } from '../utils/response.js';
-import { NotFoundError, ConflictError, BadRequestError } from '../utils/errors.js';
+import { NotFoundError, ConflictError, BadRequestError, ForbiddenError } from '../utils/errors.js';
 
 /**
  * Get all patients (with pagination and filters)
@@ -109,6 +109,24 @@ const getPatientById = asyncHandler(async (req, res) => {
 
   if (!patient) {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
+  }
+
+  // If the requester is a patient, ensure they can only access their own record
+  if (req.userRole === ROLES.PATIENT) {
+    // Compare as strings to avoid type mismatches. Allow access when either:
+    // - patient.userId matches the logged-in user id, OR
+    // - patient.id matches the logged-in user id (some patients are stored without userId)
+    const isOwner = (patient.userId && String(patient.userId) === String(req.userId)) || String(patient.id) === String(req.userId);
+    if (!isOwner) {
+      logger.warn('getPatientById - patient access denied', {
+        routePatientId: id,
+        patient_userId: patient.userId,
+        patient_id: patient.id,
+        requesterId: req.userId,
+        requesterRole: req.userRole,
+      });
+      throw new ForbiddenError('Bạn không có quyền xem hồ sơ bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+    }
   }
 
   return successResponse(res, patient);
@@ -274,15 +292,102 @@ const createPatient = asyncHandler(async (req, res) => {
 const updatePatient = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const updateData = req.body;
+  const currentUser = req.user;
+  const userRole = req.userRole;
 
   const patient = await Patient.findByPk(id);
   if (!patient) {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
+  // PATIENT role can only edit their own profile with specific fields
+  if (userRole === ROLES.PATIENT) {
+    // Check if patient is editing their own record
+    // Compare as strings to avoid type-mismatch. Allow edit when either:
+    // - patient.userId matches the logged-in user id, OR
+    // - patient.id matches the logged-in user id (legacy records)
+    const isOwner = (patient.userId && String(patient.userId) === String(currentUser.id)) || String(patient.id) === String(currentUser.id);
+    if (!isOwner) {
+      // Log detailed info to help debug false 403s (ownership/ID mismatch)
+      try {
+        logger.warn('patient.update - ownership check failed', {
+          routePatientId: id,
+          patient_userId: patient.userId,
+          patient_id: patient.id,
+          currentUser_id: currentUser.id,
+          currentUser_role: userRole,
+        });
+      } catch (e) {
+        // swallow logging errors
+      }
+
+      throw new ForbiddenError('Bạn không có quyền chỉnh sửa hồ sơ của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+    }
+
+    // Allowed fields for patients to edit:
+    // - Contact info: phone, email, address
+    // - Medical info: medicalHistory, allergies
+    // - Other info: emergencyContact, emergencyPhone, notes
+    const allowedFields = [
+      'phone',
+      'email',
+      'address',
+      'medicalHistory',
+      'allergies',
+      'emergencyContact',
+      'emergencyPhone',
+      'notes',
+    ];
+
+    // Filter out disallowed fields
+      // Keep only allowed fields, and remove any restricted fields if present.
+      // Accept both camelCase and snake_case variants from clients.
+      const restrictedFieldVariants = new Set([
+        'idNumber', 'id_number',
+        'fullName', 'full_name',
+        'dateOfBirth', 'date_of_birth',
+        'gender',
+        'insuranceNumber', 'insurance_number',
+      ]);
+
+      const attemptedRestricted = Object.keys(updateData).filter((k) => restrictedFieldVariants.has(k));
+      if (attemptedRestricted.length > 0) {
+        try {
+          logger.warn('patient.update - patient attempted to change restricted fields, ignoring', {
+            patientId: id,
+            attemptedRestricted,
+            userId: currentUser.id,
+          });
+        } catch (e) {}
+        // Remove restricted keys from payload so request can continue
+        attemptedRestricted.forEach((k) => delete updateData[k]);
+      }
+
+      // Remove any other keys not in allowedFields
+      Object.keys(updateData).forEach(key => {
+        if (!allowedFields.includes(key)) {
+          delete updateData[key];
+        }
+      });
+  }
+
   // Normalize email if provided
   if ('email' in updateData) {
     updateData.email = updateData.email && String(updateData.email).trim() !== '' ? String(updateData.email).trim() : null;
+  }
+
+  // Map common snake_case keys from frontend/backward clients to camelCase model attributes
+  if ('emergency_contact' in updateData && !('emergencyContact' in updateData)) {
+    updateData.emergencyContact = updateData.emergency_contact;
+  }
+  if ('emergency_phone' in updateData && !('emergencyPhone' in updateData)) {
+    updateData.emergencyPhone = updateData.emergency_phone;
+  }
+  if ('insurance_number' in updateData && !('insuranceNumber' in updateData)) {
+    updateData.insuranceNumber = updateData.insurance_number;
+  }
+  if ('medical_history' in updateData && !('medicalHistory' in updateData)) {
+    updateData.medicalHistory = updateData.medical_history;
   }
 
   // Check ID number uniqueness if changed
@@ -292,6 +397,11 @@ const updatePatient = asyncHandler(async (req, res) => {
       throw new ConflictError('Số CCCD đã được đăng ký');
     }
   }
+
+  // Debug: log incoming updateData keys to help track missing fields (emergencyContact/emergencyPhone)
+  try {
+    logger.debug('updatePatient - incoming updateData', { id, updateData });
+  } catch (e) {}
 
   // Check phone uniqueness if changed
   if (updateData.phone && updateData.phone !== patient.phone) {
@@ -310,6 +420,10 @@ const updatePatient = asyncHandler(async (req, res) => {
   }
 
   await patient.update(updateData);
+
+  try {
+    logger.debug('updatePatient - updated patient', { id: patient.id, patient: patient.toJSON ? patient.toJSON() : patient });
+  } catch (e) {}
 
   // Update linked user if exists
   if (patient.userId) {

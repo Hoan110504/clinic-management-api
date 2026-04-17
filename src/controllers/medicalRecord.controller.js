@@ -128,6 +128,80 @@ function mapMedicalExamStatus(rawStatus) {
   return { statusCode: null, statusLabel: String(rawStatus) };
 }
 
+const formatExaminationCode = (examinationId, createdAt) => {
+  if (!examinationId) return null;
+  const d = createdAt ? new Date(createdAt) : new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `PK-${y}${m}${day}-${String(examinationId).padStart(6, '0')}`;
+};
+
+const toMedicalExaminationContract = (row = {}) => {
+  const examinationId = row.ExaminationID ?? null;
+  const appointmentId = row.AppointmentID ?? null;
+  const patientId = row.PatientId ?? null;
+  const doctorId = row.DoctorID ?? null;
+  const examinationDate = row.ExaminationDate ?? null;
+  const createdAt = row.CreatedAt ?? null;
+  const updatedAt = row.UpdatedAt ?? null;
+
+  return {
+    id: examinationId,
+    examinationId,
+    examinationCode: formatExaminationCode(examinationId, createdAt || examinationDate),
+    appointmentId,
+    patientId,
+    doctorId,
+    examinationDate,
+    symptoms: row.Symptoms ?? '',
+    bloodPressure: row.BloodPressure ?? '',
+    pulse: row.Pulse ?? null,
+    temperature: row.Temperature ?? null,
+    spO2: row.SpO2 ?? null,
+    respirationRate: row.RespirationRate ?? null,
+    weight: row.Weight ?? null,
+    height: row.Height ?? null,
+    bmi: row.BMI ?? null,
+    diagnosis: row.Diagnosis ?? '',
+    icd10Code: row.ICD10Code ?? '',
+    treatmentAdvice: row.TreatmentAdvice ?? '',
+    notes: row.Notes ?? '',
+    reExaminationDate: row.ReExaminationDate ?? null,
+    prescriptionStatus: row.PrescriptionStatus ?? null,
+    status: row.Status ?? null,
+    createdAt,
+    updatedAt,
+    vitalSigns: {
+      bloodPressure: row.BloodPressure ?? '',
+      pulse: row.Pulse ?? null,
+      temperature: row.Temperature ?? null,
+      spO2: row.SpO2 ?? null,
+      respiratoryRate: row.RespirationRate ?? null,
+      weight: row.Weight ?? null,
+      height: row.Height ?? null,
+    },
+  };
+};
+
+const toMedicalExaminationQueueItem = (row = {}) => {
+  const contract = toMedicalExaminationContract(row);
+  const { statusCode, statusLabel } = mapMedicalExamStatus(contract.status);
+  return {
+    id: contract.id,
+    examinationId: contract.examinationId,
+    appointmentId: contract.appointmentId,
+    patientId: contract.patientId,
+    patientName: row?.patient?.fullName ?? null,
+    symptoms: contract.symptoms,
+    createdAt: contract.createdAt,
+    status: contract.status,
+    statusCode,
+    statusLabel,
+    source: 'medicalExamination',
+  };
+};
+
 const getTodayQueue = asyncHandler(async (req, res) => {
   // Get today's date range in Vietnam timezone (UTC+7)
   const { start: today, end: tomorrow } = getVietnamTodayRange();
@@ -173,35 +247,9 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   }
 
   // Build queue response strictly from MedicalExaminations created today (VN timezone)
-  const merged = [];
-
-  for (const rec of records) {
-    const recAppointmentId = rec ? (rec.AppointmentID ?? rec.appointmentId ?? null) : null;
-    const recPatientId = rec ? (rec.PatientId ?? rec.patientId ?? (rec.patient && rec.patient.id) ?? null) : null;
-    const recPatientName = rec ? (rec.patientName ?? (rec.patient && (rec.patient.fullName || rec.patient.HoTen)) ?? null) : null;
-    const recSymptoms = rec ? (rec.Symptoms ?? rec.symptoms ?? rec.purpose ?? '') : '';
-    const recCreatedAt = rec ? (rec.CreatedAt ?? rec.createdAt ?? rec.ExaminationDate ?? null) : null;
-    const recStatus = rec ? (rec.Status ?? rec.status ?? null) : null;
-    const recExaminationId = rec ? (rec.ExaminationID ?? rec.id ?? rec.Id ?? null) : null;
-    const { statusCode, statusLabel } = mapMedicalExamStatus(recStatus);
-
-    merged.push({
-      id: recExaminationId || `REC-${recExaminationId || ''}`,
-      recordId: recExaminationId,
-      examinationId: recExaminationId,
-      _source: 'record',
-      appointmentRef: recAppointmentId ? { id: recAppointmentId } : null,
-      appointmentId: recAppointmentId || null,
-      patientId: recPatientId,
-      patientName: recPatientName,
-      purpose: recSymptoms,
-      createdAt: recCreatedAt,
-      status: recStatus,
-      statusCode,
-      statusLabel,
-      raw: rec,
-    });
-  }
+  const merged = records
+    .map((rec) => toMedicalExaminationQueueItem(rec))
+    .filter((item) => item.id !== null && item.id !== undefined);
 
   console.log('medicalRecord.controller.getTodayQueue: returning MedicalExaminations only, count=', merged.length);
 
@@ -448,32 +496,8 @@ const getRecordById = asyncHandler(async (req, res) => {
   const plain = rec.get ? rec.get({ plain: true }) : rec;
 
   // Keep a stable response shape for frontend resume flow.
-    if (usingMedicalExaminationModel) {
-    const formatExaminationIDString = (seq, createdAt) => {
-      if (!seq) return null;
-      const d = createdAt ? new Date(createdAt) : new Date();
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `PK-${y}${m}${day}-${String(seq).padStart(6, '0')}`;
-    };
-
-    const computedCode = plain && (plain.ExaminationID || plain.id) ? formatExaminationIDString(plain.ExaminationID || plain.id, plain.CreatedAt || plain.ExaminationDate) : (plain && (plain.ExaminationCode || plain.examinationCode || plain.maPhieuKham)) || null;
-    const normalized = {
-      ...(rec.toJSON ? rec.toJSON() : {}),
-      ...plain,
-      id: plain.ExaminationID || plain.id,
-      recordId: plain.ExaminationID || plain.id,
-      examinationCode: computedCode,
-      appointmentId: plain.AppointmentID || plain.appointmentId,
-      patientId: plain.PatientId || plain.patientId,
-      doctorId: plain.DoctorID || plain.doctorId,
-      diagnosis: plain.Diagnosis || plain.diagnosis,
-      treatment: plain.TreatmentAdvice || plain.treatment,
-      notes: plain.Notes || plain.notes,
-      maPhieuKham: computedCode,
-    };
-    return successResponse(res, normalized);
+  if (usingMedicalExaminationModel) {
+    return successResponse(res, toMedicalExaminationContract(plain));
   }
 
   return successResponse(res, plain);
@@ -512,10 +536,9 @@ const createRecord = asyncHandler(async (req, res) => {
     let toCreate = payload;
     if (models && models.MedicalExamination && PreferredRecordForCreate === models.MedicalExamination) {
       toCreate = {};
-      // Do not persist ExaminationCode column (may have been removed). We'll compute maPhieuKham from ExaminationID after create.
-      const appointmentRaw = payload.appointmentId || payload.appointmentRef?.id || payload.AppointmentID;
-      const patientRaw = payload.patientId || payload.patient?.id || payload.PatientId;
-      const doctorRaw = payload.doctorId || payload.DoctorID || req.user?.id;
+      const appointmentRaw = payload.appointmentId;
+      const patientRaw = payload.patientId;
+      const doctorRaw = payload.doctorId ?? req.user?.id;
 
       const normalizedAppointmentId = parsePositiveInt(appointmentRaw, { allowAppointmentPrefix: true });
       if (normalizedAppointmentId) {
@@ -526,29 +549,28 @@ const createRecord = asyncHandler(async (req, res) => {
       const doctorId = parsePositiveInt(doctorRaw);
       if (doctorId) toCreate.DoctorID = doctorId;
 
-      toCreate.ExaminationDate = payload.examinationDate || payload.createdAt || payload.ExaminationDate || new Date();
-      toCreate.Symptoms = payload.symptoms || payload.purpose || payload.Symptoms;
-      // Map treatment/diagnosis/notes
-      toCreate.Diagnosis = payload.diagnosis || payload.Diagnosis;
-      toCreate.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
-      toCreate.TreatmentAdvice = payload.treatment || payload.treatmentAdvice || payload.TreatmentAdvice;
-      toCreate.Notes = payload.notes || payload.Notes;
-      const normalizedNextAppointment = normalizeDateOnly(payload.nextAppointment || payload.ReExaminationDate);
+      toCreate.ExaminationDate = payload.examinationDate ?? new Date();
+      if (Object.prototype.hasOwnProperty.call(payload, 'symptoms')) toCreate.Symptoms = payload.symptoms;
+      if (Object.prototype.hasOwnProperty.call(payload, 'diagnosis')) toCreate.Diagnosis = payload.diagnosis;
+      if (Object.prototype.hasOwnProperty.call(payload, 'icd10Code')) toCreate.ICD10Code = payload.icd10Code;
+      if (Object.prototype.hasOwnProperty.call(payload, 'treatmentAdvice')) toCreate.TreatmentAdvice = payload.treatmentAdvice;
+      if (Object.prototype.hasOwnProperty.call(payload, 'notes')) toCreate.Notes = payload.notes;
+
+      const normalizedNextAppointment = normalizeDateOnly(payload.reExaminationDate);
       if (normalizedNextAppointment) {
         toCreate.ReExaminationDate = normalizedNextAppointment;
       }
       // Map vital signs if provided as object
       if (payload.vitalSigns && typeof payload.vitalSigns === 'object') {
         const vs = payload.vitalSigns;
-        if (vs.bloodPressure) toCreate.BloodPressure = vs.bloodPressure;
-        if (vs.pulse) toCreate.Pulse = vs.pulse;
-        if (vs.temperature) toCreate.Temperature = vs.temperature;
-        if (vs.spO2) toCreate.SpO2 = vs.spO2;
-        if (vs.respirationRate) toCreate.RespirationRate = vs.respirationRate;
-        if (vs.respiratoryRate && !toCreate.RespirationRate) toCreate.RespirationRate = vs.respiratoryRate;
-        if (vs.weight) toCreate.Weight = vs.weight;
-        if (vs.height) toCreate.Height = vs.height;
-        if (vs.bmi) toCreate.BMI = vs.bmi;
+        if (Object.prototype.hasOwnProperty.call(vs, 'bloodPressure')) toCreate.BloodPressure = vs.bloodPressure;
+        if (Object.prototype.hasOwnProperty.call(vs, 'pulse')) toCreate.Pulse = vs.pulse;
+        if (Object.prototype.hasOwnProperty.call(vs, 'temperature')) toCreate.Temperature = vs.temperature;
+        if (Object.prototype.hasOwnProperty.call(vs, 'spO2')) toCreate.SpO2 = vs.spO2;
+        if (Object.prototype.hasOwnProperty.call(vs, 'respirationRate')) toCreate.RespirationRate = vs.respirationRate;
+        if (Object.prototype.hasOwnProperty.call(vs, 'weight')) toCreate.Weight = vs.weight;
+        if (Object.prototype.hasOwnProperty.call(vs, 'height')) toCreate.Height = vs.height;
+        if (Object.prototype.hasOwnProperty.call(vs, 'bmi')) toCreate.BMI = vs.bmi;
         // Compute BMI automatically when weight and height available and BMI not provided
         if (!toCreate.BMI) {
           const calc = calculateBMI(toCreate.Weight, toCreate.Height);
@@ -609,9 +631,10 @@ const createRecord = asyncHandler(async (req, res) => {
               maPhieuKham = `PK-${y}${m}${day}-${String(examId).padStart(6, '0')}`;
             }
             if (!plainExisting.maPhieuKham) plainExisting.maPhieuKham = maPhieuKham;
-            await updateAppointmentStatusSafely(plainExisting.AppointmentID || toCreate.AppointmentID, waitingAppointmentStatus);
+            const normalizedExisting = toMedicalExaminationContract(plainExisting);
+            await updateAppointmentStatusSafely(normalizedExisting.appointmentId, waitingAppointmentStatus);
             console.log('createRecord: existing record updated instead of create, id=', examId, 'code=', maPhieuKham);
-            return successResponse(res, plainExisting, 'Đã cập nhật hồ sơ khám (đã tồn tại)');
+            return successResponse(res, normalizedExisting, 'Đã cập nhật hồ sơ khám (đã tồn tại)');
           } catch (updErr) {
             console.error('createRecord: error updating existing record', updErr && updErr.message);
             return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật hồ sơ khám', 500, 'DATABASE_ERROR');
@@ -642,12 +665,8 @@ const createRecord = asyncHandler(async (req, res) => {
       }
       
       // Normalize response
-      const normalized = { ...plain };
-      if (!normalized.id) normalized.id = examId;
-      if (!normalized.recordId) normalized.recordId = examId;
-      normalized.maPhieuKham = maPhieuKham;
-
-      await updateAppointmentStatusSafely(normalized.AppointmentID || toCreate.AppointmentID, waitingAppointmentStatus);
+      const normalized = toMedicalExaminationContract(plain);
+      await updateAppointmentStatusSafely(normalized.appointmentId, waitingAppointmentStatus);
       
       console.log('createRecord: successfully created, id=', examId, 'code=', maPhieuKham);
       return createdResponse(res, normalized, 'Đã tạo hồ sơ khám');
@@ -760,24 +779,23 @@ const updateRecord = asyncHandler(async (req, res) => {
     let toUpdate = payload;
     if (models && models.MedicalExamination && PreferredRecordForUpdate === models.MedicalExamination) {
       toUpdate = {};
-      if (payload.symptoms) toUpdate.Symptoms = payload.symptoms;
-      if (payload.diagnosis) toUpdate.Diagnosis = payload.diagnosis;
-      if (payload.icdCode || payload.icd10Code || payload.ICD10Code) toUpdate.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
-      if (payload.treatment) toUpdate.TreatmentAdvice = payload.treatment;
-      if (payload.notes) toUpdate.Notes = payload.notes;
-      const normalizedNextAppointment = normalizeDateOnly(payload.nextAppointment || payload.ReExaminationDate);
+      if (Object.prototype.hasOwnProperty.call(payload, 'symptoms')) toUpdate.Symptoms = payload.symptoms;
+      if (Object.prototype.hasOwnProperty.call(payload, 'diagnosis')) toUpdate.Diagnosis = payload.diagnosis;
+      if (Object.prototype.hasOwnProperty.call(payload, 'icd10Code')) toUpdate.ICD10Code = payload.icd10Code;
+      if (Object.prototype.hasOwnProperty.call(payload, 'treatmentAdvice')) toUpdate.TreatmentAdvice = payload.treatmentAdvice;
+      if (Object.prototype.hasOwnProperty.call(payload, 'notes')) toUpdate.Notes = payload.notes;
+      const normalizedNextAppointment = normalizeDateOnly(payload.reExaminationDate);
       if (normalizedNextAppointment) toUpdate.ReExaminationDate = normalizedNextAppointment;
       if (payload.vitalSigns && typeof payload.vitalSigns === 'object') {
         const vs = payload.vitalSigns;
-        if (vs.bloodPressure) toUpdate.BloodPressure = vs.bloodPressure;
-        if (vs.pulse) toUpdate.Pulse = vs.pulse;
-        if (vs.temperature) toUpdate.Temperature = vs.temperature;
-        if (vs.spO2) toUpdate.SpO2 = vs.spO2;
-        if (vs.respirationRate) toUpdate.RespirationRate = vs.respirationRate;
-        if (vs.respiratoryRate && !toUpdate.RespirationRate) toUpdate.RespirationRate = vs.respiratoryRate;
-        if (vs.weight) toUpdate.Weight = vs.weight;
-        if (vs.height) toUpdate.Height = vs.height;
-        if (vs.bmi) toUpdate.BMI = vs.bmi;
+        if (Object.prototype.hasOwnProperty.call(vs, 'bloodPressure')) toUpdate.BloodPressure = vs.bloodPressure;
+        if (Object.prototype.hasOwnProperty.call(vs, 'pulse')) toUpdate.Pulse = vs.pulse;
+        if (Object.prototype.hasOwnProperty.call(vs, 'temperature')) toUpdate.Temperature = vs.temperature;
+        if (Object.prototype.hasOwnProperty.call(vs, 'spO2')) toUpdate.SpO2 = vs.spO2;
+        if (Object.prototype.hasOwnProperty.call(vs, 'respirationRate')) toUpdate.RespirationRate = vs.respirationRate;
+        if (Object.prototype.hasOwnProperty.call(vs, 'weight')) toUpdate.Weight = vs.weight;
+        if (Object.prototype.hasOwnProperty.call(vs, 'height')) toUpdate.Height = vs.height;
+        if (Object.prototype.hasOwnProperty.call(vs, 'bmi')) toUpdate.BMI = vs.bmi;
         // compute BMI using provided values or falling back to existing record values
         try {
           const existingPlainForBmi = rec && rec.get ? rec.get({ plain: true }) : rec || {};
@@ -799,8 +817,9 @@ const updateRecord = asyncHandler(async (req, res) => {
       return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật hồ sơ khám', 500, 'DATABASE_ERROR');
     }
     const plain = rec.get ? rec.get({ plain: true }) : rec;
-    await updateAppointmentStatusSafely(plain?.AppointmentID || plain?.appointmentId, waitingAppointmentStatus);
-    return successResponse(res, plain);
+    const normalized = toMedicalExaminationContract(plain);
+    await updateAppointmentStatusSafely(normalized.appointmentId, waitingAppointmentStatus);
+    return successResponse(res, normalized);
   }
 
   // Fallback: preserve visit code on update
@@ -839,8 +858,9 @@ const startExamination = asyncHandler(async (req, res) => {
       return errorResponse(res, 'Lỗi cơ sở dữ liệu khi cập nhật trạng thái khám', 500, 'DATABASE_ERROR');
     }
     const plain = rec.get ? rec.get({ plain: true }) : rec;
-    await updateAppointmentStatusSafely(plain?.AppointmentID || plain?.appointmentId, waitingAppointmentStatus);
-    return successResponse(res, plain);
+    const normalized = toMedicalExaminationContract(plain);
+    await updateAppointmentStatusSafely(normalized.appointmentId, waitingAppointmentStatus);
+    return successResponse(res, normalized);
   }
   // Fallback: echo object with status
   const out = { id, status: MEDICAL_RECORD_STATUS.IN_PROGRESS, startedAt: formatToVietnamISOString(), doctorId: actorId };
@@ -869,25 +889,24 @@ const completeExamination = asyncHandler(async (req, res) => {
     if (models && models.MedicalExamination && PreferredRecordForComplete === models.MedicalExamination) {
       // Mark examination as completed (Status = 1)
       updates.Status = 1;
-      if (payload.symptoms) updates.Symptoms = payload.symptoms;
-      if (payload.diagnosis) updates.Diagnosis = payload.diagnosis;
-      if (payload.icdCode || payload.icd10Code || payload.ICD10Code) updates.ICD10Code = payload.icdCode || payload.icd10Code || payload.ICD10Code;
-      if (payload.treatment) updates.TreatmentAdvice = payload.treatment;
-      if (payload.notes) updates.Notes = payload.notes;
-      const normalizedNextAppointment = normalizeDateOnly(payload.nextAppointment || payload.ReExaminationDate);
+      if (Object.prototype.hasOwnProperty.call(payload, 'symptoms')) updates.Symptoms = payload.symptoms;
+      if (Object.prototype.hasOwnProperty.call(payload, 'diagnosis')) updates.Diagnosis = payload.diagnosis;
+      if (Object.prototype.hasOwnProperty.call(payload, 'icd10Code')) updates.ICD10Code = payload.icd10Code;
+      if (Object.prototype.hasOwnProperty.call(payload, 'treatmentAdvice')) updates.TreatmentAdvice = payload.treatmentAdvice;
+      if (Object.prototype.hasOwnProperty.call(payload, 'notes')) updates.Notes = payload.notes;
+      const normalizedNextAppointment = normalizeDateOnly(payload.reExaminationDate);
       if (normalizedNextAppointment) updates.ReExaminationDate = normalizedNextAppointment;
       if (actorId) updates.DoctorID = actorId;
       if (payload.vitalSigns && typeof payload.vitalSigns === 'object') {
         const vs = payload.vitalSigns;
-        if (vs.bloodPressure) updates.BloodPressure = vs.bloodPressure;
-        if (vs.pulse) updates.Pulse = vs.pulse;
-        if (vs.temperature) updates.Temperature = vs.temperature;
-        if (vs.spO2) updates.SpO2 = vs.spO2;
-        if (vs.respirationRate) updates.RespirationRate = vs.respirationRate;
-        if (vs.respiratoryRate && !updates.RespirationRate) updates.RespirationRate = vs.respiratoryRate;
-        if (vs.weight) updates.Weight = vs.weight;
-        if (vs.height) updates.Height = vs.height;
-        if (vs.bmi) updates.BMI = vs.bmi;
+        if (Object.prototype.hasOwnProperty.call(vs, 'bloodPressure')) updates.BloodPressure = vs.bloodPressure;
+        if (Object.prototype.hasOwnProperty.call(vs, 'pulse')) updates.Pulse = vs.pulse;
+        if (Object.prototype.hasOwnProperty.call(vs, 'temperature')) updates.Temperature = vs.temperature;
+        if (Object.prototype.hasOwnProperty.call(vs, 'spO2')) updates.SpO2 = vs.spO2;
+        if (Object.prototype.hasOwnProperty.call(vs, 'respirationRate')) updates.RespirationRate = vs.respirationRate;
+        if (Object.prototype.hasOwnProperty.call(vs, 'weight')) updates.Weight = vs.weight;
+        if (Object.prototype.hasOwnProperty.call(vs, 'height')) updates.Height = vs.height;
+        if (Object.prototype.hasOwnProperty.call(vs, 'bmi')) updates.BMI = vs.bmi;
         // compute BMI using provided values or existing record values
         try {
           const existingPlainForBmi = rec && rec.get ? rec.get({ plain: true }) : rec || {};
@@ -920,8 +939,9 @@ const completeExamination = asyncHandler(async (req, res) => {
       return errorResponse(res, 'Lỗi cơ sở dữ liệu khi hoàn tất khám', 500, 'DATABASE_ERROR');
     }
     const plain = rec.get ? rec.get({ plain: true }) : rec;
-    await updateAppointmentStatusSafely(plain?.AppointmentID || plain?.appointmentId, completedAppointmentStatus);
-    return successResponse(res, plain);
+    const normalized = toMedicalExaminationContract(plain);
+    await updateAppointmentStatusSafely(normalized.appointmentId, completedAppointmentStatus);
+    return successResponse(res, normalized);
   }
 
   // Fallback: respond with synthesized completed object
@@ -1010,12 +1030,12 @@ const cancelExamination = asyncHandler(async (req, res) => {
     // update appointment status to CANCELLED if present
     try {
       const cancelledCode = getAppointmentStatusCode(APPOINTMENT_STATUS.CANCELLED, 4);
-      await updateAppointmentStatusSafely(plain.AppointmentID || plain.appointmentId, cancelledCode);
+      await updateAppointmentStatusSafely(plain.AppointmentID, cancelledCode);
     } catch (e) { /* ignore */ }
 
     const updated = await Preferred.findByPk(examId);
     const out = updated && updated.get ? updated.get({ plain: true }) : updated;
-    return successResponse(res, out || { id: examId, status: 2 }, 'Đã hủy phiếu khám');
+    return successResponse(res, out ? toMedicalExaminationContract(out) : { id: examId, status: 2 }, 'Đã hủy phiếu khám');
   } catch (e) {
     console.error('cancelExamination: DB error', e && e.message);
     return errorResponse(res, 'Lỗi khi hủy phiếu khám', 500, 'DATABASE_ERROR');

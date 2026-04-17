@@ -4,34 +4,34 @@ export default (sequelize) => {
   const Medicine = sequelize.define(
     'Medicine',
     {
-      Id: {
+      id: {
         type: DataTypes.BIGINT,
         autoIncrement: true,
         primaryKey: true,
         allowNull: false,
         field: 'Id',
       },
-      Name: {
+      name: {
         type: DataTypes.STRING(150),
         allowNull: false,
         field: 'Name',
       },
-      Unit: {
+      unit: {
         type: DataTypes.STRING(50),
         allowNull: true,
         field: 'Unit',
       },
-      Category: {
+      category: {
         type: DataTypes.STRING(100),
         allowNull: true,
         field: 'Category',
       },
-      Price: {
+      price: {
         type: DataTypes.DECIMAL(18, 2),
         allowNull: true,
         field: 'Price',
       },
-      IsActive: {
+      isActive: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: true,

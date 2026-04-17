@@ -6,7 +6,7 @@ import { DataTypes } from 'sequelize';
 
 export default (sequelize) => {
   const LabOrderItem = sequelize.define('LabOrderItem', {
-    LabOrderItemID: {
+    labOrderItemId: {
       type: DataTypes.BIGINT,
       autoIncrement: true,
       primaryKey: true,
@@ -14,7 +14,7 @@ export default (sequelize) => {
       field: 'LabOrderItemID'
     },
 
-    LabOrderID: {
+    labOrderId: {
       type: DataTypes.BIGINT,
       allowNull: false,
       field: 'LabOrderID',
@@ -24,7 +24,7 @@ export default (sequelize) => {
       }
     },
 
-    ServiceID: {
+    serviceId: {
       type: DataTypes.BIGINT,
       allowNull: false,
       field: 'ServiceID',
@@ -34,7 +34,7 @@ export default (sequelize) => {
       }
     },
 
-    RoomID: {
+    roomId: {
       type: DataTypes.BIGINT,
       allowNull: true,
       field: 'RoomID',
@@ -44,27 +44,27 @@ export default (sequelize) => {
       }
     },
 
-    Status: {
+    status: {
       type: DataTypes.TINYINT,
       allowNull: false,
       defaultValue: 0,
       field: 'Status'
     },
 
-    Priority: {
+    priority: {
       type: DataTypes.TINYINT,
       allowNull: false,
       defaultValue: 0,
       field: 'Priority'
     },
 
-    Note: {
+    note: {
       type: DataTypes.STRING(500),
       allowNull: true,
       field: 'Note'
     },
 
-    CreatedAt: {
+    createdAt: {
       type: DataTypes.DATE,
       allowNull: false,
       field: 'CreatedAt'

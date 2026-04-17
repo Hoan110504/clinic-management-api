@@ -13,20 +13,12 @@ import {
   noContentResponse,
 } from '../utils/response.js';
 import { NotFoundError, ConflictError, BadRequestError, ValidationError } from '../utils/errors.js';
-import { ROLES } from '../config/constants.js';
-
-const STAFF_PREFIX_BY_ROLE = {
-  [ROLES.ADMIN]: 'AD',
-  [ROLES.DOCTOR]: 'BS',
-  [ROLES.RECEPTIONIST]: 'LT',
-  [ROLES.PHARMACIST]: 'DS',
-  [ROLES.PATIENT]: 'BN',
-};
+import { ROLES, ROLE_PREFIXES } from '../config/constants.js';
 
 const buildNextStaffCode = async (role, transaction) => {
   if (role === ROLES.PATIENT) return null;
 
-  const prefix = STAFF_PREFIX_BY_ROLE[role] || 'UN';
+  const prefix = ROLE_PREFIXES[role] || 'UN';
   const candidates = await User.findAll({
     attributes: ['staffCode'],
     where: {
@@ -57,7 +49,16 @@ const buildNextStaffCode = async (role, transaction) => {
  */
 const getAllUsers = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
-  const { role, search, isActive, sort } = req.query;
+  let { role, search, isActive, sort } = req.query;
+
+  // RBAC roleId-only: role filter must be numeric (1-5)
+  if (role !== undefined && role !== null && role !== '') {
+    const parsedRole = Number(role);
+    if (!Number.isInteger(parsedRole) || !Object.values(ROLES).includes(parsedRole)) {
+      throw new BadRequestError('Vai trò phải là roleId hợp lệ (1-5)');
+    }
+    role = parsedRole;
+  }
 
   // Build where clause
   const where = {};
@@ -84,7 +85,7 @@ const getAllUsers = asyncHandler(async (req, res) => {
 
   // Include Patient association for patients to get patientCode
   const include = [];
-  if (role === 'patient' || !role) {
+  if (role === ROLES.PATIENT || !role) {
     include.push({
       association: 'patient',
       model: Patient,
@@ -716,12 +717,14 @@ const resetUserPassword = asyncHandler(async (req, res) => {
 const getUsersByRole = asyncHandler(async (req, res) => {
   const { role } = req.params;
 
-  if (!Object.values(ROLES).includes(role)) {
-    throw new BadRequestError('Vai trò không hợp lệ');
+  // RBAC roleId-only: /users/role/:role only accepts numeric roleId (1-5)
+  const roleId = Number(role);
+  if (!Number.isInteger(roleId) || !Object.values(ROLES).includes(roleId)) {
+    throw new BadRequestError('Vai trò phải là roleId hợp lệ (1-5)');
   }
 
   const users = await User.findAll({
-    where: { role, isActive: true },
+    where: { role: roleId, isActive: true },
     attributes: ['id', 'fullName', 'email', 'phone', 'signature'],
     order: [['fullName', 'ASC']],
   });

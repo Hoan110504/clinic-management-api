@@ -18,12 +18,13 @@ import {
 } from '../config/constants.js';
 import logger from '../utils/logger.js';
 
-// Seed data
+// Seed data - Note: These are only for development/testing
+// In production, use environment variables and database migrations instead
 const users = [
   {
-    username: 'admin',
-    email: 'admin@noikhoa.com',
-    password: 'admin123',
+    username: process.env.ADMIN_USER || 'admin',
+    email: process.env.ADMIN_EMAIL || 'admin@noikhoa.com',
+    password: process.env.ADMIN_PASSWORD || 'ChangeMe@123456',
     fullName: 'Quản Trị Viên',
     role: ROLES.ADMIN,
     phone: '0901234567',
@@ -32,7 +33,7 @@ const users = [
   {
     username: 'doctor1',
     email: 'bacsi1@noikhoa.com',
-    password: 'doctor123',
+    password: process.env.DOCTOR_PASSWORD || 'ChangeMe@123456',
     fullName: 'BS. Nguyễn Văn Hùng',
     role: ROLES.DOCTOR,
     phone: '0901234568',
@@ -42,7 +43,7 @@ const users = [
   {
     username: 'doctor2',
     email: 'bacsi2@noikhoa.com',
-    password: 'doctor123',
+    password: process.env.DOCTOR_PASSWORD || 'ChangeMe@123456',
     fullName: 'BS. Trần Thị Mai',
     role: ROLES.DOCTOR,
     phone: '0901234569',
@@ -52,7 +53,7 @@ const users = [
   {
     username: 'receptionist',
     email: 'tieptan@noikhoa.com',
-    password: 'reception123',
+    password: process.env.RECEPTIONIST_PASSWORD || 'ChangeMe@123456',
     fullName: 'Lê Thị Hương',
     role: ROLES.RECEPTIONIST,
     phone: '0901234570',
@@ -61,7 +62,7 @@ const users = [
   {
     username: 'pharmacist',
     email: 'duocsi@noikhoa.com',
-    password: 'pharma123',
+    password: process.env.PHARMACIST_PASSWORD || 'ChangeMe@123456',
     fullName: 'Phạm Văn Dược',
     role: ROLES.PHARMACIST,
     phone: '0901234571',
