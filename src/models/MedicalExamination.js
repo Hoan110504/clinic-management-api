@@ -90,6 +90,10 @@ export default (sequelize) => {
     if (models && models.User) {
       MedicalExamination.belongsTo(models.User, { as: 'doctor', foreignKey: 'DoctorID' });
     }
+    if (models && models.Appointment) {
+      // MedicalExamination.AppointmentID refers to Appointments.Id
+      MedicalExamination.belongsTo(models.Appointment, { as: 'appointment', foreignKey: 'AppointmentID' });
+    }
   };
 
   return MedicalExamination;
