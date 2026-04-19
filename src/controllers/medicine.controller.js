@@ -325,7 +325,9 @@ const adjustInventory = asyncHandler(async (req, res) => {
   }
 
   // Nếu là nhập kho thì bắt buộc phải có số lô (tên trường có thể là `soLo` hoặc `batchNumber` từ frontend)
-  if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && !batchCode) {
+  // Also trim and validate that batchCode is not empty/whitespace-only
+  const trimmedBatchCode = batchCode && typeof batchCode === 'string' ? batchCode.trim() : (batchCode || null);
+  if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && !trimmedBatchCode) {
     throw new BadRequestError('Số lô (batchNumber) là bắt buộc khi nhập kho');
   }
 
@@ -401,34 +403,34 @@ const adjustInventory = asyncHandler(async (req, res) => {
     };
 
     // IMPORT: find or create target batch, increment its QuantityInStock
-    if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && batchCode) {
-      batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: batchCode } });
+    if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && trimmedBatchCode) {
+    batch = await sequelize.models.MedicineBatch.findOne({ where: { medicineId: medicine.Id, batchNumber: trimmedBatchCode } });
       if (!batch) {
         try {
           batch = await sequelize.models.MedicineBatch.create({
-            MedicineId: medicine.Id,
-            BatchNumber: batchCode,
-            ExpiryDate: parseDateSafe(hanSuDung),
-            ManufactureDate: parseDateSafe(ngaySanXuat),
-            QuantityInStock: parsedQuantity,
-            ImportPrice: giaNhap || null,
-            Status: 1,
+            medicineId: medicine.Id,
+            batchNumber: trimmedBatchCode,
+            expiryDate: parseDateSafe(hanSuDung),
+            manufactureDate: parseDateSafe(ngaySanXuat),
+            quantityInStock: parsedQuantity,
+            importPrice: giaNhap || null,
+            status: 1,
           }, {
-            fields: ['MedicineId', 'BatchNumber', 'ExpiryDate', 'ManufactureDate', 'QuantityInStock', 'ImportPrice', 'Status'],
+            fields: ['medicineId', 'batchNumber', 'expiryDate', 'manufactureDate', 'quantityInStock', 'importPrice', 'status'],
           });
         } catch (createErr) {
           const msg = (createErr && createErr.parent && createErr.parent.message) ? String(createErr.parent.message).toLowerCase() : (createErr && createErr.message ? String(createErr.message).toLowerCase() : '');
           if (msg.includes('identity_insert') || msg.includes('cannot insert explicit value for identity column') || msg.includes('insert explicit value for identity')) {
             try {
               const cols = ['MedicineId','BatchNumber','ExpiryDate','ManufactureDate','QuantityInStock','ImportPrice','Status'];
-              const values = [medicine.Id, batchCode, parseDateSafe(hanSuDung), parseDateSafe(ngaySanXuat), parsedQuantity, giaNhap || null, 1];
+              const values = [medicine.Id, trimmedBatchCode, parseDateSafe(hanSuDung), parseDateSafe(ngaySanXuat), parsedQuantity, giaNhap || null, 1];
               const placeholders = cols.map((c, i) => `:p${i}`).join(',');
               const colList = cols.map(c => `[${c}]`).join(',');
               const replacements = {};
               values.forEach((v, i) => { replacements[`p${i}`] = v; });
               const sql = `INSERT INTO [MedicineBatches] (${colList}) VALUES (${placeholders});`;
               await sequelize.query(sql, { replacements, type: sequelize.QueryTypes.INSERT });
-              batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: batchCode } });
+              batch = await sequelize.models.MedicineBatch.findOne({ where: { medicineId: medicine.Id, batchNumber: trimmedBatchCode } });
             } catch (rawErr) {
               console.error('Fallback raw INSERT for MedicineBatches failed', rawErr?.message || rawErr);
               throw createErr;
@@ -455,8 +457,8 @@ const adjustInventory = asyncHandler(async (req, res) => {
 
     // EXPORT: target a specific batch if provided, otherwise pick a batch with sufficient stock
     } else if (type === INVENTORY_TRANSACTION_TYPES.EXPORT) {
-      if (batchCode) {
-        batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: batchCode } });
+      if (trimmedBatchCode) {
+      batch = await sequelize.models.MedicineBatch.findOne({ where: { medicineId: medicine.Id, batchNumber: trimmedBatchCode } });
         if (!batch) {
           throw new BadRequestError('Không tìm thấy lô thuốc tương ứng với số lô đã cung cấp');
         }
@@ -479,7 +481,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
       } else {
         // find any batch with enough stock, prefer earliest expiry
         batch = await sequelize.models.MedicineBatch.findOne({
-          where: { MedicineId: medicine.Id, QuantityInStock: { [Op.gte]: parsedQuantity } },
+          where: { medicineId: medicine.Id, quantityInStock: { [Op.gte]: parsedQuantity } },
           order: [['ExpiryDate', 'ASC']],
         });
         if (!batch) {
@@ -502,7 +504,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
 
     } else {
       // Default behavior: try to find any batch for this medicine
-      batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id } });
+      batch = await sequelize.models.MedicineBatch.findOne({ where: { medicineId: medicine.Id } });
     }
   } catch (err) {
     // If any error occurs during batch ops, surface it
@@ -548,7 +550,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
       QuantityBefore: previousQuantity,
       QuantityAfter: newQuantity,
       Reason: reason,
-      ReferenceType: mapRefType(referenceType),
+      ReferenceType: (type === INVENTORY_TRANSACTION_TYPES.EXPORT) ? 1 : mapRefType(referenceType),
       PerformedByUserId: req.user.id,
       // Use DB server timestamp to avoid timezone string conversion issues
       CreatedAt: sequelize.literal('GETDATE()'),
@@ -608,7 +610,7 @@ const adjustInventory = asyncHandler(async (req, res) => {
           QuantityBefore: previousQuantity,
           QuantityAfter: newQuantity,
           Reason: reason,
-          ReferenceType: mapRefType(referenceType),
+          ReferenceType: (type === INVENTORY_TRANSACTION_TYPES.EXPORT) ? 1 : mapRefType(referenceType),
           ReferenceId: null,
           PerformedByUserId: req.user && req.user.id ? req.user.id : null,
           // CreatedAt: use GETDATE() in raw SQL below instead of sending a timezone string
