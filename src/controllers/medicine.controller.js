@@ -308,6 +308,17 @@ const adjustInventory = asyncHandler(async (req, res) => {
     return errorResponse(res, 'Không tìm thấy thuốc', 404, 'NOT_FOUND', details);
   }
 
+  // Normalize instance attribute names so legacy code referencing `.Id` or `.Name`
+  // continues to work even though model attributes are `id`/`name`.
+  try {
+    if (medicine && typeof medicine === 'object') {
+      if (medicine.Id === undefined && medicine.id !== undefined) medicine.Id = medicine.id;
+      if (medicine.Name === undefined && medicine.name !== undefined) medicine.Name = medicine.name;
+    }
+  } catch (e) {
+    // ignore
+  }
+
   const parsedQuantity = Number(quantity);
   if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
     throw new BadRequestError('Số lượng không hợp lệ');
@@ -390,13 +401,13 @@ const adjustInventory = asyncHandler(async (req, res) => {
     };
 
     // IMPORT: find or create target batch, increment its QuantityInStock
-    if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && soLo) {
-      batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
+    if (type === INVENTORY_TRANSACTION_TYPES.IMPORT && batchCode) {
+      batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: batchCode } });
       if (!batch) {
         try {
           batch = await sequelize.models.MedicineBatch.create({
             MedicineId: medicine.Id,
-            BatchNumber: soLo,
+            BatchNumber: batchCode,
             ExpiryDate: parseDateSafe(hanSuDung),
             ManufactureDate: parseDateSafe(ngaySanXuat),
             QuantityInStock: parsedQuantity,
@@ -410,14 +421,14 @@ const adjustInventory = asyncHandler(async (req, res) => {
           if (msg.includes('identity_insert') || msg.includes('cannot insert explicit value for identity column') || msg.includes('insert explicit value for identity')) {
             try {
               const cols = ['MedicineId','BatchNumber','ExpiryDate','ManufactureDate','QuantityInStock','ImportPrice','Status'];
-              const values = [medicine.Id, soLo, parseDateSafe(hanSuDung), parseDateSafe(ngaySanXuat), parsedQuantity, giaNhap || null, 1];
+              const values = [medicine.Id, batchCode, parseDateSafe(hanSuDung), parseDateSafe(ngaySanXuat), parsedQuantity, giaNhap || null, 1];
               const placeholders = cols.map((c, i) => `:p${i}`).join(',');
               const colList = cols.map(c => `[${c}]`).join(',');
               const replacements = {};
               values.forEach((v, i) => { replacements[`p${i}`] = v; });
               const sql = `INSERT INTO [MedicineBatches] (${colList}) VALUES (${placeholders});`;
               await sequelize.query(sql, { replacements, type: sequelize.QueryTypes.INSERT });
-              batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
+              batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: batchCode } });
             } catch (rawErr) {
               console.error('Fallback raw INSERT for MedicineBatches failed', rawErr?.message || rawErr);
               throw createErr;
@@ -427,23 +438,44 @@ const adjustInventory = asyncHandler(async (req, res) => {
           }
         }
       } else {
-        batch.QuantityInStock = Number(batch.QuantityInStock || 0) + parsedQuantity;
-        await batch.save();
+        const current = Number(batch.QuantityInStock ?? batch.quantityInStock ?? 0);
+        const updated = current + parsedQuantity;
+        try {
+          if (typeof batch.set === 'function') {
+            batch.set('quantityInStock', updated);
+          } else {
+            batch.quantityInStock = updated;
+            batch.QuantityInStock = updated;
+          }
+          await batch.save();
+        } catch (saveErr) {
+          console.warn('Failed to update batch quantity after import', saveErr?.message || saveErr);
+        }
       }
 
     // EXPORT: target a specific batch if provided, otherwise pick a batch with sufficient stock
     } else if (type === INVENTORY_TRANSACTION_TYPES.EXPORT) {
-      if (soLo) {
-        batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: soLo } });
+      if (batchCode) {
+        batch = await sequelize.models.MedicineBatch.findOne({ where: { MedicineId: medicine.Id, BatchNumber: batchCode } });
         if (!batch) {
-          throw new BadRequestError('Không tìm thấy lô thuốc tương ứng với soLo đã cung cấp');
+          throw new BadRequestError('Không tìm thấy lô thuốc tương ứng với số lô đã cung cấp');
         }
-        const available = Number(batch.QuantityInStock || 0);
+        const available = Number(batch.QuantityInStock ?? batch.quantityInStock ?? 0);
         if (available < parsedQuantity) {
           throw new BadRequestError('Số lượng xuất vượt quá số lượng tồn trong lô thuốc');
         }
-        batch.QuantityInStock = available - parsedQuantity;
-        await batch.save();
+        const updated = available - parsedQuantity;
+        try {
+          if (typeof batch.set === 'function') {
+            batch.set('quantityInStock', updated);
+          } else {
+            batch.quantityInStock = updated;
+            batch.QuantityInStock = updated;
+          }
+          await batch.save();
+        } catch (saveErr) {
+          console.warn('Failed to update batch quantity after export', saveErr?.message || saveErr);
+        }
       } else {
         // find any batch with enough stock, prefer earliest expiry
         batch = await sequelize.models.MedicineBatch.findOne({
@@ -453,8 +485,19 @@ const adjustInventory = asyncHandler(async (req, res) => {
         if (!batch) {
           throw new BadRequestError('Không đủ tồn kho để xuất');
         }
-        batch.QuantityInStock = Number(batch.QuantityInStock || 0) - parsedQuantity;
-        await batch.save();
+        const available = Number(batch.QuantityInStock ?? batch.quantityInStock ?? 0);
+        const updated = available - parsedQuantity;
+        try {
+          if (typeof batch.set === 'function') {
+            batch.set('quantityInStock', updated);
+          } else {
+            batch.quantityInStock = updated;
+            batch.QuantityInStock = updated;
+          }
+          await batch.save();
+        } catch (saveErr) {
+          console.warn('Failed to update batch quantity after export (no soLo)', saveErr?.message || saveErr);
+        }
       }
 
     } else {
@@ -495,8 +538,10 @@ const adjustInventory = asyncHandler(async (req, res) => {
 
   let created;
   try {
+    const batchPrimaryKey = batch ? (batch.Id ?? batch.id ?? (typeof batch.get === 'function' ? (batch.get('Id') ?? batch.get('id')) : null)) : null;
+
     created = await InventoryTransaction.create({
-      MedicineBatchId: batch ? batch.Id : null,
+      MedicineBatchId: batchPrimaryKey,
       MedicineId: medicine.Id,
       TransactionType: mapTypeToLoai(type),
       Quantity: parsedQuantity,
@@ -656,7 +701,10 @@ const getInventoryTransactions = asyncHandler(async (req, res) => {
   const { type, fromDate, toDate } = req.query;
 
   // Build where clause to filter by medicine directly (new schema)
-  const where = { MedicineId: id };
+  const where = {};
+  if (id !== undefined && id !== null && String(id).trim() !== '') {
+    where.MedicineId = id;
+  }
   
   if (type) {
     // map API type string to numeric LoaiGiaoDich where possible
@@ -1076,6 +1124,11 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
  */
 const getMedicineBatches = asyncHandler(async (req, res) => {
   const { id } = req.params;
+
+  if (id === undefined || id === null || String(id).trim() === '') {
+    // Invalid request - medicine id is required for batches endpoint
+    return errorResponse(res, 'Thiếu tham số id thuốc', 400, 'MISSING_MEDICINE_ID');
+  }
 
   try {
     const batches = await sequelize.models.MedicineBatch.findAll({

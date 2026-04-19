@@ -19,7 +19,10 @@ const sequelize = new Sequelize(
     logging: config.isDevelopment ? (msg) => logger.debug(msg) : false,
     define: {
       timestamps: true,
-      underscored: true,
+      // Disable automatic underscoring so explicit `field` mappings in models
+      // (e.g. field: 'MedicineId') are honored and Sequelize does not
+      // convert attribute names to snake_case (medicine_id) unexpectedly.
+      underscored: false,
       freezeTableName: true,
     },
   }
