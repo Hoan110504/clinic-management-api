@@ -37,6 +37,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/patients/me
+ * @desc Get patient record for current authenticated user (by Users.id -> Patients.user_id)
+ * @access Admin, Doctor, Receptionist, Patient
+ */
+router.get(
+  '/me',
+  authorize(ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT),
+  patientController.getCurrentUserPatient
+);
+
+/**
  * @route GET /api/patients/:id
  * @desc Get patient by ID
  * @access Admin, Doctor, Receptionist

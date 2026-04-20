@@ -135,14 +135,15 @@ const isActiveAttr = 'is_active';
 if (roleId === ROLES.PATIENT) {
   const missing = [];
 
-  if (!user.date_of_birth) missing.push('date_of_birth');
+  // Use model attribute names (camelCase) to read values returned by Sequelize
+  if (!user.dateOfBirth) missing.push('date_of_birth');
   if (!user.gender) missing.push('gender');
   if (!user.address) missing.push('address');
-  if (!user.id_number) missing.push('id_number');
+  if (!user.idNumber) missing.push('id_number');
 
   if (missing.length > 0) {
-    // cập nhật last_login_at
-    user.last_login_at = new Date();
+    // cập nhật lastLoginAt (model attr)
+    user.lastLoginAt = new Date();
     try { await user.save(); } catch (e) {}
 
     return successResponse(
@@ -173,17 +174,16 @@ const lastLoginAttr = 'last_login_at';
   }
 
   // Nếu là bệnh nhân, lấy thêm patientId để FE định danh
-let patientInfo = null;
+  let patientInfo = null;
 
-if (roleId === ROLES.PATIENT) {
-  try {
-    patientInfo = await Patient.findOne({
-      where: { user_id: user.id }
-    });
-  } catch (e) {
-    // ignore
+  if (roleId === ROLES.PATIENT) {
+    try {
+      // Resolve Patient using the canonical linkage: Patient.userId == User.id
+      patientInfo = await Patient.findOne({ where: { userId: user.id } });
+    } catch (e) {
+      // ignore lookup errors
+    }
   }
-}
 
   return successResponse(res, {
     user: {
@@ -390,7 +390,12 @@ const getCurrentUser = asyncHandler(async (req, res) => {
 
   let patientInfo = null;
   if (user.role === ROLES.PATIENT) {
-    patientInfo = await Patient.findOne({ where: { userId: user.id } });
+    // Resolve Patient using User.id -> Patient.userId
+    try {
+      patientInfo = await Patient.findOne({ where: { userId: user.id } });
+    } catch (e) {
+      // ignore
+    }
   }
 
   return successResponse(res, {
@@ -507,15 +512,17 @@ const updateProfile = asyncHandler(async (req, res) => {
   emergency_contact: emergencyContact || undefined,
   emergency_phone: emergencyPhone || undefined,
 };
-    // Remove undefined keys to avoid overwriting with null
-   Object.keys(patientUpdate).forEach((k) => patientUpdate[k] === undefined && delete patientUpdate[k]);
+      // Remove undefined keys to avoid overwriting with null
+      Object.keys(patientUpdate).forEach((k) => patientUpdate[k] === undefined && delete patientUpdate[k]);
 
-try {
-  await Patient.update(patientUpdate, { where: { user_id: user.id } });
-  updatedPatient = await Patient.findOne({ where: { user_id: user.id } });
-} catch (e) {
-  console.warn('patient update failed', e.message || e);
-}
+      // Update Patient by linked userId (canonical linkage Patient.userId == User.id)
+      let updatedPatient = null;
+      try {
+        await Patient.update(patientUpdate, { where: { userId: user.id } });
+        updatedPatient = await Patient.findOne({ where: { userId: user.id } });
+      } catch (e) {
+        console.warn('patient update failed', e.message || e);
+      }
 
   // Return merged user + patient info when available so frontend can update UI
   if (updatedPatient) {

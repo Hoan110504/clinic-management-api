@@ -13,7 +13,7 @@ import {
   paginatedResponse,
   noContentResponse,
 } from '../utils/response.js';
-import { NotFoundError, ConflictError, BadRequestError, ForbiddenError } from '../utils/errors.js';
+import { NotFoundError, ConflictError, BadRequestError, ForbiddenError, UnauthorizedError } from '../utils/errors.js';
 
 /**
  * Get all patients (with pagination and filters)
@@ -93,10 +93,143 @@ const getAllPatients = asyncHandler(async (req, res) => {
  * Get patient by ID
  * GET /api/patients/:id
  */
+const getCurrentUserPatient = asyncHandler(async (req, res) => {
+  const user = req.user;
+  if (!user) {
+    throw new UnauthorizedError('Yêu cầu đăng nhập', 'NOT_AUTHENTICATED');
+  }
+
+  // Try to find patient linked to this user
+  let patient = await Patient.findOne({
+    where: { userId: user.id },
+    include: [
+      {
+        model: User,
+        as: 'user',
+        attributes: ['id', 'username', 'email', 'lastLoginAt'],
+        required: false,
+      },
+    ],
+  });
+
+  // If not found, attempt to locate an existing patient by idNumber/email and link it
+  if (!patient) {
+    try {
+      const candidateWhere = {};
+      const idNumber = user.id_number || null;
+      const email = user.email || null;
+      if (idNumber) candidateWhere.idNumber = idNumber;
+      if (!idNumber && email) candidateWhere.email = email;
+
+      if (Object.keys(candidateWhere).length > 0) {
+        const existing = await Patient.findOne({ where: candidateWhere });
+        if (existing) {
+          if (!existing.userId) {
+            existing.userId = user.id;
+            await existing.save();
+          }
+          patient = existing;
+        }
+      }
+    } catch (e) {
+      logger.warn('patient.getCurrentUserPatient - candidate lookup failed', e.message || e);
+    }
+  }
+
+  // If still missing, create a minimal patient record linked to the user (best-effort)
+  if (!patient) {
+    try {
+      patient = await Patient.create({
+        userId: user.id,
+        fullName:  user.full_name || 'Bệnh nhân',
+        phone: user.phone || null,
+        email: user.email || null,
+        address: user.address || null,
+        idNumber: user.id_number || null,
+      });
+    } catch (e) {
+      logger.warn('patient.getCurrentUserPatient - auto-create failed', e.message || e);
+    }
+  }
+
+  if (!patient) {
+    throw new NotFoundError('Không tìm thấy hồ sơ bệnh nhân');
+  }
+
+  return successResponse(res, patient);
+});
+
 const getPatientById = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const user = req.user;
+  const userId = req.userId;
+  const userRole = req.userRole;
 
-  const patient = await Patient.findByPk(id, {
+  let patient = null;
+
+  // For PATIENT role, use smart lookup to find their own record
+  if (userRole === ROLES.PATIENT) {
+    // 1. First, try to find patient linked to this user
+    patient = await Patient.findByPk(id, {
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'username', 'email', 'lastLoginAt'],
+          required: false,
+        },
+      ],
+    });
+
+    // 2. Check if patient is already linked to this user
+    if (patient && patient.userId && String(patient.userId) === String(userId)) {
+      return successResponse(res, patient);
+    }
+
+    // 3. If patient exists but not linked, try auto-linking by idNumber or email
+    if (patient && !patient.userId) {
+      try {
+        const userIdNumber = user.id_number || null;
+        const userEmail = (user.email || '').toLowerCase() || null;
+        const patientIdNumber = patient.id_number || null;
+        const patientEmail = (patient.email || '').toLowerCase() || null;
+
+        let canLink = false;
+        if (userIdNumber && patientIdNumber && String(userIdNumber) === String(patientIdNumber)) {
+          canLink = true;
+        } else if (userEmail && patientEmail && userEmail === patientEmail) {
+          canLink = true;
+        }
+
+        if (canLink) {
+          patient.userId = userId;
+          await patient.save();
+          logger.info('getPatientById - auto-linked patient', { patientId: id, userId });
+          return successResponse(res, patient);
+        }
+      } catch (e) {
+        logger.warn('getPatientById - auto-link attempt failed', e.message || e);
+      }
+    }
+
+    // 4. If we reach here, patient either doesn't exist or can't be linked - deny access
+    if (!patient) {
+      throw new NotFoundError('Không tìm thấy hồ sơ bệnh nhân');
+    }
+
+    logger.warn('getPatientById - patient access denied (auto-link failed)', {
+      routePatientId: id,
+      patient_userId: patient.userId,
+      patient_idNumber: patient.idNumber,
+      patient_email: patient.email,
+      requesterId: userId,
+      requesterRole: userRole,
+    });
+    throw new ForbiddenError('Bạn không có quyền xem hồ sơ bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+  }
+
+  // For other roles (Admin, Doctor, Receptionist), fetch directly
+  patient = await Patient.findByPk(id, {
     include: [
       {
         model: User,
@@ -109,24 +242,6 @@ const getPatientById = asyncHandler(async (req, res) => {
 
   if (!patient) {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
-  }
-
-  // If the requester is a patient, ensure they can only access their own record
-  if (req.userRole === ROLES.PATIENT) {
-    // Compare as strings to avoid type mismatches. Allow access when either:
-    // - patient.userId matches the logged-in user id, OR
-    // - patient.id matches the logged-in user id (some patients are stored without userId)
-    const isOwner = (patient.userId && String(patient.userId) === String(req.userId)) || String(patient.id) === String(req.userId);
-    if (!isOwner) {
-      logger.warn('getPatientById - patient access denied', {
-        routePatientId: id,
-        patient_userId: patient.userId,
-        patient_id: patient.id,
-        requesterId: req.userId,
-        requesterRole: req.userRole,
-      });
-      throw new ForbiddenError('Bạn không có quyền xem hồ sơ bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
-    }
   }
 
   return successResponse(res, patient);
@@ -293,33 +408,80 @@ const updatePatient = asyncHandler(async (req, res) => {
   const currentUser = req.user;
   const userRole = req.userRole;
 
-  const patient = await Patient.findByPk(id);
+  // Resolve patient record. For PATIENT role prefer to fetch by userId first
+  // so patients can reliably edit their own canonical Patients row even when
+  // the route :id is present or legacy records haven't been linked yet.
+  let patient = null;
+  let foundByUser = false;
+
+  if (userRole === ROLES.PATIENT) {
+    try {
+      patient = await Patient.findOne({ where: { userId: currentUser.id } });
+      if (patient) foundByUser = true;
+    } catch (e) {
+      logger.warn('patient.update - lookup by userId failed', e.message || e);
+    }
+  }
+
+  // If we didn't find it by user, fall back to the route id
+  if (!patient) {
+    patient = await Patient.findByPk(id);
+  }
+
   if (!patient) {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
   // PATIENT role can only edit their own profile with specific fields
   if (userRole === ROLES.PATIENT) {
-    // Check if patient is editing their own record
-    // Compare as strings to avoid type-mismatch. Allow edit when either:
-    // - patient.userId matches the logged-in user id, OR
-    // - patient.id matches the logged-in user id (legacy records)
-    const isOwner = (patient.userId && String(patient.userId) === String(currentUser.id)) || String(patient.id) === String(currentUser.id);
-    if (!isOwner) {
-      // Log detailed info to help debug false 403s (ownership/ID mismatch)
-      try {
-        logger.warn('patient.update - ownership check failed', {
-          routePatientId: id,
-          patient_userId: patient.userId,
-          patient_id: patient.id,
-          currentUser_id: currentUser.id,
-          currentUser_role: userRole,
-        });
-      } catch (e) {
-        // swallow logging errors
+    // If the record was located by userId it's the user's canonical patient record
+    if (!foundByUser) {
+      // Check if patient is editing their own record
+      // Compare as strings to avoid type-mismatch. Allow edit when either:
+      // - patient.userId matches the logged-in user id, OR
+      // - patient.id matches the logged-in user id (legacy records)
+      let isOwner = (patient.userId && String(patient.userId) === String(currentUser.id)) || String(patient.id) === String(currentUser.id);
+
+      // If not owner, attempt safe auto-link heuristics when patient.userId is null.
+      // This helps when records exist in Patients table but weren't linked to User yet.
+      if (!isOwner && !patient.userId) {
+        try {
+          const userIdNumber = currentUser.id_number || null;
+          const userEmail = (currentUser.email || '').toLowerCase() || null;
+          const patientIdNumber = patient.id_number || null;
+          const patientEmail = (patient.email || '').toLowerCase() || null;
+
+          if (userIdNumber && patientIdNumber && String(userIdNumber) === String(patientIdNumber)) {
+            patient.userId = currentUser.id;
+            await patient.save();
+            isOwner = true;
+          } else if (userEmail && patientEmail && userEmail === patientEmail) {
+            patient.userId = currentUser.id;
+            await patient.save();
+            isOwner = true;
+          }
+        } catch (e) {
+          logger.warn('patient.update - auto-link attempt failed', e.message || e);
+        }
       }
 
-      throw new ForbiddenError('Bạn không có quyền chỉnh sửa hồ sơ của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+      if (!isOwner) {
+        // Log detailed info to help debug false 403s (ownership/ID mismatch)
+        try {
+          logger.warn('patient.update - ownership check failed', {
+            routePatientId: id,
+            patient_userId: patient.userId,
+            patient_id: patient.id,
+            currentUser_id: currentUser.id,
+            currentUser_role: userRole,
+            foundByUser,
+          });
+        } catch (e) {
+          // swallow logging errors
+        }
+
+        throw new ForbiddenError('Bạn không có quyền chỉnh sửa hồ sơ của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+      }
     }
 
     // Allowed fields for patients to edit:
@@ -338,35 +500,35 @@ const updatePatient = asyncHandler(async (req, res) => {
     ];
 
     // Filter out disallowed fields
-      // Keep only allowed fields, and remove any restricted fields if present.
-      // Accept both camelCase and snake_case variants from clients.
-      const restrictedFieldVariants = new Set([
-        'idNumber', 'id_number',
-        'fullName', 'full_name',
-        'dateOfBirth', 'date_of_birth',
-        'gender',
-        'insuranceNumber', 'insurance_number',
-      ]);
+    // Keep only allowed fields, and remove any restricted fields if present.
+    // Accept both camelCase and snake_case variants from clients.
+    const restrictedFieldVariants = new Set([
+      'idNumber', 'id_number',
+      'fullName', 'full_name',
+      'dateOfBirth', 'date_of_birth',
+      'gender',
+      'insuranceNumber', 'insurance_number',
+    ]);
 
-      const attemptedRestricted = Object.keys(updateData).filter((k) => restrictedFieldVariants.has(k));
-      if (attemptedRestricted.length > 0) {
-        try {
-          logger.warn('patient.update - patient attempted to change restricted fields, ignoring', {
-            patientId: id,
-            attemptedRestricted,
-            userId: currentUser.id,
-          });
-        } catch (e) {}
-        // Remove restricted keys from payload so request can continue
-        attemptedRestricted.forEach((k) => delete updateData[k]);
+    const attemptedRestricted = Object.keys(updateData).filter((k) => restrictedFieldVariants.has(k));
+    if (attemptedRestricted.length > 0) {
+      try {
+        logger.warn('patient.update - patient attempted to change restricted fields, ignoring', {
+          patientId: patient.id,
+          attemptedRestricted,
+          userId: currentUser.id,
+        });
+      } catch (e) {}
+      // Remove restricted keys from payload so request can continue
+      attemptedRestricted.forEach((k) => delete updateData[k]);
+    }
+
+    // Remove any other keys not in allowedFields
+    Object.keys(updateData).forEach(key => {
+      if (!allowedFields.includes(key)) {
+        delete updateData[key];
       }
-
-      // Remove any other keys not in allowedFields
-      Object.keys(updateData).forEach(key => {
-        if (!allowedFields.includes(key)) {
-          delete updateData[key];
-        }
-      });
+    });
   }
 
   // Normalize email if provided
@@ -426,10 +588,38 @@ const updatePatient = asyncHandler(async (req, res) => {
   // Update linked user if exists
   if (patient.userId) {
     const { fullName, phone, email, address, dateOfBirth, gender } = updateData;
-    await User.update(
-      { fullName, phone, email, address, dateOfBirth, gender },
-      { where: { id: patient.userId } }
-    );
+    try {
+      const linkedUser = await User.findByPk(patient.userId);
+      if (linkedUser) {
+        const userUpdates = {};
+        if (typeof fullName !== 'undefined') userUpdates.fullName = fullName;
+        if (typeof phone !== 'undefined' && phone !== linkedUser.phone) {
+          const existingPhoneUser = await User.findOne({ where: { phone } });
+          if (existingPhoneUser && String(existingPhoneUser.id) !== String(linkedUser.id)) {
+            throw new ConflictError('Số điện thoại đã được sử dụng');
+          }
+          userUpdates.phone = phone;
+        }
+        if (typeof email !== 'undefined' && email !== linkedUser.email) {
+          const existingEmailUser = await User.findOne({ where: { email } });
+          if (existingEmailUser && String(existingEmailUser.id) !== String(linkedUser.id)) {
+            throw new ConflictError('Email đã được sử dụng');
+          }
+          userUpdates.email = email;
+        }
+        if (typeof address !== 'undefined') userUpdates.address = address;
+        if (typeof dateOfBirth !== 'undefined') userUpdates.dateOfBirth = dateOfBirth;
+        if (typeof gender !== 'undefined') userUpdates.gender = gender;
+
+        if (Object.keys(userUpdates).length > 0) {
+          await linkedUser.update(userUpdates);
+        }
+      }
+    } catch (e) {
+      // Bubble up known conflict errors, otherwise log and continue
+      if (e instanceof ConflictError) throw e;
+      logger.warn('updatePatient - linked user update failed', e.message || e);
+    }
   }
 
   return successResponse(res, patient, 'Cập nhật bệnh nhân thành công');
@@ -589,6 +779,7 @@ const searchPatients = asyncHandler(async (req, res) => {
 
 export {
   getAllPatients,
+  getCurrentUserPatient,
   getPatientById,
   createPatient,
   updatePatient,
