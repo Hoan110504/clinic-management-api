@@ -28,11 +28,11 @@ router.get(
 /**
  * @route GET /api/users/role/:role
  * @desc Get users by role
- * @access Admin, Receptionist
+ * @access Admin, Receptionist, Patient (doctor list only)
  */
 router.get(
   '/role/:role',
-  authorize(ROLES.ADMIN, ROLES.RECEPTIONIST),
+  authorize(ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.PATIENT),
   validate(userValidator.getByRole),
   userController.getUsersByRole
 );

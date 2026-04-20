@@ -14,6 +14,7 @@ import {
 import { normalizeStatus, labelToCode, codeToLabel } from '../utils/statusHelpers.js';
 import { sequelize } from '../models/database.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
+import logger from '../utils/logger.js';
 import { APPOINTMENT_STATUS, ROLES, TIME_SLOTS } from '../config/constants.js';
 
 // Precompute valid status values and a small mapping for common code keys
@@ -53,6 +54,60 @@ const getAllAppointments = asyncHandler(async (req, res) => {
 
   // Xây dựng điều kiện lọc động (dynamic WHERE clause)
   const where = {};
+
+  // If the requester is a PATIENT, restrict results to their own appointments only.
+  if (req.user && req.user.role === ROLES.PATIENT) {
+    try {
+      // Try to find the Patient record linked to this user
+      let patientRecord = await Patient.findOne({ where: { userId: req.user.id } });
+
+      // If not linked, try to auto-link by idNumber or email
+      if (!patientRecord) {
+        const candidateWhere = {};
+        const userIdNumber = req.user.id_number || req.user.idNumber || null;
+        const userEmail = (req.user.email || '').toLowerCase() || null;
+        if (userIdNumber) candidateWhere.idNumber = userIdNumber;
+        if (!userIdNumber && userEmail) candidateWhere.email = userEmail;
+        if (Object.keys(candidateWhere).length > 0) {
+          const existing = await Patient.findOne({ where: candidateWhere });
+          if (existing) {
+            if (!existing.userId) {
+              existing.userId = req.user.id;
+              await existing.save();
+            }
+            patientRecord = existing;
+          }
+        }
+      }
+
+      // If still not found, attempt a best-effort creation so patient has canonical record
+      if (!patientRecord) {
+        try {
+          patientRecord = await Patient.create({
+            userId: req.user.id,
+            fullName: req.user.full_name || req.user.fullName || req.user.username || 'Bệnh nhân',
+            phone: req.user.phone || null,
+            email: req.user.email || null,
+            idNumber: req.user.id_number || req.user.idNumber || null,
+          });
+        } catch (e) {
+          // ignore creation errors (unique constraints) and fall back to filtering by user id
+          patientRecord = null;
+        }
+      }
+
+      if (patientRecord && patientRecord.id) {
+        where.patientId = patientRecord.id;
+      } else {
+        // fallback: some installations may store patientId as the user id for legacy reasons
+        where.patientId = req.user.id;
+      }
+    } catch (e) {
+      // On any failure, restrict to nothing rather than leaking others' data
+      // (return empty set) — set impossible id filter
+      where.patientId = -1;
+    }
+  }
 
   if (status) {
     // Convert status label to numeric code if needed (DB stores INTEGER)
@@ -149,6 +204,16 @@ const getAllAppointments = asyncHandler(async (req, res) => {
       const norm = normalizeStatus(obj.status);
       obj.statusCode = norm.code;
       obj.statusLabel = norm.label;
+      // Ensure assignedDoctorName is available on top-level for clients
+      try {
+        if (!obj.assignedDoctorName) {
+          const fromInclude = obj.assignedDoctor && (obj.assignedDoctor.fullName || obj.assignedDoctor.full_name || obj.assignedDoctor.name);
+          obj.assignedDoctorName = fromInclude || obj.preferredDoctorName || obj.assignedDoctorName || null;
+        }
+        if (obj.assignedDoctorName && !obj.assigned_doctor_name) obj.assigned_doctor_name = obj.assignedDoctorName;
+      } catch (e) {
+        // ignore mapping errors
+      }
       return obj;
     } catch (e) {
       if (r && r.dataValues) {
@@ -157,6 +222,15 @@ const getAllAppointments = asyncHandler(async (req, res) => {
         const norm = normalizeStatus(obj.status);
         obj.statusCode = norm.code;
         obj.statusLabel = norm.label;
+        try {
+          if (!obj.assignedDoctorName) {
+            const fromInclude = obj.assignedDoctor && (obj.assignedDoctor.fullName || obj.assignedDoctor.full_name || obj.assignedDoctor.name);
+            obj.assignedDoctorName = fromInclude || obj.preferredDoctorName || obj.assignedDoctorName || null;
+          }
+          if (obj.assignedDoctorName && !obj.assigned_doctor_name) obj.assigned_doctor_name = obj.assignedDoctorName;
+        } catch (e2) {
+          // ignore mapping errors
+        }
         return obj;
       }
       return r;
@@ -193,11 +267,38 @@ const getAppointmentById = asyncHandler(async (req, res) => {
   if (!appointment) {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
   }
+
+  // If requester is a PATIENT, ensure they own this appointment
+  if (req.user && req.user.role === ROLES.PATIENT) {
+    try {
+      const patientRecord = await Patient.findOne({ where: { userId: req.user.id } });
+      const patientIdForUser = patientRecord && patientRecord.id ? patientRecord.id : null;
+      // Appointment.patientId may be null in some legacy rows; deny access unless it matches
+      if (!patientIdForUser || String(appointment.patientId) !== String(patientIdForUser)) {
+        throw new ForbiddenError('Bạn không có quyền xem lịch hẹn của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+      }
+    } catch (e) {
+      if (e instanceof ForbiddenError) throw e;
+      // any lookup error -> deny access
+      throw new ForbiddenError('Bạn không có quyền xem lịch hẹn của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+    }
+  }
   // normalize status fields for response
   const plain = appointment.get ? appointment.get({ plain: true }) : appointment;
   const norm = normalizeStatus(plain.status);
   plain.statusCode = norm.code;
   plain.statusLabel = norm.label;
+
+  // Ensure assignedDoctorName is present for client display
+  try {
+    if (!plain.assignedDoctorName) {
+      const fromInclude = plain.assignedDoctor && (plain.assignedDoctor.fullName || plain.assignedDoctor.full_name || plain.assignedDoctor.name);
+      plain.assignedDoctorName = fromInclude || plain.preferredDoctorName || plain.assignedDoctorName || null;
+    }
+    if (plain.assignedDoctorName && !plain.assigned_doctor_name) plain.assigned_doctor_name = plain.assignedDoctorName;
+  } catch (e) {
+    // ignore
+  }
 
   return successResponse(res, plain);
 });
@@ -280,6 +381,63 @@ const createAppointment = asyncHandler(async (req, res) => {
     patientNotes,
     internalNotes,
   };
+
+  // If the requester is a PATIENT, ensure the appointment is linked to their canonical Patient record
+  if (req.user && req.user.role === ROLES.PATIENT) {
+    try {
+      let patientRecord = await Patient.findOne({ where: { userId: req.user.id } });
+
+      // Try auto-link heuristics if not linked
+      if (!patientRecord) {
+        const candidateWhere = {};
+        const userIdNumber = req.user.id_number || req.user.idNumber || null;
+        const userEmail = (req.user.email || '').toLowerCase() || null;
+        if (userIdNumber) candidateWhere.idNumber = userIdNumber;
+        if (!userIdNumber && userEmail) candidateWhere.email = userEmail;
+        if (Object.keys(candidateWhere).length > 0) {
+          const existing = await Patient.findOne({ where: candidateWhere });
+          if (existing) {
+            if (!existing.userId) {
+              existing.userId = req.user.id;
+              await existing.save();
+            }
+            patientRecord = existing;
+          }
+        }
+      }
+
+      // If still not found, attempt to create a minimal Patient record
+      if (!patientRecord) {
+        try {
+          patientRecord = await Patient.create({
+            userId: req.user.id,
+            fullName: req.user.full_name || req.user.fullName || req.user.username || 'Bệnh nhân',
+            phone: req.user.phone || null,
+            email: req.user.email || null,
+            idNumber: req.user.id_number || req.user.idNumber || null,
+          });
+        } catch (e) {
+          // ignore creation error and fall back
+          patientRecord = null;
+        }
+      }
+
+      if (patientRecord && patientRecord.id) {
+        createData.patientId = patientRecord.id;
+        createData.patientName = createData.patientName || patientRecord.fullName || (req.user.full_name || req.user.fullName || req.user.username || '');
+        createData.patientPhone = createData.patientPhone || patientRecord.phone || req.user.phone || '';
+        createData.patientEmail = createData.patientEmail || patientRecord.email || req.user.email || '';
+        createData.source = createData.source || 'Online';
+      } else {
+        // Fallback: use user-level id (legacy)
+        createData.patientId = req.user.id;
+        createData.source = createData.source || 'Online';
+      }
+    } catch (e) {
+      // on error, ensure we still set source so receptionist receives online flag
+      createData.source = createData.source || 'Online';
+    }
+  }
   // Determine status code: prefer explicit `status` from request if valid, otherwise default to SCHEDULED
   let statusCode = null;
   if (req.body.status != null) {
@@ -309,10 +467,73 @@ const createAppointment = asyncHandler(async (req, res) => {
   // Create appointment (DB will assign numeric identity PK)
   let appointment = await Appointment.create(createData);
 
-  // Reload to include associations/fields
-  appointment = await Appointment.findByPk(appointment.id);
+  // Reload to include associations/fields so we can populate friendly names
+  appointment = await Appointment.findByPk(appointment.id, {
+    include: [
+      { model: Patient, as: 'patient', required: false },
+      { model: User, as: 'assignedDoctor', attributes: ['id', 'fullName'], required: false },
+      { model: User, as: 'preferredDoctor', attributes: ['id', 'fullName'], required: false },
+    ],
+  });
 
-  return createdResponse(res, appointment, 'Tạo lịch hẹn thành công');
+  // Ensure top-level assignedDoctorName is present for clients
+  try {
+    const apPlain = appointment.get ? appointment.get({ plain: true }) : appointment;
+    if (!apPlain.assignedDoctorName) {
+      const fromInclude = apPlain.assignedDoctor && (apPlain.assignedDoctor.fullName || apPlain.assignedDoctor.full_name || apPlain.assignedDoctor.name);
+      apPlain.assignedDoctorName = fromInclude || apPlain.preferredDoctorName || apPlain.assignedDoctorName || null;
+    }
+    if (apPlain.assignedDoctorName && !apPlain.assigned_doctor_name) apPlain.assigned_doctor_name = apPlain.assignedDoctorName;
+    // copy normalized values back into appointment instance where possible
+    try {
+      if (appointment && appointment.set) appointment.set('assignedDoctorName', apPlain.assignedDoctorName);
+    } catch (x) {
+      // ignore
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Emit real-time notification via Socket.IO to receptionists
+  try {
+    const io = req.app?.get?.('io');
+    if (io) {
+      const appointmentPlain = appointment.get ? appointment.get({ plain: true }) : appointment;
+      io.to('receptionists').emit('appointment:new', {
+        appointment: appointmentPlain,
+        message: `Có lịch hẹn mới: ${appointmentPlain.patientName || 'Bệnh nhân'} - ${appointmentPlain.appointmentDate} ${appointmentPlain.timeSlot}`,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Notify the patient who created the appointment
+      if (req.user?.id) {
+        io.to(`patient:${req.user.id}`).emit('appointment:confirmed', {
+          appointment: appointmentPlain,
+          message: 'Đã đặt lịch khám thành công',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      logger.info(`[Appointment] New appointment created and broadcasted: ${appointment.id}`);
+    }
+  } catch (error) {
+    logger.warn('[Appointment] Socket.IO broadcast failed:', error.message);
+    // Don't throw - appointment creation should succeed even if socket fails
+  }
+
+  const responsePayload = appointment.get ? appointment.get({ plain: true }) : appointment;
+
+  // Ensure the response contains friendly status label/code for clients
+  try {
+    const statusSource = responsePayload.status ;
+    const norm = normalizeStatus(statusSource);
+    if (norm && norm.label) responsePayload.statusLabel = norm.label;
+    if (norm && norm.code != null) responsePayload.statusCode = norm.code;
+    if (responsePayload.status == null && norm && norm.code != null) responsePayload.status = norm.code;
+  } catch (e) {
+    // noop - don't fail creation due to UI-friendly formatting
+  }
+
+  return createdResponse(res, responsePayload, 'Tạo lịch hẹn thành công');
 });
 
 /**
@@ -328,6 +549,20 @@ const updateAppointment = asyncHandler(async (req, res) => {
   const appointment = await Appointment.findByPk(id);
   if (!appointment) {
     throw new NotFoundError('Không tìm thấy lịch hẹn');
+  }
+
+  // If requester is a PATIENT, ensure they own this appointment before allowing cancel
+  if (req.user && req.user.role === ROLES.PATIENT) {
+    try {
+      const patientRecord = await Patient.findOne({ where: { userId: req.user.id } });
+      const patientIdForUser = patientRecord && patientRecord.id ? patientRecord.id : null;
+      if (!patientIdForUser || String(appointment.patientId) !== String(patientIdForUser)) {
+        throw new ForbiddenError('Bạn không có quyền hủy lịch hẹn của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+      }
+    } catch (e) {
+      if (e instanceof ForbiddenError) throw e;
+      throw new ForbiddenError('Bạn không có quyền hủy lịch hẹn của bệnh nhân khác', 'INSUFFICIENT_PERMISSIONS');
+    }
   }
 
   // Kiểm tra không cho sửa lịch đã hủy hoặc hoàn thành
@@ -607,6 +842,15 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
     const norm = normalizeStatus(obj.status);
     obj.statusCode = norm.code;
     obj.statusLabel = norm.label;
+    try {
+      if (!obj.assignedDoctorName) {
+        const fromInclude = obj.assignedDoctor && (obj.assignedDoctor.fullName || obj.assignedDoctor.full_name || obj.assignedDoctor.name);
+        obj.assignedDoctorName = fromInclude || obj.preferredDoctorName || obj.assignedDoctorName || null;
+      }
+      if (obj.assignedDoctorName && !obj.assigned_doctor_name) obj.assigned_doctor_name = obj.assignedDoctorName;
+    } catch (e) {
+      // ignore
+    }
     return obj;
   });
 
@@ -624,24 +868,33 @@ const getAvailableSlots = asyncHandler(async (req, res) => {
     throw new BadRequestError('Ngày không được để trống');
   }
 
-  // Get booked slots (TIME_SLOTS imported at top)
- const bookedAppointments = await Appointment.findAll({
-  where: {
-    appointment_date: date,                 // đổi sang snake_case
-    ...(doctorId && { assigned_doctor_id: doctorId }),
-    status: {
-      [Op.notIn]: [
-        labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED,
-      ],
-    },
-  },
-  attributes: ['time_slot', 'assigned_doctor_id'], // snake_case
-  raw: true,
-  mapToModel: false,
-});
+    // Get booked slots (TIME_SLOTS imported at top)
+    // Consider appointments where the doctor is either assigned or preferred
+    const bookedWhere = {
+      appointment_date: date, // snake_case in DB
+      status: {
+        [Op.notIn]: [
+          labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED,
+        ],
+      },
+    };
 
-  const bookedSlots = bookedAppointments.map((a) => a.time_slot);
-  const availableSlots = TIME_SLOTS.filter((slot) => !bookedSlots.includes(slot));
+    if (doctorId) {
+      bookedWhere[Op.or] = [
+        { assigned_doctor_id: doctorId },
+        { preferred_doctor_id: doctorId },
+      ];
+    }
+
+    const bookedAppointments = await Appointment.findAll({
+      where: bookedWhere,
+      attributes: ['time_slot', 'assigned_doctor_id', 'preferred_doctor_id'],
+      raw: true,
+      mapToModel: false,
+    });
+
+    const bookedSlots = bookedAppointments.map((a) => a.time_slot);
+    const availableSlots = TIME_SLOTS.filter((slot) => !bookedSlots.includes(slot));
 
   return successResponse(res, {
     date,

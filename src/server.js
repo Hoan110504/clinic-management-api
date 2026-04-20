@@ -4,10 +4,13 @@
  */
 import 'dotenv/config';
 
+import http from 'http';
+import { Server } from 'socket.io';
 import app from './app.js';
 import config from './config/index.js';
 import { sequelize } from './models/database.js';
 import logger from './utils/logger.js';
+import { setupSocketIO } from './socket/index.js';
 
 // Graceful shutdown handlers
 const gracefulShutdown = async (signal) => {
@@ -51,10 +54,33 @@ const startServer = async () => {
     // Các bảng đã được tạo sẵn trong database bằng file database/schema.sql
     // Nếu muốn tạo bảng mới từ models, chạy: npm run seed:vn
     
-    // Start Express server
-    const server = app.listen(config.port, () => {
+    // Create HTTP server for Socket.IO
+    const server = http.createServer(app);
+    
+    // Setup Socket.IO
+    const io = new Server(server, {
+      cors: {
+        origin: config.cors.origin,
+        credentials: config.cors.credentials,
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      },
+      transports: ['websocket', 'polling'],
+      path: '/socket.io',
+      pingInterval: 25000,
+      pingTimeout: 60000,
+    });
+
+    // Setup Socket.IO event handlers
+    setupSocketIO(io);
+    
+    // Make io accessible to routes via app.set
+    app.set('io', io);
+    
+    // Start Express server with HTTP
+    server.listen(config.port, () => {
       logger.info(`Máy chủ đang chạy trên cổng ${config.port} (chế độ ${config.env})`);
       logger.info(`API truy cập tại http://localhost:${config.port}/api`);
+      logger.info(`Socket.IO đã khởi động trên ws://localhost:${config.port}/socket.io`);
     });
 
     // Handle server errors

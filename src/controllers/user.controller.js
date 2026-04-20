@@ -12,7 +12,7 @@ import {
   paginatedResponse,
   noContentResponse,
 } from '../utils/response.js';
-import { NotFoundError, ConflictError, BadRequestError, ValidationError } from '../utils/errors.js';
+import { NotFoundError, ConflictError, BadRequestError, ValidationError, ForbiddenError } from '../utils/errors.js';
 import { ROLES, ROLE_PREFIXES } from '../config/constants.js';
 
 const buildNextStaffCode = async (role, transaction) => {
@@ -721,6 +721,11 @@ const getUsersByRole = asyncHandler(async (req, res) => {
   const roleId = Number(role);
   if (!Number.isInteger(roleId) || !Object.values(ROLES).includes(roleId)) {
     throw new BadRequestError('Vai trò phải là roleId hợp lệ (1-5)');
+  }
+
+  // Patients may only fetch doctor list for appointment booking UI.
+  if (req.user && req.user.role === ROLES.PATIENT && roleId !== ROLES.DOCTOR) {
+    throw new ForbiddenError('Bệnh nhân chỉ được phép xem danh sách bác sĩ', 'INSUFFICIENT_PERMISSIONS');
   }
 
   const users = await User.findAll({

@@ -4,8 +4,9 @@
  */
 import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
-import { User } from '../models/index.js';
+import { User, Patient } from '../models/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
+import logger from '../utils/logger.js';
 import { ROLES } from '../config/constants.js';
 import { asyncHandler } from '../utils/helpers.js';
 
@@ -41,9 +42,44 @@ const authenticate = asyncHandler(async (req, res, next) => {
     }
 
     // RBAC roleId-only: chỉ chấp nhận role số hợp lệ 1-5
-    const roleId = Number(user.role);
+    let roleId = Number(user.role);
+    
+    // Auto-correct: if role is NULL or NaN, default to PATIENT (5) and save
     if (!Number.isInteger(roleId) || !Object.values(ROLES).includes(roleId)) {
-      throw new UnauthorizedError('Vai trò tài khoản không hợp lệ', 'INVALID_ROLE');
+      try {
+        logger.warn('authenticate - invalid role detected, auto-correcting to PATIENT', {
+          userId: user.id,
+          username: user.username,
+          dbRoleRaw: user.role,
+          parsedRoleId: roleId,
+          correctedTo: ROLES.PATIENT,
+        });
+        
+        // Update user's role to PATIENT if it's invalid
+        user.role = ROLES.PATIENT;
+        await user.save();
+        roleId = ROLES.PATIENT;
+      } catch (e) {
+        try {
+          logger.error('authenticate - failed to auto-correct role', {
+            userId: user.id,
+            error: e.message,
+          });
+        } catch (logE) {
+          // ignore logging errors
+        }
+        throw new UnauthorizedError('Vai trò tài khoản không hợp lệ', 'INVALID_ROLE');
+      }
+    }
+    
+    try {
+      logger.debug('authenticate - role verified', {
+        userId: user.id,
+        username: user.username,
+        role: roleId,
+      });
+    } catch (e) {
+      // ignore logging errors
     }
 
     req.user = user;
@@ -107,17 +143,50 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
  * @param {...number} roles - Danh sách roleId được phép (1-5)
  */
 const authorize = (...roles) => {
-  return (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     if (!req.user) {
       throw new UnauthorizedError('Yêu cầu đăng nhập', 'NOT_AUTHENTICATED');
     }
 
-    if (!roles.includes(req.user.role)) {
+    let effectiveRole = req.user.role;
+
+    // Fallback for legacy data: if route accepts PATIENT and user has a linked
+    // patient profile, treat this request as PATIENT role.
+    if (!roles.includes(effectiveRole) && roles.includes(ROLES.PATIENT)) {
+      const patientProfile = await Patient.findOne({
+        where: { userId: req.user.id },
+        attributes: ['id'],
+        raw: true,
+      });
+
+      if (patientProfile && patientProfile.id) {
+        effectiveRole = ROLES.PATIENT;
+      }
+    }
+
+    if (!roles.includes(effectiveRole)) {
+      try {
+        logger.warn('authorize - insufficient permissions', {
+          userId: req.user && req.user.id,
+          userRole: req.user && req.user.role,
+          effectiveRole,
+          requiredRoles: roles,
+          method: req.method,
+          path: req.originalUrl || req.url,
+        });
+      } catch (e) {
+        // ignore logging failures
+      }
+
       throw new ForbiddenError('Bạn không có quyền thực hiện hành động này', 'INSUFFICIENT_PERMISSIONS');
     }
 
+    // Expose effective role for downstream controllers that branch by req.user.role.
+    req.user.role = effectiveRole;
+    req.userRole = effectiveRole;
+
     next();
-  };
+  });
 };
 
 /**
