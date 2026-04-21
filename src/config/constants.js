@@ -39,11 +39,12 @@ const APPOINTMENT_STATUS = {
   CANCELLED: 'Đã hủy',
 };
 
-// Medical Record Status
+// Medical Record Status (mapped to dbo.MedicalExaminations.Status)
 const MEDICAL_RECORD_STATUS = {
-  WAITING: 'Chờ khám',
-  IN_PROGRESS: 'Đang khám',
-  COMPLETED: 'Hoàn thành',
+  WAITING: 'Chờ khám',           // Status 0: Đã tiếp nhận
+  IN_PROGRESS: 'Đang khám',      // Status 1: Đang khám
+  COMPLETED: 'Hoàn thành',       // Status 2: Hoàn thành
+  CANCELLED: 'Đã hủy',           // Status 3: Đã hủy
 };
 
 // Lab Test Status

@@ -251,6 +251,7 @@ const updateRecord = asyncHandler(async (req, res) => {
     treatmentAdvice,
     notes,
     reExaminationDate,
+    status,
   } = req.body;
 
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
@@ -273,6 +274,8 @@ const updateRecord = asyncHandler(async (req, res) => {
   if (treatmentAdvice !== undefined) updates.TreatmentAdvice = treatmentAdvice;
   if (notes !== undefined) updates.Notes = notes;
   if (reExaminationDate !== undefined) updates.ReExaminationDate = reExaminationDate ? new Date(reExaminationDate) : null;
+  // Support status parameter (0=waiting, 1=in-progress, 2=completed, 3=cancelled)
+  if (status !== undefined && [0, 1, 2, 3].includes(Number(status))) updates.Status = Number(status);
   updates.UpdatedAt = new Date();
 
   await examination.update(updates);
@@ -297,8 +300,8 @@ const completeExamination = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
   if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  // Mark status as complete (1 = completed based on schema)
-  await examination.update({ Status: 1, UpdatedAt: new Date() });
+  // Mark status as complete (Status: 2 = Hoàn thành)
+  await examination.update({ Status: 2, UpdatedAt: new Date() });
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hoàn thành khám thành công');
 });
@@ -308,8 +311,8 @@ const cancelExamination = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
   if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  // Mark status as cancelled (2 = cancelled)
-  await examination.update({ Status: 2, UpdatedAt: new Date() });
+  // Mark status as cancelled (Status: 3 = Đã hủy)
+  await examination.update({ Status: 3, UpdatedAt: new Date() });
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hủy phiếu khám thành công');
 });

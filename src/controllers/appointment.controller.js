@@ -3,7 +3,7 @@
  * Quản lý đặt lịch, xác nhận, check-in, hủy hẹn
  */
 import { Op } from 'sequelize';
-import { Appointment, Patient, User, MedicalRecord } from '../models/index.js';
+import { Appointment, Patient, User, MedicalRecord, MedicalExamination } from '../models/index.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import {
   successResponse,
@@ -41,6 +41,88 @@ function resolveStatus(input) {
   }
   return null;
 }
+
+const appendExaminationRef = (appointmentLike, examinationLike) => {
+  if (!appointmentLike) return appointmentLike;
+  const examinationId = examinationLike
+    ? Number(examinationLike.ExaminationID || examinationLike.examinationId || examinationLike.id || 0)
+    : 0;
+  if (!Number.isFinite(examinationId) || examinationId <= 0) return appointmentLike;
+
+  appointmentLike.ExaminationID = examinationId;
+  appointmentLike.examinationId = examinationId;
+  appointmentLike.medicalRecordId = examinationId;
+  appointmentLike.recordId = examinationId;
+  return appointmentLike;
+};
+
+const attachLatestExaminationRefs = async (appointmentRows) => {
+  if (!Array.isArray(appointmentRows) || appointmentRows.length === 0) return appointmentRows;
+
+  const appointmentIds = Array.from(
+    new Set(
+      appointmentRows
+        .map((row) => Number(row && (row.id || row.Id)))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )
+  );
+
+  if (appointmentIds.length === 0) return appointmentRows;
+
+  const examinationRows = await MedicalExamination.findAll({
+    where: {
+      AppointmentID: { [Op.in]: appointmentIds },
+      Status: { [Op.ne]: 2 },
+    },
+    attributes: ['ExaminationID', 'AppointmentID', 'UpdatedAt'],
+    order: [['AppointmentID', 'ASC'], ['UpdatedAt', 'DESC'], ['ExaminationID', 'DESC']],
+  });
+
+  const latestByAppointmentId = new Map();
+  for (const row of examinationRows) {
+    const plain = row && row.get ? row.get({ plain: true }) : row;
+    const appointmentId = Number(plain && plain.AppointmentID);
+    if (!Number.isFinite(appointmentId) || appointmentId <= 0) continue;
+    if (!latestByAppointmentId.has(appointmentId)) latestByAppointmentId.set(appointmentId, plain);
+  }
+
+  return appointmentRows.map((row) => {
+    const appointmentId = Number(row && (row.id || row.Id));
+    const examination = latestByAppointmentId.get(appointmentId);
+    return appendExaminationRef(row, examination);
+  });
+};
+
+const ensureMedicalExaminationForAppointment = async (appointment, { transaction } = {}) => {
+  const appointmentId = Number(appointment && appointment.id);
+  if (!Number.isFinite(appointmentId) || appointmentId <= 0) return null;
+
+  const existing = await MedicalExamination.findOne({
+    where: {
+      AppointmentID: appointmentId,
+      Status: { [Op.ne]: 2 },
+    },
+    order: [['UpdatedAt', 'DESC'], ['ExaminationID', 'DESC']],
+    transaction,
+  });
+  if (existing) return existing;
+
+  return MedicalExamination.create(
+    {
+      AppointmentID: appointmentId,
+      PatientId: appointment.patientId ? Number(appointment.patientId) : null,
+      DoctorID: appointment.assignedDoctorId
+        ? Number(appointment.assignedDoctorId)
+        : (appointment.preferredDoctorId ? Number(appointment.preferredDoctorId) : null),
+      ExaminationDate: new Date(),
+      Symptoms: appointment.symptoms || '',
+      Status: 0,
+      CreatedAt: new Date(),
+      UpdatedAt: new Date(),
+    },
+    { transaction }
+  );
+};
 
 /**
  * Lấy tất cả lịch hẹn (có phân trang và lọc)
@@ -237,6 +319,8 @@ const getAllAppointments = asyncHandler(async (req, res) => {
     }
   });
 
+  await attachLatestExaminationRefs(plainRows);
+
   return paginatedResponse(res, {
     data: plainRows,
     page,
@@ -299,6 +383,18 @@ const getAppointmentById = asyncHandler(async (req, res) => {
   } catch (e) {
     // ignore
   }
+
+  const linkedExamination = await MedicalExamination.findOne({
+    where: {
+      AppointmentID: Number(id),
+      Status: { [Op.ne]: 2 },
+    },
+    order: [['UpdatedAt', 'DESC'], ['ExaminationID', 'DESC']],
+  });
+  appendExaminationRef(
+    plain,
+    linkedExamination && linkedExamination.get ? linkedExamination.get({ plain: true }) : linkedExamination
+  );
 
   return successResponse(res, plain);
 });
@@ -716,62 +812,46 @@ const confirmAppointment = asyncHandler(async (req, res) => {
 const checkInAppointment = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const appointment = await Appointment.findByPk(id);
-  if (!appointment) {
-    throw new NotFoundError('Không tìm thấy lịch hẹn');
-  }
-
-  const apptNorm3 = normalizeStatus(appointment.status);
-  const schedCode = labelToCode(APPOINTMENT_STATUS.SCHEDULED);
-  const confCode = labelToCode(APPOINTMENT_STATUS.CONFIRMED);
-  // Allow check-in only from SCHEDULED or CONFIRMED.
-  // If already WAITING or IN_PROGRESS, treat as idempotent success.
-  const waitingCodeExisting = labelToCode(APPOINTMENT_STATUS.WAITING);
-  const inProgressCode = labelToCode(APPOINTMENT_STATUS.IN_PROGRESS);
-
-  if (apptNorm3.code === waitingCodeExisting || apptNorm3.code === inProgressCode) {
-    return successResponse(res, appointment, 'Bệnh nhân đã được check-in');
-  }
-
-  if (![schedCode, confCode].includes(apptNorm3.code)) {
-    throw new BadRequestError('Không thể check-in lịch hẹn này');
-  }
-
-  const waitingStatus = resolveStatus(APPOINTMENT_STATUS.WAITING);
-  console.error('[checkInAppointment] APPOINTMENT_STATUS.WAITING value:', APPOINTMENT_STATUS.WAITING);
-  console.error('[checkInAppointment] resolved waitingStatus:', waitingStatus);
-  if (!waitingStatus) {
-    throw new BadRequestError('Giá trị trạng thái không hợp lệ');
-  }
-  if (!VALID_APPOINTMENT_STATUSES.includes(waitingStatus)) {
-    console.error('checkInAppointment: resolved status not in allowed list', { waitingStatus, allowed: VALID_APPOINTMENT_STATUSES });
-  }
+  const tx = await sequelize.transaction();
   try {
-    // Convert label to numeric code for DB storage
-    const waitingStatusCode = labelToCode(waitingStatus) || labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
-    console.error('checkInAppointment: before update - appointment (plain):', appointment && appointment.get ? appointment.get({ plain: true }) : appointment);
-    console.error('checkInAppointment: attempting update', { id: appointment.id, status: waitingStatusCode });
-
-    const updated = await appointment.update({ status: waitingStatusCode }, { returning: true });
-    console.error('checkInAppointment: update returned (updated instance):', updated && updated.get ? updated.get({ plain: true }) : updated);
-
-    // Fetch fresh row directly from DB to confirm persisted value (raw query to avoid include issues)
-    try {
-      const [rows] = await sequelize.query("SELECT * FROM appointments WHERE id = :id", { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-      console.error('checkInAppointment: fresh from DB (raw query):', rows);
-    } catch (qerr) {
-      console.error('checkInAppointment: failed to fetch raw row from DB:', qerr?.message || qerr);
+    const appointment = await Appointment.findByPk(id, { transaction: tx, lock: tx.LOCK.UPDATE });
+    if (!appointment) {
+      throw new NotFoundError('Không tìm thấy lịch hẹn');
     }
 
-    // Reload the original instance and log final state
-    await appointment.reload();
-    console.error('checkInAppointment: after reload appointment.status:', appointment.status);
+    const apptNorm3 = normalizeStatus(appointment.status);
+    const schedCode = labelToCode(APPOINTMENT_STATUS.SCHEDULED);
+    const confCode = labelToCode(APPOINTMENT_STATUS.CONFIRMED);
+    const waitingCodeExisting = labelToCode(APPOINTMENT_STATUS.WAITING);
+    const inProgressCode = labelToCode(APPOINTMENT_STATUS.IN_PROGRESS);
+
+    if (![schedCode, confCode, waitingCodeExisting, inProgressCode].includes(apptNorm3.code)) {
+      throw new BadRequestError('Không thể check-in lịch hẹn này');
+    }
+
+    if (![waitingCodeExisting, inProgressCode].includes(apptNorm3.code)) {
+      const waitingStatus = resolveStatus(APPOINTMENT_STATUS.WAITING);
+      if (!waitingStatus) {
+        throw new BadRequestError('Giá trị trạng thái không hợp lệ');
+      }
+      const waitingStatusCode = labelToCode(waitingStatus) || labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
+      await appointment.update({ status: waitingStatusCode }, { transaction: tx });
+      await appointment.reload({ transaction: tx });
+    }
+
+    const linkedExamination = await ensureMedicalExaminationForAppointment(appointment, { transaction: tx });
+    const plain = appointment.get ? appointment.get({ plain: true }) : appointment;
+    appendExaminationRef(
+      plain,
+      linkedExamination && linkedExamination.get ? linkedExamination.get({ plain: true }) : linkedExamination
+    );
+
+    await tx.commit();
+    return successResponse(res, plain, 'Check-in thành công');
   } catch (e) {
-    console.error('checkInAppointment: DB update failed. attempted status=', waitingStatus, e?.message || e);
+    await tx.rollback();
     throw e;
   }
-
-  return successResponse(res, appointment, 'Check-in thành công');
 });
 
 /**
@@ -853,6 +933,8 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
     }
     return obj;
   });
+
+  await attachLatestExaminationRefs(safeAppointments);
 
   return successResponse(res, safeAppointments);
 });
