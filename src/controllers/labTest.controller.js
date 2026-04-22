@@ -99,6 +99,37 @@ const getExamination = async (examinationId) => {
   return MedicalExamination.findByPk(examinationId);
 };
 
+const getVietnamDayRange = (input = new Date()) => {
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const map = {};
+  parts.forEach((part) => {
+    map[part.type] = part.value;
+  });
+
+  const year = Number(map.year);
+  const month = Number(map.month);
+  const day = Number(map.day);
+  if (!year || !month || !day) return null;
+
+  const offsetMs = 7 * 60 * 60 * 1000;
+  const startUtc = Date.UTC(year, month - 1, day, 0, 0, 0, 0) - offsetMs;
+  const endUtc = Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0) - offsetMs;
+
+  return {
+    start: new Date(startUtc),
+    end: new Date(endUtc),
+  };
+};
+
 // Recompute LabOrder.Status based on child LabOrderItems statuses
 const recomputeLabOrderStatus = async (labOrderId) => {
   const { LabOrder, LabOrderItem } = getLabModels();
@@ -276,7 +307,7 @@ const getBaseItemIncludes = () => {
 const getAllLabTests = asyncHandler(async (req, res) => {
   const { LabOrderItem } = getLabModels();
   const { page, limit, offset } = parsePagination(req.query);
-  const { status, serviceId, labOrderId, examinationId } = req.query;
+  const { status, serviceId, labOrderId, examinationId, createdAtDate } = req.query;
 
   const where = {};
   if (status !== undefined && status !== null && status !== '') {
@@ -290,6 +321,22 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   }
   if (labOrderId !== undefined && labOrderId !== null && labOrderId !== '') {
     where.labOrderId = toPositiveInt(labOrderId);
+  }
+
+  if (createdAtDate !== undefined && createdAtDate !== null && createdAtDate !== '') {
+    const dateValue = String(createdAtDate).trim();
+    const range = /^\d{4}-\d{2}-\d{2}$/.test(dateValue)
+      ? getVietnamDayRange(dateValue)
+      : null;
+
+    if (!range) {
+      throw new BadRequestError('createdAtDate khong hop le');
+    }
+
+    where.createdAt = {
+      [Op.gte]: range.start,
+      [Op.lt]: range.end,
+    };
   }
 
   const include = getBaseItemIncludes();
