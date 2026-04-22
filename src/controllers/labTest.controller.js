@@ -134,14 +134,25 @@ const toLabTestContract = async (item) => {
   const order = plain.LabOrder ? (plain.LabOrder?.get ? plain.LabOrder.get({ plain: true }) : plain.LabOrder) : {};
   const service = plain.Service ? (plain.Service?.get ? plain.Service.get({ plain: true }) : plain.Service) : {};
   const exam = order.examination ? (order.examination?.get ? order.examination.get({ plain: true }) : order.examination) : {};
+  const patient = exam.patient ? (exam.patient?.get ? exam.patient.get({ plain: true }) : exam.patient) : {};
 
   const orderExaminationId = order.examinationId ?? order.ExaminationID ?? null;
   const itemServiceId = plain.serviceId ?? plain.ServiceID ?? null;
+  const itemLabOrderItemId = plain.labOrderItemId ?? plain.LabOrderItemID ?? null;
 
   // Fetch related LabResult for this item+service combo
   const { LabResult } = getLabModels();
   let result = null;
-  if (orderExaminationId && itemServiceId) {
+  if (itemLabOrderItemId) {
+    result = await LabResult.findOne({
+      where: {
+        labOrderItemId: itemLabOrderItemId,
+      },
+      order: [['resultDate', 'DESC'], ['updatedAt', 'DESC'], ['labResultId', 'DESC']],
+      raw: true,
+    });
+  }
+  if (!result && orderExaminationId && itemServiceId) {
     result = await LabResult.findOne({
       where: {
         examinationId: orderExaminationId,
@@ -194,19 +205,36 @@ const toLabTestContract = async (item) => {
       status: Number(exam.Status) || 0,
     },
 
+    patient: {
+      id: patient.id ?? null,
+      fullName: patient.fullName ?? patient.full_name ?? null,
+      dateOfBirth: patient.dateOfBirth ?? patient.date_of_birth ?? null,
+      gender: patient.gender ?? null,
+      phone: patient.phone ?? null,
+      email: patient.email ?? null,
+      address: patient.address ?? null,
+      idNumber: patient.idNumber ?? patient.id_number ?? null,
+    },
+
+    patientId: patient.id ?? exam.PatientId ?? null,
+    patientName: patient.fullName ?? patient.full_name ?? null,
+    patientPhone: patient.phone ?? null,
+    patientDob: patient.dateOfBirth ?? patient.date_of_birth ?? null,
+    gender: patient.gender ?? null,
+
     // From LabResult (canonical fields only) - or null if no result
     result: result ? {
-      labResultId: result.LabResultID,
-      resultText: result.ResultText || null,
-      imageUrl: result.ImageUrl || null,
-      conclusion: result.Conclusion || null,
-      note: result.Note || null,
-      doctorId: result.DoctorID || null,
-      resultDate: result.ResultDate ? formatToVietnamISOString(result.ResultDate) : null,
-      createdAt: result.CreatedAt ? formatToVietnamISOString(result.CreatedAt) : null,
-      updatedAt: result.UpdatedAt ? formatToVietnamISOString(result.UpdatedAt) : null,
-      labOrderItemId: result.LabOrderItemID || null,
-      roomId: result.RoomID || null,
+      labResultId: result.labResultId ?? result.LabResultID ?? null,
+      resultText: result.resultText ?? result.ResultText ?? null,
+      imageUrl: result.imageUrl ?? result.ImageUrl ?? null,
+      conclusion: result.conclusion ?? result.Conclusion ?? null,
+      note: result.note ?? result.Note ?? null,
+      doctorId: result.doctorId ?? result.DoctorID ?? null,
+      resultDate: result.resultDate ?? result.ResultDate ? formatToVietnamISOString(result.resultDate ?? result.ResultDate) : null,
+      createdAt: result.createdAt ?? result.CreatedAt ? formatToVietnamISOString(result.createdAt ?? result.CreatedAt) : null,
+      updatedAt: result.updatedAt ?? result.UpdatedAt ? formatToVietnamISOString(result.updatedAt ?? result.UpdatedAt) : null,
+      labOrderItemId: result.labOrderItemId ?? result.LabOrderItemID ?? null,
+      roomId: result.roomId ?? result.RoomID ?? null,
     } : null,
   };
 };
@@ -223,6 +251,13 @@ const getBaseItemIncludes = () => {
           model: MedicalExamination,
           as: 'examination',
           required: false,
+          include: [
+            {
+              model: models.Patient,
+              as: 'patient',
+              required: false,
+            },
+          ],
         },
       ],
     },
@@ -453,50 +488,70 @@ const updateLabResult = asyncHandler(async (req, res) => {
   if (!item) throw new NotFoundError('Khong tim thay xet nghiem');
 
   const order = item.LabOrder;
-  ensureMutatePermission(req.user, order?.DoctorID);
+  ensureMutatePermission(req.user, order?.doctorId ?? order?.DoctorID);
 
-  const { resultText, imageUrl, conclusion, note, resultDate, status } = req.body || {};
+  const {
+    resultText,
+    results,
+    imageUrl,
+    conclusion,
+    note,
+    notes,
+    resultDate,
+    status,
+  } = req.body || {};
   
-  const doctorId = toPositiveInt(req.user?.id) || order.DoctorID;
+  const examinationId = toPositiveInt(order?.examinationId ?? order?.ExaminationID);
+  const serviceId = toPositiveInt(item?.serviceId ?? item?.ServiceID);
+  const doctorId = toPositiveInt(req.user?.id ?? req.user?.userId ?? req.user?.UserId)
+    || toPositiveInt(order?.doctorId ?? order?.DoctorID);
+  const resolvedResultText = typeof (resultText ?? results) === 'string'
+    ? (resultText ?? results).trim()
+    : (resultText ?? results ?? null);
+  const resolvedNote = note !== undefined ? note : notes;
+
+  if (!examinationId || !serviceId || !doctorId || !resolvedResultText) {
+    throw new BadRequestError('Khong du du lieu de luu ket qua xet nghiem');
+  }
 
   // Find or create LabResult for this examination + service
   let labResult = await LabResult.findOne({
     where: {
-      ExaminationID: order.ExaminationID,
-      ServiceID: item.ServiceID,
+      examinationId,
+      serviceId,
     },
     order: [['ResultDate', 'DESC'], ['UpdatedAt', 'DESC'], ['LabResultID', 'DESC']],
   });
 
   if (labResult) {
     const updates = {};
-    if (resultText !== undefined) updates.ResultText = resultText || null;
-    if (imageUrl !== undefined) updates.ImageUrl = imageUrl || null;
-    if (conclusion !== undefined) updates.Conclusion = conclusion || null;
-    if (note !== undefined) updates.Note = note || null;
-    if (resultDate !== undefined) updates.ResultDate = new Date(resultDate);
-    updates.UpdatedAt = new Date();
-    updates.DoctorID = doctorId;
-    updates.LabOrderItemID = item.LabOrderItemID;
-    updates.RoomID = item.RoomID;
+    if (resolvedResultText !== undefined) updates.resultText = resolvedResultText || null;
+    if (imageUrl !== undefined) updates.imageUrl = imageUrl || null;
+    if (conclusion !== undefined) updates.conclusion = conclusion || null;
+    if (resolvedNote !== undefined) updates.note = resolvedNote || null;
+    if (resultDate !== undefined) updates.resultDate = new Date(resultDate);
+    updates.updatedAt = new Date();
+    updates.doctorId = doctorId;
+    updates.labOrderItemId = item.labOrderItemId ?? item.LabOrderItemID;
+    updates.roomId = item.roomId ?? item.RoomID;
 
     if (Object.keys(updates).length > 0) {
       await labResult.update(updates);
     }
   } else {
     labResult = await LabResult.create({
-      ExaminationID: order.ExaminationID,
-      ServiceID: item.ServiceID,
-      ResultText: resultText || null,
-      ImageUrl: imageUrl || null,
-      Conclusion: conclusion || null,
-      Note: note || null,
-      DoctorID: doctorId,
-      ResultDate: resultDate ? new Date(resultDate) : new Date(),
-      CreatedAt: new Date(),
-      UpdatedAt: new Date(),
-      LabOrderItemID: item.LabOrderItemID,
-      RoomID: item.RoomID,
+      examinationId,
+      serviceId,
+      resultText: resolvedResultText || null,
+      imageUrl: imageUrl || null,
+      conclusion: conclusion || null,
+      note: resolvedNote || null,
+      doctorId,
+      resultDate: resultDate ? new Date(resultDate) : new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      labOrderItemId: item.labOrderItemId ?? item.LabOrderItemID,
+      roomId: item.roomId ?? item.RoomID,
     });
   }
 
@@ -504,8 +559,8 @@ const updateLabResult = asyncHandler(async (req, res) => {
   if (status !== undefined) {
     const statusNum = toPositiveInt(status);
     if (statusNum !== null && [0, 1, 2, 3].includes(statusNum)) {
-      await item.update({ Status: statusNum });
-      await recomputeLabOrderStatus(order.LabOrderID);
+      await item.update({ status: statusNum });
+      await recomputeLabOrderStatus(order.labOrderId ?? order.LabOrderID);
     }
   }
 
