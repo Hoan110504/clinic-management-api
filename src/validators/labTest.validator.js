@@ -24,8 +24,12 @@ const createLabTestValidator = [
     .optional()
     .isInt({ min: 0, max: 3 })
     .withMessage('Status phai la 0, 1, 2, hoac 3'),
-  body('note')
+  body('priority')
     .optional()
+    .isInt({ min: 0, max: 2 })
+    .withMessage('Priority phai la 0, 1, hoac 2'),
+  body('note')
+    .optional({ nullable: true })
     .isString()
     .withMessage('Note phai la chuoi'),
 ];
@@ -42,7 +46,7 @@ const updateLabTestValidator = [
     .isInt({ min: 0, max: 3 })
     .withMessage('Status phai la 0, 1, 2, hoac 3'),
   body('note')
-    .optional()
+    .optional({ nullable: true })
     .isString()
     .withMessage('Note phai la chuoi'),
   body('roomId')

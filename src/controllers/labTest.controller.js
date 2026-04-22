@@ -59,6 +59,20 @@ const toPositiveInt = (value) => {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+const toLabItemStatus = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) return null;
+  return n >= 0 && n <= 3 ? n : null;
+};
+
+const toPriorityInt = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) return null;
+  return n >= 0 && n <= 2 ? n : null;
+};
+
 // Check permission for mutations (only Admin or the DoctorID who created the order)
 const ensureMutatePermission = (user, doctorIdFromOrder) => {
   const role = Number(user?.role);
@@ -89,16 +103,16 @@ const getExamination = async (examinationId) => {
 const recomputeLabOrderStatus = async (labOrderId) => {
   const { LabOrder, LabOrderItem } = getLabModels();
   const items = await LabOrderItem.findAll({
-    where: { LabOrderID: labOrderId },
-    attributes: ['Status'],
+    where: { labOrderId },
+    attributes: ['status'],
   });
 
   if (!items || items.length === 0) {
-    await LabOrder.update({ Status: LAB_ITEM_STATUS.CANCELLED }, { where: { LabOrderID: labOrderId } });
+    await LabOrder.update({ status: LAB_ITEM_STATUS.CANCELLED }, { where: { labOrderId } });
     return;
   }
 
-  const statuses = items.map((it) => Number(it.Status));
+  const statuses = items.map((it) => Number(it.status));
   let nextStatus = LAB_ITEM_STATUS.ASSIGNED;
 
   if (statuses.every((s) => s === LAB_ITEM_STATUS.CANCELLED)) {
@@ -109,7 +123,7 @@ const recomputeLabOrderStatus = async (labOrderId) => {
     nextStatus = LAB_ITEM_STATUS.COMPLETED;
   }
 
-  await LabOrder.update({ Status: nextStatus }, { where: { LabOrderID: labOrderId } });
+  await LabOrder.update({ status: nextStatus }, { where: { labOrderId } });
 };
 
 // Convert LabOrderItem row to API response contract (CANONICAL SCHEMA ONLY)
@@ -121,50 +135,53 @@ const toLabTestContract = async (item) => {
   const service = plain.Service ? (plain.Service?.get ? plain.Service.get({ plain: true }) : plain.Service) : {};
   const exam = order.examination ? (order.examination?.get ? order.examination.get({ plain: true }) : order.examination) : {};
 
+  const orderExaminationId = order.examinationId ?? order.ExaminationID ?? null;
+  const itemServiceId = plain.serviceId ?? plain.ServiceID ?? null;
+
   // Fetch related LabResult for this item+service combo
   const { LabResult } = getLabModels();
   let result = null;
-  if (order.ExaminationID && plain.ServiceID) {
+  if (orderExaminationId && itemServiceId) {
     result = await LabResult.findOne({
       where: {
-        ExaminationID: order.ExaminationID,
-        ServiceID: plain.ServiceID,
+        examinationId: orderExaminationId,
+        serviceId: itemServiceId,
       },
-      order: [['ResultDate', 'DESC'], ['UpdatedAt', 'DESC'], ['LabResultID', 'DESC']],
+      order: [['resultDate', 'DESC'], ['updatedAt', 'DESC'], ['labResultId', 'DESC']],
       raw: true,
     });
   }
 
   // Return ONLY database schema fields - no enrichment from other tables
   return {
-    id: plain.LabOrderItemID,
-    labOrderItemId: plain.LabOrderItemID,
-    labOrderId: plain.LabOrderID,
-    serviceId: plain.ServiceID,
-    roomId: plain.RoomID || null,
-    status: Number(plain.Status),
-    priority: Number(plain.Priority) || 0,
-    note: plain.Note || null,
-    createdAt: plain.CreatedAt ? formatToVietnamISOString(plain.CreatedAt) : null,
+    id: plain.labOrderItemId ?? plain.LabOrderItemID,
+    labOrderItemId: plain.labOrderItemId ?? plain.LabOrderItemID,
+    labOrderId: plain.labOrderId ?? plain.LabOrderID,
+    serviceId: plain.serviceId ?? plain.ServiceID,
+    roomId: plain.roomId ?? plain.RoomID ?? null,
+    status: Number(plain.status ?? plain.Status ?? 0),
+    priority: Number(plain.priority ?? plain.Priority ?? 0) || 0,
+    note: plain.note ?? plain.Note ?? null,
+    createdAt: (plain.createdAt ?? plain.CreatedAt) ? formatToVietnamISOString(plain.createdAt ?? plain.CreatedAt) : null,
 
     // From LabOrder (canonical fields only)
     labOrder: {
-      labOrderId: order.LabOrderID || null,
-      examinationId: order.ExaminationID || null,
-      doctorId: order.DoctorID || null,
-      status: Number(order.Status) || 0,
-      createdAt: order.CreatedAt ? formatToVietnamISOString(order.CreatedAt) : null,
+      labOrderId: order.labOrderId ?? order.LabOrderID ?? null,
+      examinationId: order.examinationId ?? order.ExaminationID ?? null,
+      doctorId: order.doctorId ?? order.DoctorID ?? null,
+      status: Number(order.status ?? order.Status ?? 0) || 0,
+      createdAt: (order.createdAt ?? order.CreatedAt) ? formatToVietnamISOString(order.createdAt ?? order.CreatedAt) : null,
     },
 
     // From LabService (canonical fields only)
     service: {
-      serviceId: service.ServiceID || null,
-      serviceName: service.ServiceName || null,
-      roomId: service.RoomID || null,
-      price: Number(service.Price) || 0,
-      serviceType: Number(service.ServiceType) || 1,
-      isActive: Boolean(service.IsActive),
-      createdAt: service.CreatedAt ? formatToVietnamISOString(service.CreatedAt) : null,
+      serviceId: service.serviceId ?? service.ServiceID ?? null,
+      serviceName: service.serviceName ?? service.ServiceName ?? null,
+      roomId: service.roomId ?? service.RoomID ?? null,
+      price: Number(service.price ?? service.Price ?? 0) || 0,
+      serviceType: Number(service.serviceType ?? service.ServiceType ?? 1) || 1,
+      isActive: Boolean(service.isActive ?? service.IsActive),
+      createdAt: (service.createdAt ?? service.CreatedAt) ? formatToVietnamISOString(service.createdAt ?? service.CreatedAt) : null,
     },
 
     // From MedicalExamination (canonical fields only)
@@ -228,16 +245,16 @@ const getAllLabTests = asyncHandler(async (req, res) => {
 
   const where = {};
   if (status !== undefined && status !== null && status !== '') {
-    const statusNum = toPositiveInt(status);
+    const statusNum = toLabItemStatus(status);
     if (statusNum !== null && [0, 1, 2, 3].includes(statusNum)) {
-      where.Status = statusNum;
+      where.status = statusNum;
     }
   }
   if (serviceId !== undefined && serviceId !== null && serviceId !== '') {
-    where.ServiceID = toPositiveInt(serviceId);
+    where.serviceId = toPositiveInt(serviceId);
   }
   if (labOrderId !== undefined && labOrderId !== null && labOrderId !== '') {
-    where.LabOrderID = toPositiveInt(labOrderId);
+    where.labOrderId = toPositiveInt(labOrderId);
   }
 
   const include = getBaseItemIncludes();
@@ -247,14 +264,14 @@ const getAllLabTests = asyncHandler(async (req, res) => {
     const examId = toPositiveInt(examinationId);
     if (examId && include[0] && include[0].include) {
       if (!include[0].where) include[0].where = {};
-      include[0].where.ExaminationID = examId;
+      include[0].where.examinationId = examId;
     }
   }
 
   const items = await LabOrderItem.findAndCountAll({
     where,
     include,
-    order: [['CreatedAt', 'DESC'], ['LabOrderItemID', 'DESC']],
+    order: [['createdAt', 'DESC'], ['labOrderItemId', 'DESC']],
     limit,
     offset,
     distinct: true,
@@ -295,7 +312,7 @@ const getLabTestById = asyncHandler(async (req, res) => {
  */
 const createLabTest = asyncHandler(async (req, res) => {
   const { LabOrder, LabOrderItem } = getLabModels();
-  const { examinationId, serviceId, roomId, status, note } = req.body || {};
+  const { examinationId, serviceId, roomId, status, note, priority } = req.body || {};
 
   const doctorId = toPositiveInt(req.user?.id);
   if (!doctorId) {
@@ -327,43 +344,45 @@ const createLabTest = asyncHandler(async (req, res) => {
   // Find or create LabOrder for this examination + doctor
   let labOrder = await LabOrder.findOne({
     where: {
-      ExaminationID: resolvedExaminationId,
-      DoctorID: doctorId,
+      examinationId: resolvedExaminationId,
+      doctorId,
     },
-    order: [['CreatedAt', 'DESC'], ['LabOrderID', 'DESC']],
+    order: [['createdAt', 'DESC'], ['labOrderId', 'DESC']],
   });
 
   if (!labOrder) {
     labOrder = await LabOrder.create({
-      ExaminationID: resolvedExaminationId,
-      DoctorID: doctorId,
-      Status: LAB_ITEM_STATUS.ASSIGNED,
-      CreatedAt: sequelize.literal('GETDATE()'),
+      examinationId: resolvedExaminationId,
+      doctorId,
+      status: LAB_ITEM_STATUS.ASSIGNED,
+      createdAt: sequelize.literal('GETDATE()'),
     });
   }
 
   // Check if item already exists for this order + service
   let item = await LabOrderItem.findOne({
     where: {
-      LabOrderID: labOrder.LabOrderID,
-      ServiceID: resolvedServiceId,
+      labOrderId: labOrder.labOrderId,
+      serviceId: resolvedServiceId,
     },
   });
 
   if (!item) {
+    const priorityNum = toPriorityInt(priority);
+    const statusNum = toLabItemStatus(status);
     item = await LabOrderItem.create({
-      LabOrderID: labOrder.LabOrderID,
-      ServiceID: resolvedServiceId,
-      RoomID: toPositiveInt(roomId),
-      Status: status !== undefined ? toPositiveInt(status) : LAB_ITEM_STATUS.ASSIGNED,
-      Priority: 0,
-      Note: note || null,
-      CreatedAt: sequelize.literal('GETDATE()'),
+      labOrderId: labOrder.labOrderId,
+      serviceId: resolvedServiceId,
+      roomId: toPositiveInt(roomId),
+      status: statusNum !== null ? statusNum : LAB_ITEM_STATUS.ASSIGNED,
+      priority: [0, 1, 2].includes(Number(priorityNum)) ? Number(priorityNum) : 0,
+      note: note || null,
+      createdAt: sequelize.literal('GETDATE()'),
     });
   }
 
-  await recomputeLabOrderStatus(labOrder.LabOrderID);
-  const result = await LabOrderItem.findByPk(item.LabOrderItemID, {
+  await recomputeLabOrderStatus(labOrder.labOrderId);
+  const result = await LabOrderItem.findByPk(item.labOrderItemId, {
     include: getBaseItemIncludes(),
   });
 
@@ -386,31 +405,32 @@ const updateLabTest = asyncHandler(async (req, res) => {
   if (!item) throw new NotFoundError('Khong tim thay xet nghiem');
 
   const order = item.LabOrder;
-  ensureMutatePermission(req.user, order?.DoctorID);
+  ensureMutatePermission(req.user, order?.doctorId ?? order?.DoctorID);
 
   const { status, note, roomId } = req.body || {};
   const updates = {};
 
   if (status !== undefined) {
-    const statusNum = toPositiveInt(status);
+    const statusNum = toLabItemStatus(status);
     if (statusNum !== null && [0, 1, 2, 3].includes(statusNum)) {
-      updates.Status = statusNum;
+      updates.status = statusNum;
     }
   }
 
   if (note !== undefined) {
-    updates.Note = note || null;
+    updates.note = note || null;
   }
 
   if (roomId !== undefined) {
-    updates.RoomID = toPositiveInt(roomId);
+    updates.roomId = toPositiveInt(roomId);
   }
 
   if (Object.keys(updates).length > 0) {
     await item.update(updates);
   }
 
-  await recomputeLabOrderStatus(order.LabOrderID);
+  const orderId = order?.labOrderId ?? order?.LabOrderID;
+  await recomputeLabOrderStatus(orderId);
   const result = await LabOrderItem.findByPk(itemId, {
     include: getBaseItemIncludes(),
   });
@@ -613,13 +633,13 @@ const toLabServiceContract = (service) => {
   if (!service) return null;
   const plain = service?.get ? service.get({ plain: true }) : service;
   return {
-    serviceId: plain.ServiceID,
-    serviceName: plain.ServiceName,
-    roomId: plain.RoomID || null,
-    price: Number(plain.Price) || 0,
-    serviceType: Number(plain.ServiceType) || 1,
-    isActive: Boolean(plain.IsActive),
-    createdAt: plain.CreatedAt ? formatToVietnamISOString(plain.CreatedAt) : null,
+    serviceId: plain.serviceId ?? plain.ServiceID ?? null,
+    serviceName: plain.serviceName ?? plain.ServiceName ?? null,
+    roomId: plain.roomId ?? plain.RoomID ?? null,
+    price: Number(plain.price ?? plain.Price ?? 0) || 0,
+    serviceType: Number(plain.serviceType ?? plain.ServiceType ?? 1) || 1,
+    isActive: Boolean(plain.isActive ?? plain.IsActive),
+    createdAt: (plain.createdAt ?? plain.CreatedAt) ? formatToVietnamISOString(plain.createdAt ?? plain.CreatedAt) : null,
   };
 };
 
@@ -633,21 +653,21 @@ const getLabServices = asyncHandler(async (req, res) => {
 
   const where = {};
   if (isActive !== undefined && isActive !== null && isActive !== '') {
-    where.IsActive = String(isActive).toLowerCase() === 'true';
+    where.isActive = String(isActive).toLowerCase() === 'true';
   }
   if (serviceType !== undefined && serviceType !== null && serviceType !== '') {
     const typeNum = toPositiveInt(serviceType);
     if (typeNum && [1, 2, 3].includes(typeNum)) {
-      where.ServiceType = typeNum;
+      where.serviceType = typeNum;
     }
   }
   if (search) {
-    where.ServiceName = { [Op.like]: `%${String(search).trim()}%` };
+    where.serviceName = { [Op.like]: `%${String(search).trim()}%` };
   }
 
   const services = await LabService.findAll({
     where,
-    order: [['ServiceType', 'ASC'], ['ServiceName', 'ASC']],
+    order: [['serviceType', 'ASC'], ['serviceName', 'ASC']],
   });
 
   return successResponse(res, services.map(toLabServiceContract));
@@ -686,12 +706,12 @@ const createLabService = asyncHandler(async (req, res) => {
   }
 
   const service = await LabService.create({
-    ServiceName: String(serviceName).trim(),
-    ServiceType: typeNum,
-    RoomID: toPositiveInt(roomId),
-    Price: Number(price) || 0,
-    IsActive: isActive !== false && isActive !== 'false',
-    CreatedAt: sequelize.literal('GETDATE()'),
+    serviceName: String(serviceName).trim(),
+    serviceType: typeNum,
+    roomId: toPositiveInt(roomId),
+    price: Number(price) || 0,
+    isActive: isActive !== false && isActive !== 'false',
+    createdAt: sequelize.literal('GETDATE()'),
   });
 
   return createdResponse(res, toLabServiceContract(service), 'Tao dich vu can lam sang thanh cong');
@@ -715,7 +735,7 @@ const updateLabService = asyncHandler(async (req, res) => {
   if (serviceName !== undefined) {
     const name = String(serviceName).trim();
     if (!name) throw new BadRequestError('Ten dich vu khong duoc de trong');
-    updates.ServiceName = name;
+    updates.serviceName = name;
   }
 
   if (serviceType !== undefined) {
@@ -723,19 +743,19 @@ const updateLabService = asyncHandler(async (req, res) => {
     if (!typeNum || ![1, 2, 3].includes(typeNum)) {
       throw new BadRequestError('ServiceType phai la 1, 2, hoac 3');
     }
-    updates.ServiceType = typeNum;
+    updates.serviceType = typeNum;
   }
 
   if (roomId !== undefined) {
-    updates.RoomID = toPositiveInt(roomId);
+    updates.roomId = toPositiveInt(roomId);
   }
 
   if (price !== undefined) {
-    updates.Price = Number(price) || 0;
+    updates.price = Number(price) || 0;
   }
 
   if (isActive !== undefined) {
-    updates.IsActive = isActive !== false && isActive !== 'false';
+    updates.isActive = isActive !== false && isActive !== 'false';
   }
 
   if (Object.keys(updates).length > 0) {
