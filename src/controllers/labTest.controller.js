@@ -99,35 +99,23 @@ const getExamination = async (examinationId) => {
   return MedicalExamination.findByPk(examinationId);
 };
 
-const getVietnamDayRange = (input = new Date()) => {
-  const date = input instanceof Date ? input : new Date(input);
+// Keep DB timestamp semantics for LabOrderItems.CreatedAt in API response
+// (no timezone shifting; format as SQL-like datetime2 text).
+const formatDbDateTime = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+
+  const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
 
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
+  const year = String(date.getUTCFullYear());
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hour = String(date.getUTCHours()).padStart(2, '0');
+  const minute = String(date.getUTCMinutes()).padStart(2, '0');
+  const second = String(date.getUTCSeconds()).padStart(2, '0');
+  const fraction = `${String(date.getUTCMilliseconds()).padStart(3, '0')}0000`;
 
-  const map = {};
-  parts.forEach((part) => {
-    map[part.type] = part.value;
-  });
-
-  const year = Number(map.year);
-  const month = Number(map.month);
-  const day = Number(map.day);
-  if (!year || !month || !day) return null;
-
-  const offsetMs = 7 * 60 * 60 * 1000;
-  const startUtc = Date.UTC(year, month - 1, day, 0, 0, 0, 0) - offsetMs;
-  const endUtc = Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0) - offsetMs;
-
-  return {
-    start: new Date(startUtc),
-    end: new Date(endUtc),
-  };
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}.${fraction}`;
 };
 
 // Recompute LabOrder.Status based on child LabOrderItems statuses
@@ -204,7 +192,7 @@ const toLabTestContract = async (item) => {
     status: Number(plain.status ?? plain.Status ?? 0),
     priority: Number(plain.priority ?? plain.Priority ?? 0) || 0,
     note: plain.note ?? plain.Note ?? null,
-    createdAt: (plain.createdAt ?? plain.CreatedAt) ? formatToVietnamISOString(plain.createdAt ?? plain.CreatedAt) : null,
+    createdAt: formatDbDateTime(plain.createdAt ?? plain.CreatedAt),
 
     // From LabOrder (canonical fields only)
     labOrder: {
@@ -307,7 +295,7 @@ const getBaseItemIncludes = () => {
 const getAllLabTests = asyncHandler(async (req, res) => {
   const { LabOrderItem } = getLabModels();
   const { page, limit, offset } = parsePagination(req.query);
-  const { status, serviceId, labOrderId, examinationId, createdAtDate } = req.query;
+  const { status, serviceId, labOrderId, examinationId } = req.query;
 
   const where = {};
   if (status !== undefined && status !== null && status !== '') {
@@ -321,22 +309,6 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   }
   if (labOrderId !== undefined && labOrderId !== null && labOrderId !== '') {
     where.labOrderId = toPositiveInt(labOrderId);
-  }
-
-  if (createdAtDate !== undefined && createdAtDate !== null && createdAtDate !== '') {
-    const dateValue = String(createdAtDate).trim();
-    const range = /^\d{4}-\d{2}-\d{2}$/.test(dateValue)
-      ? getVietnamDayRange(dateValue)
-      : null;
-
-    if (!range) {
-      throw new BadRequestError('createdAtDate khong hop le');
-    }
-
-    where.createdAt = {
-      [Op.gte]: range.start,
-      [Op.lt]: range.end,
-    };
   }
 
   const include = getBaseItemIncludes();
