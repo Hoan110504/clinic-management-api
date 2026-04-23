@@ -3,7 +3,7 @@
  * Uses canonical Prescriptions schema only. No legacy fallbacks.
  */
 import { Op, QueryTypes } from 'sequelize';
-import { Prescription, PrescriptionItem, User, Medicine, MedicalExamination, Patient } from '../models/index.js';
+import { Prescription, PrescriptionItem, User, Medicine, MedicalExamination, Patient, InventoryTransaction, MedicineBatch } from '../models/index.js';
 import { sequelize } from '../models/database.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
@@ -32,6 +32,39 @@ const normalizePrescriptionStatus = (value) => {
   if (n === 1) return 1;
   if (n === 2) return 2;
   return 0;
+};
+
+const getItemQuantity = (item) => {
+  const qty = Number(firstDefined(item?.quantity, item?.quantityPrescribed, item?.QuantityPrescribed, 0));
+  return Number.isFinite(qty) ? Math.max(0, Math.trunc(qty)) : 0;
+};
+
+const getBatchSelection = (batchSelections, medicineId) => {
+  if (!batchSelections || typeof batchSelections !== 'object') return null;
+  const key = String(medicineId);
+  const value = batchSelections[key];
+  if (!value) return null;
+  const s = String(value).trim();
+  return s || null;
+};
+
+const getBatchAllocations = (batchAllocations, medicineId) => {
+  if (!batchAllocations || typeof batchAllocations !== 'object') return [];
+  const rows = batchAllocations[String(medicineId)];
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => ({
+      batchNumber: String(firstDefined(row?.batchNumber, row?.value) || '').trim(),
+      quantity: Number(firstDefined(row?.quantity, row?.qty, 0)),
+    }))
+    .filter((row) => row.batchNumber && Number.isFinite(row.quantity) && row.quantity > 0)
+    .map((row) => ({ ...row, quantity: Math.trunc(row.quantity) }));
+};
+
+const matchesBatchNumber = (source, target) => {
+  const a = String(source || '').trim().toLowerCase();
+  const b = String(target || '').trim().toLowerCase();
+  return a && b && a === b;
 };
 
 const mapPrescriptionItemRow = (item) => {
@@ -392,16 +425,20 @@ const deletePrescriptionItem = asyncHandler(async (req, res) => {
 
 // --- Additional handlers expected by routes ---
 const getPendingPrescriptions = asyncHandler(async (req, res) => {
-  const includes = [];
-  if (User) includes.push({ model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false });
-
-  const prescriptions = await Prescription.findAll({ where: { status: { [Op.in]: [0, 1] } }, order: [['prescriptionDate', 'ASC']], include: includes });
-  return successResponse(res, prescriptions);
+  const prescriptions = await Prescription.findAll({
+    where: { status: { [Op.in]: [0, 1] } },
+    order: [['prescriptionDate', 'ASC']],
+    include: buildPrescriptionIncludes(),
+  });
+  return successResponse(res, (prescriptions || []).map(mapPrescriptionRow));
 });
 
 const dispensePrescription = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const prescription = await Prescription.findOne({ where: { prescriptionId: id } });
+  const prescription = await Prescription.findOne({
+    where: { prescriptionId: id },
+    include: [{ model: PrescriptionItem, as: 'prescriptionItems', required: false }],
+  });
   if (!prescription) throw new NotFoundError('Không tìm thấy đơn thuốc');
   const cur = Number(prescription.status ?? 0);
   if (cur === 1) throw new BadRequestError('Đơn thuốc đã được phát');
@@ -409,6 +446,157 @@ const dispensePrescription = asyncHandler(async (req, res) => {
 
   const tx = await sequelize.transaction();
   try {
+    const prescriptionItems = Array.isArray(prescription.prescriptionItems) ? prescription.prescriptionItems : [];
+    if (prescriptionItems.length === 0) {
+      throw new BadRequestError('Đơn thuốc không có thuốc để phát');
+    }
+
+    const batchSelections = req.body?.batchSelections && typeof req.body.batchSelections === 'object'
+      ? req.body.batchSelections
+      : {};
+    const batchAllocations = req.body?.batchAllocations && typeof req.body.batchAllocations === 'object'
+      ? req.body.batchAllocations
+      : {};
+    const operatorId = toIntOrNull(req.user?.id);
+    const noteText = firstDefined(req.body?.note, req.body?.notes);
+
+    for (const item of prescriptionItems) {
+      const medicineId = toIntOrNull(firstDefined(item.medicineId, item.MedicineId));
+      const quantity = getItemQuantity(item);
+      if (!medicineId || quantity <= 0) continue;
+
+      const allocations = getBatchAllocations(batchAllocations, medicineId);
+      if (allocations.length > 0) {
+        const totalAllocated = allocations.reduce((sum, row) => sum + row.quantity, 0);
+        if (totalAllocated !== quantity) {
+          throw new BadRequestError(`Tổng số lượng lô của thuốc ID ${medicineId} không khớp số lượng kê đơn`);
+        }
+
+        const medicineBatches = await MedicineBatch.findAll({
+          where: { medicineId },
+          transaction: tx,
+          lock: tx.LOCK.UPDATE,
+        });
+
+        for (const row of allocations) {
+          const batch = medicineBatches.find((b) => matchesBatchNumber(firstDefined(b.batchNumber, b.BatchNumber), row.batchNumber));
+          if (!batch) {
+            throw new BadRequestError(`Không tìm thấy lô ${row.batchNumber} của thuốc ID ${medicineId}`);
+          }
+
+          const quantityBefore = Number(batch.quantityInStock || 0);
+          if (quantityBefore < row.quantity) {
+            throw new BadRequestError(`Lô ${row.batchNumber} của thuốc ID ${medicineId} không đủ tồn kho`);
+          }
+
+          const quantityAfter = quantityBefore - row.quantity;
+          await batch.update(
+            {
+              quantityInStock: quantityAfter,
+              status: quantityAfter > 0 ? 1 : 0,
+            },
+            { transaction: tx }
+          );
+
+          const transactionNote = {
+            prescriptionId: String(id),
+            prescriptionItemId: String(firstDefined(item.id, item.PrescriptionItemID) || ''),
+            batchNumber: firstDefined(batch.batchNumber, batch.BatchNumber) || row.batchNumber,
+            ...(noteText ? { note: String(noteText) } : {}),
+          };
+
+          await InventoryTransaction.create(
+            {
+              MedicineBatchId: firstDefined(batch.id, batch.Id),
+              MedicineId: medicineId,
+              TransactionType: InventoryTransaction?.TRANSACTION_TYPE?.EXPORT || 2,
+              Quantity: row.quantity,
+              QuantityBefore: quantityBefore,
+              QuantityAfter: quantityAfter,
+              Reason: 'Phát thuốc theo đơn',
+              ReferenceType: InventoryTransaction?.REFERENCE_TYPE?.PRESCRIPTION || 1,
+              PerformedByUserId: operatorId,
+              CreatedAt: sequelize.literal('GETDATE()'),
+              Note: JSON.stringify(transactionNote),
+            },
+            { transaction: tx }
+          );
+        }
+        continue;
+      }
+
+      const selectedBatchNumber = getBatchSelection(batchSelections, medicineId);
+      let batch = null;
+      if (selectedBatchNumber) {
+        const medicineBatches = await MedicineBatch.findAll({
+          where: { medicineId },
+          transaction: tx,
+          lock: tx.LOCK.UPDATE,
+        });
+        batch = medicineBatches.find((b) => matchesBatchNumber(firstDefined(b.batchNumber, b.BatchNumber), selectedBatchNumber));
+      } else {
+        batch = await MedicineBatch.findOne({
+          where: {
+            medicineId,
+            quantityInStock: { [Op.gte]: quantity },
+          },
+          order: [['expiryDate', 'ASC']],
+          transaction: tx,
+          lock: tx.LOCK.UPDATE,
+        });
+      }
+
+      if (!batch) {
+        throw new BadRequestError(
+          selectedBatchNumber
+            ? `Lô ${selectedBatchNumber} của thuốc ID ${medicineId} không đủ tồn kho`
+            : `Không đủ tồn kho cho thuốc ID ${medicineId}`
+        );
+      }
+
+      const quantityBefore = Number(batch.quantityInStock || 0);
+      if (quantityBefore < quantity) {
+        throw new BadRequestError(
+          selectedBatchNumber
+            ? `Lô ${selectedBatchNumber} của thuốc ID ${medicineId} không đủ tồn kho`
+            : `Không đủ tồn kho cho thuốc ID ${medicineId}`
+        );
+      }
+
+      const quantityAfter = quantityBefore - quantity;
+      await batch.update(
+        {
+          quantityInStock: quantityAfter,
+          status: quantityAfter > 0 ? 1 : 0,
+        },
+        { transaction: tx }
+      );
+
+      const transactionNote = {
+        prescriptionId: String(id),
+        prescriptionItemId: String(firstDefined(item.id, item.PrescriptionItemID) || ''),
+        batchNumber: firstDefined(batch.batchNumber, batch.BatchNumber) || selectedBatchNumber || null,
+        ...(noteText ? { note: String(noteText) } : {}),
+      };
+
+      await InventoryTransaction.create(
+        {
+          MedicineBatchId: firstDefined(batch.id, batch.Id),
+          MedicineId: medicineId,
+          TransactionType: InventoryTransaction?.TRANSACTION_TYPE?.EXPORT || 2,
+          Quantity: quantity,
+          QuantityBefore: quantityBefore,
+          QuantityAfter: quantityAfter,
+          Reason: 'Phát thuốc theo đơn',
+          ReferenceType: InventoryTransaction?.REFERENCE_TYPE?.PRESCRIPTION || 1,
+          PerformedByUserId: operatorId,
+          CreatedAt: sequelize.literal('GETDATE()'),
+          Note: JSON.stringify(transactionNote),
+        },
+        { transaction: tx }
+      );
+    }
+
     const prescriptionPk = firstDefined(prescription.prescriptionId, prescription.PrescriptionID, prescription.id, prescription.Id);
     await prescription.update({ status: 1, updatedAt: new Date() }, { transaction: tx });
     await PrescriptionItem.update({ status: 1 }, { where: { prescriptionId: prescriptionPk }, transaction: tx });
