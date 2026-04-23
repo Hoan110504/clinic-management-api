@@ -20,7 +20,7 @@ export default (sequelize) => {
       field: 'PrescriptionID',
       references: {
         model: 'Prescriptions',
-        key: 'Id'
+        key: 'PrescriptionID'
       }
     },
 
