@@ -20,6 +20,19 @@ const toIntOrNull = (value) => {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 };
 
+const toExaminationIdOrNull = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  if (/^\d+$/.test(raw)) return toIntOrNull(raw);
+
+  const match = /^PK-\d{8}-(\d+)$/i.exec(raw);
+  if (match) return toIntOrNull(match[1]);
+
+  return null;
+};
+
 const normalizeItemStatus = (value) => {
   const n = toIntOrNull(value);
   if (n === 1) return 1;
@@ -181,16 +194,59 @@ const mapPrescriptionRow = (r) => {
 
 const getAllPrescriptions = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
-  const { examinationId, doctorId, status, fromDate, toDate, sort } = req.query;
+  const { examinationId, doctorId, patientId, status, examinationStatus, fromDate, toDate, sort } = req.query;
 
   const where = {};
-  if (examinationId) where.examinationId = examinationId;
-  if (doctorId) where.doctorId = doctorId;
-  if (status !== undefined) where.status = Number(status);
+
+  if (examinationId !== undefined && examinationId !== null && examinationId !== '') {
+    const examId = toExaminationIdOrNull(examinationId);
+    if (!examId) throw new BadRequestError('ExaminationID không hợp lệ');
+    where.examinationId = examId;
+  }
+
+  if (doctorId !== undefined && doctorId !== null && doctorId !== '') {
+    const doctorIdNum = toIntOrNull(doctorId);
+    if (!doctorIdNum) throw new BadRequestError('DoctorID không hợp lệ');
+    where.doctorId = doctorIdNum;
+  }
+
+  if (status !== undefined && status !== null && status !== '') {
+    const statusNum = toIntOrNull(status);
+    if (statusNum === null || ![0, 1, 2].includes(statusNum)) {
+      throw new BadRequestError('Status đơn thuốc không hợp lệ');
+    }
+    where.status = statusNum;
+  }
+
   if (fromDate && toDate) where.prescriptionDate = { [Op.between]: [new Date(fromDate), new Date(toDate)] };
   if (req.user && req.user.role === ROLES.DOCTOR) where.doctorId = req.user.id;
 
   const order = parseSort(sort, ['prescriptionDate', 'createdAt'], 'prescriptionDate:desc');
+  const include = buildPrescriptionIncludes();
+
+  const examInclude = include.find((it) => it?.as === 'examination');
+  if (examInclude) {
+    const examWhere = {};
+
+    if (patientId !== undefined && patientId !== null && patientId !== '') {
+      const patientIdNum = toIntOrNull(patientId);
+      if (!patientIdNum) throw new BadRequestError('PatientID không hợp lệ');
+      examWhere.PatientId = patientIdNum;
+    }
+
+    if (examinationStatus !== undefined && examinationStatus !== null && examinationStatus !== '') {
+      const examStatusNum = toIntOrNull(examinationStatus);
+      if (examStatusNum === null || ![0, 1, 2, 3].includes(examStatusNum)) {
+        throw new BadRequestError('Examination status không hợp lệ');
+      }
+      examWhere.Status = examStatusNum;
+    }
+
+    if (Object.keys(examWhere).length > 0) {
+      examInclude.where = examWhere;
+      examInclude.required = true;
+    }
+  }
 
   const { count, rows } = await Prescription.findAndCountAll({
     where,
@@ -198,7 +254,7 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
     limit,
     offset,
     distinct: true,
-    include: buildPrescriptionIncludes(),
+    include,
   });
   const data = (rows || []).map(mapPrescriptionRow);
   return paginatedResponse(res, { data, page, limit, total: count });
@@ -234,7 +290,6 @@ const createPrescription = asyncHandler(async (req, res) => {
       where: {
         examinationId: numExaminationId,
       },
-      include: [{ model: PrescriptionItem, as: 'prescriptionItems', required: false }],
       order: [['CreatedAt', 'DESC']],
     });
   } catch (err) {

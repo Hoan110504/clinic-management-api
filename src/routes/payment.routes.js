@@ -36,6 +36,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/payments/preview/:examinationId
+ * @desc Preview payment invoice without creating database record
+ * @access Admin, Receptionist
+ */
+router.get(
+  '/preview/:examinationId',
+  authorize(ROLES.ADMIN, ROLES.RECEPTIONIST),
+  paymentController.getPaymentPreview
+);
+
+/**
  * @route GET /api/payments
  * @desc Get all payments with pagination
  * @access Admin, Receptionist

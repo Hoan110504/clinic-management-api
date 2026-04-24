@@ -737,7 +737,7 @@ const getPatientPayments = asyncHandler(async (req, res) => {
 
   const { count, rows } = await Payment.findAndCountAll({
     where: { patientId: id },
-    order: [['created_at', 'DESC']],
+    order: [['createdAt', 'DESC']],
     limit,
     offset,
   });

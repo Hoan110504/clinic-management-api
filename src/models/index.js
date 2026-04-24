@@ -73,6 +73,7 @@ export const Prescription = models.Prescription;
 export const PrescriptionItem = models.PrescriptionItem;
 export const LabOrderRequest = models.LabOrderRequest;
 export const LabOrder = models.LabOrder;
+export const LabOrderItem = models.LabOrderItem;
 export const Invoice = models.Invoice;
 // Legacy Vietnamese alias
 export const HoaDon = models.Invoice;

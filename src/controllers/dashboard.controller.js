@@ -20,11 +20,15 @@ import { successResponse } from '../utils/response.js';
 import {
   APPOINTMENT_STATUS,
   MEDICAL_RECORD_STATUS,
-  PAYMENT_STATUS,
   LAB_STATUS,
   ROLES,
 } from '../config/constants.js';
 import { labelToCode } from '../utils/statusHelpers.js';
+
+const PAYMENT_STATUS_CODE = {
+  UNPAID: 0,
+  PAID: 1,
+};
 
 /**
  * Dashboard Admin - tổng quan toàn hệ thống
@@ -73,17 +77,17 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
 
     if (lowerTables.includes('payments')) {
       // Use English Payment model
-      todayRevenue = await Payment.sum('total', {
+      todayRevenue = await Payment.sum('totalAmount', {
         where: {
-          paidAt: {
+          invoiceDate: {
             [Op.gte]: today,
             [Op.lt]: tomorrow,
           },
-          status: PAYMENT_STATUS.PAID,
+          status: PAYMENT_STATUS_CODE.PAID,
         },
       }) || 0;
 
-      pendingPayments = await Payment.count({ where: { status: PAYMENT_STATUS.UNPAID } }) || 0;
+      pendingPayments = await Payment.count({ where: { status: PAYMENT_STATUS_CODE.UNPAID } }) || 0;
     } else if (typeof HoaDon !== 'undefined' && HoaDon) {
       // Fallback to Vietnamese HoaDon model
       const paidFlag = HoaDon.TRANG_THAI ? HoaDon.TRANG_THAI.DA_THANH_TOAN : 1;
@@ -293,7 +297,7 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
 
   // Unpaid payments
   const unpaidPayments = await Payment.findAll({
-    where: { status: PAYMENT_STATUS.UNPAID },
+    where: { status: PAYMENT_STATUS_CODE.UNPAID },
     order: [['createdAt', 'ASC']],
     limit: 10,
     include: [
@@ -471,7 +475,7 @@ const getPatientDashboard = asyncHandler(async (req, res) => {
   const pendingPayments = await Payment.findAll({
     where: {
       patientId,
-      status: PAYMENT_STATUS.UNPAID,
+      status: PAYMENT_STATUS_CODE.UNPAID,
     },
     order: [['createdAt', 'DESC']],
     limit: 5,

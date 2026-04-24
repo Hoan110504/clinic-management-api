@@ -59,6 +59,8 @@ const formatExaminationCode = (examinationId, createdAt) => {
 
 const toMedicalExaminationContract = (row) => {
   if (!row) return null;
+  const doctorName = row.doctor?.full_name || row.doctor?.fullName || row.doctorName || null;
+  const patient = row.patient || {};
   return {
     id: row.ExaminationID,
     examinationId: row.ExaminationID,
@@ -77,6 +79,12 @@ const toMedicalExaminationContract = (row) => {
     height: row.Height || null,
     bmi: row.BMI || null,
     diagnosis: row.Diagnosis || '',
+    doctorName,
+    patientName: patient.full_name || patient.fullName || row.patientName || null,
+    patientPhone: patient.phone || row.patientPhone || null,
+    patientBirthDate: patient.dateOfBirth || row.patientBirthDate || null,
+    patientGender: patient.gender || row.patientGender || null,
+    patientAddress: patient.address || row.patientAddress || null,
     icd10Code: row.ICD10Code || '',
     treatmentAdvice: row.TreatmentAdvice || '',
     notes: row.Notes || '',
@@ -95,6 +103,17 @@ const toMedicalExaminationContract = (row) => {
       height: row.Height || null,
     },
   };
+};
+
+const syncAppointmentCompletedFromExam = async (examinationRow, nextExamStatus) => {
+  const statusNum = Number(nextExamStatus);
+  if (statusNum !== 1) return;
+  const appointmentId = Number(examinationRow?.AppointmentID);
+  if (!Number.isFinite(appointmentId) || appointmentId <= 0) return;
+
+  const appointment = await Appointment.findByPk(appointmentId);
+  if (!appointment) return;
+  await appointment.update({ status: 3 });
 };
 
 const getTodayQueue = asyncHandler(async (req, res) => {
@@ -127,17 +146,23 @@ const getTodayQueue = asyncHandler(async (req, res) => {
 
 const getAllRecords = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
-  const { patientId, sort } = req.query;
+  const { patientId, status, sort } = req.query;
 
   const where = {};
   if (patientId) where.PatientId = patientId;
+  if (status !== undefined && status !== null && status !== '') {
+    const statusNum = Number(status);
+    if (Number.isInteger(statusNum) && [0, 1, 2, 3].includes(statusNum)) {
+      where.Status = statusNum;
+    }
+  }
 
   const order = parseSort(sort, ['CreatedAt', 'ExaminationID'], 'CreatedAt:desc');
 
   const { count, rows } = await MedicalExamination.findAndCountAll({
     where,
     include: [
-      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone'], required: false },
+      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone', 'dateOfBirth', 'gender', 'address'], required: false },
       { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
     ],
     order,
@@ -158,7 +183,7 @@ const getRecordById = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({
     where: { ExaminationID: id },
     include: [
-      { model: Patient, as: 'patient', required: false },
+      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone', 'dateOfBirth', 'gender', 'address'], required: false },
       { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
       { model: Appointment, as: 'appointment', required: false },
     ],
@@ -279,6 +304,7 @@ const updateRecord = asyncHandler(async (req, res) => {
   updates.UpdatedAt = new Date();
 
   await examination.update(updates);
+  await syncAppointmentCompletedFromExam(examination, updates.Status ?? examination.Status);
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Cập nhật phiếu khám thành công');
 });
@@ -288,8 +314,8 @@ const startExamination = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
   if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  // Mark status as in-progress (assuming 1 = in progress based on context)
-  await examination.update({ Status: 1, UpdatedAt: new Date() });
+  // Mark status as in-progress (Status: 2 = Đang khám)
+  await examination.update({ Status: 2, UpdatedAt: new Date() });
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Bắt đầu khám thành công');
 });
@@ -300,8 +326,9 @@ const completeExamination = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
   if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  // Mark status as complete (Status: 2 = Hoàn thành)
-  await examination.update({ Status: 2, UpdatedAt: new Date() });
+  // Mark status as complete (Status: 1 = Hoàn thành)
+  await examination.update({ Status: 1, UpdatedAt: new Date() });
+  await syncAppointmentCompletedFromExam(examination, 1);
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hoàn thành khám thành công');
 });

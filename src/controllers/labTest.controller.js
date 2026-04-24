@@ -136,10 +136,10 @@ const recomputeLabOrderStatus = async (labOrderId) => {
 
   if (statuses.every((s) => s === LAB_ITEM_STATUS.CANCELLED)) {
     nextStatus = LAB_ITEM_STATUS.CANCELLED;
+  } else if (statuses.every((s) => s === LAB_ITEM_STATUS.COMPLETED)) {
+    nextStatus = LAB_ITEM_STATUS.COMPLETED;
   } else if (statuses.some((s) => s === LAB_ITEM_STATUS.IN_PROGRESS)) {
     nextStatus = LAB_ITEM_STATUS.IN_PROGRESS;
-  } else if (statuses.some((s) => s === LAB_ITEM_STATUS.COMPLETED)) {
-    nextStatus = LAB_ITEM_STATUS.COMPLETED;
   }
 
   await LabOrder.update({ status: nextStatus }, { where: { labOrderId } });
@@ -153,6 +153,7 @@ const toLabTestContract = async (item) => {
   const order = plain.LabOrder ? (plain.LabOrder?.get ? plain.LabOrder.get({ plain: true }) : plain.LabOrder) : {};
   const service = plain.Service ? (plain.Service?.get ? plain.Service.get({ plain: true }) : plain.Service) : {};
   const exam = order.examination ? (order.examination?.get ? order.examination.get({ plain: true }) : order.examination) : {};
+  const doctor = order.doctor ? (order.doctor?.get ? order.doctor.get({ plain: true }) : order.doctor) : {};
   const patient = exam.patient ? (exam.patient?.get ? exam.patient.get({ plain: true }) : exam.patient) : {};
 
   const orderExaminationId = order.examinationId ?? order.ExaminationID ?? null;
@@ -240,6 +241,8 @@ const toLabTestContract = async (item) => {
     patientPhone: patient.phone ?? null,
     patientDob: patient.dateOfBirth ?? patient.date_of_birth ?? null,
     gender: patient.gender ?? null,
+    orderedById: doctor.id ?? order.doctorId ?? order.DoctorID ?? exam.DoctorID ?? null,
+    orderedBy: doctor.fullName ?? doctor.full_name ?? null,
 
     // From LabResult (canonical fields only) - or null if no result
     result: result ? {
@@ -266,6 +269,12 @@ const getBaseItemIncludes = () => {
       as: 'LabOrder',
       required: true,
       include: [
+        {
+          model: models.User,
+          as: 'doctor',
+          attributes: ['id', 'fullName', 'full_name'],
+          required: false,
+        },
         {
           model: MedicalExamination,
           as: 'examination',
@@ -295,7 +304,7 @@ const getBaseItemIncludes = () => {
 const getAllLabTests = asyncHandler(async (req, res) => {
   const { LabOrderItem } = getLabModels();
   const { page, limit, offset } = parsePagination(req.query);
-  const { status, serviceId, labOrderId, examinationId } = req.query;
+  const { status, serviceId, labOrderId, examinationId, patientId, labOrderStatus, examinationStatus } = req.query;
 
   const where = {};
   if (status !== undefined && status !== null && status !== '') {
@@ -312,6 +321,50 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   }
 
   const include = getBaseItemIncludes();
+
+  const labOrderInclude = include.find((it) => it?.as === 'LabOrder');
+  if (labOrderInclude) {
+    const labOrderWhere = {};
+
+    if (labOrderStatus !== undefined && labOrderStatus !== null && labOrderStatus !== '') {
+      const parsedLabOrderStatus = toLabItemStatus(labOrderStatus);
+      if (parsedLabOrderStatus === null) {
+        throw new BadRequestError('LabOrder status khong hop le');
+      }
+      labOrderWhere.status = parsedLabOrderStatus;
+    }
+
+    if (Object.keys(labOrderWhere).length > 0) {
+      labOrderInclude.where = { ...(labOrderInclude.where || {}), ...labOrderWhere };
+      labOrderInclude.required = true;
+    }
+
+    const examinationInclude = (labOrderInclude.include || []).find((it) => it?.as === 'examination');
+    if (examinationInclude) {
+      const examinationWhere = {};
+
+      if (patientId !== undefined && patientId !== null && patientId !== '') {
+        const parsedPatientId = toPositiveInt(patientId);
+        if (!parsedPatientId) {
+          throw new BadRequestError('PatientID khong hop le');
+        }
+        examinationWhere.PatientId = parsedPatientId;
+      }
+
+      if (examinationStatus !== undefined && examinationStatus !== null && examinationStatus !== '') {
+        const parsedExaminationStatus = toLabItemStatus(examinationStatus);
+        if (parsedExaminationStatus === null) {
+          throw new BadRequestError('Examination status khong hop le');
+        }
+        examinationWhere.Status = parsedExaminationStatus;
+      }
+
+      if (Object.keys(examinationWhere).length > 0) {
+        examinationInclude.where = { ...(examinationInclude.where || {}), ...examinationWhere };
+        examinationInclude.required = true;
+      }
+    }
+  }
   
   // Add examination filter if provided
   if (examinationId !== undefined && examinationId !== null && examinationId !== '') {

@@ -9,15 +9,57 @@ import {
   PAYMENT_METHODS,
 } from '../config/constants.js';
 
+const isAllowedPaymentMethod = (value) => {
+  if (value === null || value === undefined || value === '') return true;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 2) return true;
+  const normalized = String(value).trim().toLowerCase();
+  return [
+    'tiền mặt', 'tien mat', 'cash',
+    'thẻ', 'the', 'card',
+    'chuyển khoản', 'chuyen khoan', 'qr code', 'transfer', 'bank transfer',
+    ...Object.values(PAYMENT_METHODS).map((item) => String(item).toLowerCase()),
+  ].includes(normalized);
+};
+
+const isAllowedPaymentStatus = (value) => {
+  if (value === null || value === undefined || value === '') return true;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 2) return true;
+  const normalized = String(value).trim().toLowerCase();
+  return [
+    'chưa thanh toán', 'chua thanh toan', 'unpaid',
+    'đã thanh toán', 'da thanh toan', 'paid',
+    'còn nợ', 'con no', 'thanh toán một phần', 'thanh toan mot phan', 'partial',
+    ...Object.values(PAYMENT_STATUS).map((item) => String(item).toLowerCase()),
+  ].includes(normalized);
+};
+
 const createPaymentValidator = [
-  body('type')
-    .notEmpty()
-    .withMessage('Loại thanh toán không được để trống')
-    .isIn(Object.values(PAYMENT_TYPES))
-    .withMessage('Loại thanh toán không hợp lệ'),
+  body('patientId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('PatientID không hợp lệ'),
+  body('examinationId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('ExaminationID không hợp lệ'),
+  body('prescriptionId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('PrescriptionID không hợp lệ'),
+  body('labOrderId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('LabOrderID không hợp lệ'),
+  body('invoiceDate')
+    .optional()
+    .isISO8601()
+    .withMessage('InvoiceDate không hợp lệ'),
+  body('totalAmount')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('TotalAmount phải lớn hơn hoặc bằng 0'),
   body('patientName')
-    .notEmpty()
-    .withMessage('Tên bệnh nhân không được để trống'),
+    .optional(),
   body('services')
     .optional()
     .isArray()
@@ -46,6 +88,22 @@ const createPaymentValidator = [
     .optional()
     .isFloat({ min: 0 })
     .withMessage('Giá trị giảm giá phải lớn hơn hoặc bằng 0'),
+  body('paidAmount')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Số tiền đã thanh toán phải lớn hơn hoặc bằng 0'),
+  body('debtAmount')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Số tiền còn nợ phải lớn hơn hoặc bằng 0'),
+  body('paymentMethod')
+    .optional()
+    .custom(isAllowedPaymentMethod)
+    .withMessage('Phương thức thanh toán không hợp lệ'),
+  body('status')
+    .optional()
+    .custom(isAllowedPaymentStatus)
+    .withMessage('Trạng thái không hợp lệ'),
 ];
 
 const processPaymentValidator = [
@@ -54,14 +112,22 @@ const processPaymentValidator = [
     .withMessage('ID thanh toán không được để trống'),
   body('paymentMethod')
     .notEmpty()
-    .withMessage('Phương thức thanh toán không được để trống')
-    .isIn(Object.values(PAYMENT_METHODS))
+    .custom(isAllowedPaymentMethod)
     .withMessage('Phương thức thanh toán không hợp lệ'),
+  body().custom((_, { req }) => {
+    if (req.body.amountPaid === undefined && req.body.paidAmount === undefined) {
+      throw new Error('Số tiền thanh toán không được để trống');
+    }
+    return true;
+  }),
   body('amountPaid')
-    .notEmpty()
-    .withMessage('Số tiền thanh toán không được để trống')
+    .optional()
     .isFloat({ min: 0 })
     .withMessage('Số tiền phải lớn hơn hoặc bằng 0'),
+  body('paidAmount')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Số tiền đã thanh toán phải lớn hơn hoặc bằng 0'),
 ];
 
 const getPaymentValidator = [
@@ -81,7 +147,7 @@ const listPaymentsValidator = [
     .withMessage('Số lượng mỗi trang phải từ 1-100'),
   query('status')
     .optional()
-    .isIn(Object.values(PAYMENT_STATUS))
+    .custom(isAllowedPaymentStatus)
     .withMessage('Trạng thái không hợp lệ'),
   query('type')
     .optional()

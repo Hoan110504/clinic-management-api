@@ -59,7 +59,7 @@ const LAB_STATUS = {
 const PAYMENT_STATUS = {
   UNPAID: 'Chưa thanh toán',
   PAID: 'Đã thanh toán',
-  PARTIAL: 'Thanh toán một phần',
+  PARTIAL: 'Còn nợ',
 };
 
 // Payment Types
