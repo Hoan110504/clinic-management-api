@@ -304,7 +304,7 @@ const getBaseItemIncludes = () => {
 const getAllLabTests = asyncHandler(async (req, res) => {
   const { LabOrderItem } = getLabModels();
   const { page, limit, offset } = parsePagination(req.query);
-  const { status, serviceId, labOrderId, examinationId, patientId, labOrderStatus, examinationStatus } = req.query;
+  const { status, serviceId, labOrderId, examinationId, patientId, labOrderStatus, examinationStatus, createdAtDate } = req.query;
 
   const where = {};
   if (status !== undefined && status !== null && status !== '') {
@@ -318,6 +318,25 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   }
   if (labOrderId !== undefined && labOrderId !== null && labOrderId !== '') {
     where.labOrderId = toPositiveInt(labOrderId);
+  }
+  if (createdAtDate !== undefined && createdAtDate !== null && createdAtDate !== '') {
+    const dateText = String(createdAtDate).trim();
+    const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
+    if (!matched) {
+      throw new BadRequestError('createdAtDate phai co dinh dang YYYY-MM-DD');
+    }
+
+    const year = Number(matched[1]);
+    const month = Number(matched[2]);
+    const day = Number(matched[3]);
+    const vnOffsetMs = 7 * 60 * 60 * 1000;
+    const startUtc = new Date(Date.UTC(year, month - 1, day) - vnOffsetMs);
+    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000);
+
+    where.createdAt = {
+      [Op.gte]: startUtc,
+      [Op.lt]: endUtc,
+    };
   }
 
   const include = getBaseItemIncludes();
