@@ -90,6 +90,12 @@ export default (sequelize) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      status: {
+        type: DataTypes.TINYINT,
+        allowNull: false,
+        defaultValue: 0,
+        field: 'Status',
+      },
     },
     {
       tableName: 'Patients',
@@ -103,6 +109,7 @@ export default (sequelize) => {
         { fields: ['phone'] },
         { fields: ['id_number'] },
         { fields: ['user_id'] },
+        { fields: ['Status'] },
       ],
       // Model fields map directly to existing DB columns (SSMS schema).
     }

@@ -76,6 +76,10 @@ const updatePatientValidator = [
     .withMessage('Email không hợp lệ')
     .bail()
     .normalizeEmail(),
+  body('status')
+    .optional()
+    .isInt({ min: 0, max: 1 })
+    .withMessage('Trạng thái bệnh nhân không hợp lệ'),
 ];
 
 const getPatientValidator = [
@@ -97,6 +101,10 @@ const listPatientsValidator = [
     .optional()
     .isString()
     .withMessage('Tìm kiếm không hợp lệ'),
+  query('status')
+    .optional()
+    .isInt({ min: 0, max: 1 })
+    .withMessage('status phải là 0 hoặc 1'),
   query('onlyTodayAppointment')
     .optional()
     .isIn(['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off'])

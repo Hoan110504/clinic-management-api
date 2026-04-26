@@ -21,7 +21,8 @@ import { NotFoundError, ConflictError, BadRequestError, ForbiddenError, Unauthor
  */
 const getAllPatients = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
-  const { search, gender, sort, onlyTodayAppointment, appointmentDate } = req.query;
+  const { search, q, gender, status, sort, onlyTodayAppointment, appointmentDate } = req.query;
+  const keyword = search || q;
 
   // Build where clause
   const where = {};
@@ -30,14 +31,21 @@ const getAllPatients = asyncHandler(async (req, res) => {
     where.gender = gender;
   }
 
-  if (search) {
+  if (keyword) {
     where[Op.or] = [
-      { fullName: { [Op.like]: `%${search}%` } },
-      { phone: { [Op.like]: `%${search}%` } },
-      { email: { [Op.like]: `%${search}%` } },
-      { id: { [Op.like]: `%${search}%` } },
-      { idNumber: { [Op.like]: `%${search}%` } },
+      { fullName: { [Op.like]: `%${keyword}%` } },
+      { phone: { [Op.like]: `%${keyword}%` } },
+      { email: { [Op.like]: `%${keyword}%` } },
+      { id: { [Op.like]: `%${keyword}%` } },
+      { idNumber: { [Op.like]: `%${keyword}%` } },
     ];
+  }
+
+  if (status !== undefined && status !== null && status !== '') {
+    const statusNum = Number(status);
+    if (Number.isFinite(statusNum)) {
+      where.status = statusNum;
+    }
   }
 
   // Parse sort
@@ -256,6 +264,7 @@ const createPatient = asyncHandler(async (req, res) => {
     fullName,
     dateOfBirth,
     gender,
+    status,
     phone,
     email,
     address,
@@ -383,6 +392,7 @@ const createPatient = asyncHandler(async (req, res) => {
     fullName,
     dateOfBirth,
     gender: genderToUse,
+    status: Number.isFinite(Number(status)) ? Number(status) : 0,
     phone,
     email: normalizedEmail,
     address,
@@ -769,7 +779,7 @@ const searchPatients = asyncHandler(async (req, res) => {
         { id: { [Op.like]: `%${q}%` } },
       ],
     },
-    attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender'],
+    attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender', 'status'],
     limit: parseInt(limit, 10),
     order: [['fullName', 'ASC']],
   });
