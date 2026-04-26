@@ -787,6 +787,25 @@ const searchPatients = asyncHandler(async (req, res) => {
   return successResponse(res, patients);
 });
 
+/**
+ * Toggle patient status (lock/unlock)
+ * PATCH /api/patients/:id/toggle-status
+ */
+const togglePatientStatus = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const patient = await Patient.findByPk(id);
+  if (!patient) {
+    throw new NotFoundError('Không tìm thấy bệnh nhân');
+  }
+
+  // Toggle status: 0 (active) <-> 1 (locked)
+  const newStatus = patient.status === 0 ? 1 : 0;
+  await patient.update({ status: newStatus });
+
+  return successResponse(res, patient, `${newStatus === 1 ? 'Khóa' : 'Mở khóa'} bệnh nhân thành công`);
+});
+
 export {
   getAllPatients,
   getCurrentUserPatient,
@@ -799,4 +818,5 @@ export {
   getPatientLabTests,
   getPatientPayments,
   searchPatients,
+  togglePatientStatus,
 };

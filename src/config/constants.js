@@ -22,7 +22,7 @@ const ROLE_LABELS = {
 
 // Role code prefixes (roleId -> staff code prefix)
 const ROLE_PREFIXES = {
-  1: 'AD',
+  1: 'TK',
   2: 'BS',
   3: 'LT',
   4: 'DS',

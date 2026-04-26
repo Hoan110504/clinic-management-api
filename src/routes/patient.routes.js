@@ -139,4 +139,16 @@ router.get(
   patientController.getPatientPayments
 );
 
+/**
+ * @route PATCH /api/patients/:id/toggle-status
+ * @desc Toggle patient status (lock/unlock)
+ * @access Admin only
+ */
+router.patch(
+  '/:id/toggle-status',
+  authorize(ROLES.ADMIN),
+  validate(patientValidator.getById),
+  patientController.togglePatientStatus
+);
+
 export default router;
