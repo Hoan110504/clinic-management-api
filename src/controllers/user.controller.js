@@ -43,6 +43,15 @@ const buildNextStaffCode = async (role, transaction) => {
   return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
 };
 
+const formatPatientStaffCode = (patientId) => {
+  const numericId = Number(patientId);
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    return null;
+  }
+
+  return `BN${String(Math.trunc(numericId)).padStart(3, '0')}`;
+};
+
 /**
  * Get all users (with pagination and filters)
  * GET /api/users
@@ -331,7 +340,7 @@ const createUser = asyncHandler(async (req, res) => {
           idNumber: normalizedIdNumber || existingPatientByPhone.idNumber,
         }, { transaction: t });
 
-        await user.update({ staffCode: existingPatientByPhone.id }, { transaction: t });
+        await user.update({ staffCode: formatPatientStaffCode(existingPatientByPhone.id) }, { transaction: t });
       } else {
         if (existingPatientByPhone?.deletedAt) {
           await existingPatientByPhone.destroy({ force: true, transaction: t });
@@ -363,7 +372,7 @@ const createUser = asyncHandler(async (req, res) => {
         }, { transaction: t });
 
         // Patient code in users must follow Patient module code (BNxxx)
-        await user.update({ staffCode: createdPatient.id }, { transaction: t });
+        await user.update({ staffCode: formatPatientStaffCode(createdPatient.id) }, { transaction: t });
       }
     }
 
@@ -455,7 +464,7 @@ const createUser = asyncHandler(async (req, res) => {
                     idNumber: normalizedIdNumber || existingPatientByPhone.idNumber,
                   }, { transaction: t2 });
 
-                  await user.update({ staffCode: existingPatientByPhone.id }, { transaction: t2 });
+                  await user.update({ staffCode: formatPatientStaffCode(existingPatientByPhone.id) }, { transaction: t2 });
                 } else {
                   if (existingPatientByPhone?.deletedAt) {
                     await existingPatientByPhone.destroy({ force: true, transaction: t2 });
@@ -472,7 +481,7 @@ const createUser = asyncHandler(async (req, res) => {
                     idNumber: normalizedIdNumber,
                   }, { transaction: t2 });
 
-                  await user.update({ staffCode: createdPatient.id }, { transaction: t2 });
+                  await user.update({ staffCode: formatPatientStaffCode(createdPatient.id) }, { transaction: t2 });
                 }
 
                 await t2.commit();

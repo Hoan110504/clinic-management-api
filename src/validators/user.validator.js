@@ -53,7 +53,7 @@ const updateUserValidator = [
   param('id')
     .notEmpty()
     .withMessage('ID người dùng không được để trống')
-    .isUUID()
+    .isInt({ min: 1 })
     .withMessage('ID không hợp lệ'),
   body('email')
     .optional({ nullable: true, checkFalsy: true })
@@ -88,7 +88,7 @@ const getUserValidator = [
   param('id')
     .notEmpty()
     .withMessage('ID người dùng không được để trống')
-    .isUUID()
+    .isInt({ min: 1 })
     .withMessage('ID không hợp lệ'),
 ];
 
