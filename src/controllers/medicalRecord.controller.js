@@ -9,6 +9,7 @@ import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import { successResponse, createdResponse, paginatedResponse, errorResponse } from '../utils/response.js';
 import { formatToVietnamISOString } from '../utils/timezone.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
+import { ROLES } from '../config/constants.js';
 
 
 const calculateBMI = (weight, height) => {
@@ -102,6 +103,8 @@ const toMedicalExaminationContract = (row) => {
       weight: row.Weight || null,
       height: row.Height || null,
     },
+    // Whether frontend should allow creating a prescription from this exam
+    canCreatePrescription: Number(row.Status) !== 1,
   };
 };
 
@@ -155,6 +158,11 @@ const getAllRecords = asyncHandler(async (req, res) => {
     if (Number.isInteger(statusNum) && [0, 1, 2, 3].includes(statusNum)) {
       where.Status = statusNum;
     }
+  }
+
+  // If caller is a doctor, restrict to their own examinations
+  if (req.user && Number(req.user.role) === ROLES.DOCTOR) {
+    where.DoctorID = req.user.id;
   }
 
   const order = parseSort(sort, ['CreatedAt', 'ExaminationID'], 'CreatedAt:desc');

@@ -2,6 +2,7 @@ import models from '../models/index.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { createdResponse, successResponse } from '../utils/response.js';
 import { BadRequestError, ConflictError, NotFoundError } from '../utils/errors.js';
+import { ROLES } from '../config/constants.js';
 
 const toPositiveInt = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -87,6 +88,16 @@ const getLabOrderByExamination = asyncHandler(async (req, res) => {
     where: { examinationId },
     order: [['createdAt', 'DESC'], ['labOrderId', 'DESC']],
   });
+  if (!row) return successResponse(res, toLabOrderContract(row));
+
+  // If caller is a doctor, only return the lab order when it's assigned by that doctor
+  if (req.user && Number(req.user.role) === ROLES.DOCTOR) {
+    const rowPlain = row.get ? row.get({ plain: true }) : row;
+    const ownerDoctorId = rowPlain ? (rowPlain.doctorId ?? rowPlain.DoctorID) : null;
+    if (!ownerDoctorId || Number(ownerDoctorId) !== Number(req.user.id)) {
+      throw new NotFoundError('Không tìm thấy LabOrder');
+    }
+  }
 
   return successResponse(res, toLabOrderContract(row));
 });

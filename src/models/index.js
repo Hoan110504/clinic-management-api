@@ -69,6 +69,7 @@ export const MedicalRecord = models.MedicalRecord;
 export const Medicine = models.Medicine;
 export const LabService = models.LabService;
 export const LabTest = models.LabTest;
+export const LabResult = models.LabResult;
 export const Prescription = models.Prescription;
 export const PrescriptionItem = models.PrescriptionItem;
 export const LabOrderRequest = models.LabOrderRequest;
