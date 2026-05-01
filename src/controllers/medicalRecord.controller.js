@@ -110,7 +110,8 @@ const toMedicalExaminationContract = (row) => {
 
 const syncAppointmentCompletedFromExam = async (examinationRow, nextExamStatus) => {
   const statusNum = Number(nextExamStatus);
-  if (statusNum !== 1) return;
+  // Only sync appointment when examination becomes COMPLETED (Status = 2)
+  if (statusNum !== 2) return;
   const appointmentId = Number(examinationRow?.AppointmentID);
   if (!Number.isFinite(appointmentId) || appointmentId <= 0) return;
 
@@ -311,8 +312,24 @@ const updateRecord = asyncHandler(async (req, res) => {
   if (status !== undefined && [0, 1, 2, 3].includes(Number(status))) updates.Status = Number(status);
   updates.UpdatedAt = new Date();
 
+  // Prevent reverting a COMPLETED exam back to a non-completed status by non-admins
+  try {
+    const currentStatus = Number(examination.Status ?? 0);
+    if (currentStatus === 2 && updates.Status !== undefined) {
+      const incoming = Number(updates.Status);
+      if (incoming !== 2) {
+        // Ignore status change that would revert completion
+        delete updates.Status;
+      }
+    }
+  } catch (e) {
+    // If any error evaluating status, proceed without blocking updates
+  }
+
   await examination.update(updates);
-  await syncAppointmentCompletedFromExam(examination, updates.Status ?? examination.Status);
+  // Reload to ensure we return the persisted state
+  await examination.reload();
+  await syncAppointmentCompletedFromExam(examination.get({ plain: true }), examination.Status);
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Cập nhật phiếu khám thành công');
 });
@@ -322,8 +339,9 @@ const startExamination = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
   if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  // Mark status as in-progress (Status: 2 = Đang khám)
-  await examination.update({ Status: 2, UpdatedAt: new Date() });
+  // Mark status as in-progress (Status: 1 = Đang khám)
+  await examination.update({ Status: 1, UpdatedAt: new Date() });
+  await examination.reload();
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Bắt đầu khám thành công');
 });
@@ -334,9 +352,10 @@ const completeExamination = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({ where: { ExaminationID: id } });
   if (!examination) throw new NotFoundError('Không tìm thấy phiếu khám');
 
-  // Mark status as complete (Status: 1 = Hoàn thành)
-  await examination.update({ Status: 1, UpdatedAt: new Date() });
-  await syncAppointmentCompletedFromExam(examination, 1);
+  // Mark status as complete (Status: 2 = Hoàn thành)
+  await examination.update({ Status: 2, UpdatedAt: new Date() });
+  await examination.reload();
+  await syncAppointmentCompletedFromExam(examination.get({ plain: true }), 2);
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hoàn thành khám thành công');
 });

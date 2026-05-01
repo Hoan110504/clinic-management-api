@@ -386,14 +386,15 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   }
 
   // If request is from a patient (viewing their results), only show completed lab orders
-  // and examinations that are completed (status = 1).
+  // and examinations that are completed (status = 2).
   if (req.user && Number(req.user.role) === ROLES.PATIENT && patientId) {
     if (labOrderInclude) {
       labOrderInclude.where = { ...(labOrderInclude.where || {}), status: LAB_ITEM_STATUS.COMPLETED };
       labOrderInclude.required = true;
       const examinationInclude = (labOrderInclude.include || []).find((it) => it?.as === 'examination');
       if (examinationInclude) {
-        examinationInclude.where = { ...(examinationInclude.where || {}), Status: 1 };
+        // Examinations considered completed are Status = 2
+        examinationInclude.where = { ...(examinationInclude.where || {}), Status: 2 };
         examinationInclude.required = true;
       }
     }
