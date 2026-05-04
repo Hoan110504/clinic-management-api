@@ -79,11 +79,12 @@ const config = {
     level: process.env.LOG_LEVEL || 'debug',
   },
 
-  // Pagination defaults
-  pagination: {
+    // Pagination defaults
+    pagination: {
     defaultPage: 1,
     defaultLimit: 10,
-    maxLimit: 100,
+    // Increased maxLimit to allow larger fetch requests (e.g., limit=1000)
+    maxLimit: 1000,
   },
 };
 
