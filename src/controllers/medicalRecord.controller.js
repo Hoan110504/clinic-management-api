@@ -122,8 +122,14 @@ const syncAppointmentCompletedFromExam = async (examinationRow, nextExamStatus) 
 
 const getTodayQueue = asyncHandler(async (req, res) => {
   const { start: today, end: tomorrow } = getVietnamTodayRange();
+  const where = { CreatedAt: { [Op.gte]: today, [Op.lt]: tomorrow } };
+
+  if (req.user && Number(req.user.role) === ROLES.DOCTOR) {
+    where.DoctorID = req.user.id;
+  }
+
   const records = await MedicalExamination.findAll({
-    where: { CreatedAt: { [Op.gte]: today, [Op.lt]: tomorrow } },
+    where,
     include: [
       { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone'], required: false },
       { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },

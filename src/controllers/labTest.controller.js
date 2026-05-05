@@ -378,6 +378,10 @@ const getAllLabTests = asyncHandler(async (req, res) => {
         examinationWhere.Status = parsedExaminationStatus;
       }
 
+      if (req.user && Number(req.user.role) === ROLES.DOCTOR) {
+        examinationWhere.DoctorID = req.user.id;
+      }
+
       if (Object.keys(examinationWhere).length > 0) {
         examinationInclude.where = { ...(examinationInclude.where || {}), ...examinationWhere };
         examinationInclude.required = true;
