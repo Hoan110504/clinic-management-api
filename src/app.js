@@ -19,19 +19,57 @@ const app = express();
 app.set('trust proxy', 1);
 
 // Security middleware
-app.use(helmet());
+// Requirements: 19.3, 19.4
+app.use(helmet({
+  contentSecurityPolicy: false, // Allow inline scripts for development
+  crossOriginEmbedderPolicy: false,
+}));
 
 // CORS configuration
+// Requirements: 19.1, 19.2
 app.use(cors({
-  origin: config.cors.origin,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = config.cors.origin.split(',').map(o => o.trim());
+    
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      logger.warn(`CORS blocked request from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: config.cors.credentials,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
 // Body parsing middleware
+// Default limit for most endpoints
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Stricter body size limit for AI endpoints (10KB)
+// Requirements: 19.7
+app.use('/api/ai', express.json({ limit: '10kb' }));
+
+// Content-Type validation for AI POST requests
+// Requirements: 19.5, 19.6
+app.use('/api/ai', (req, res, next) => {
+  if (req.method === 'POST' && !req.is('application/json')) {
+    return res.status(415).json({
+      success: false,
+      error: {
+        code: 'INVALID_CONTENT_TYPE',
+        message: 'Content-Type must be application/json',
+        statusCode: 415,
+      },
+    });
+  }
+  next();
+});
 
 // HTTP request logging
 if (config.env !== 'test') {

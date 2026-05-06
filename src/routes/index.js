@@ -16,6 +16,7 @@ import paymentRoutes from './payment.routes.js';
 import inventoryRoutes from './inventory.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import medicalRecordRoutes from './medicalRecord.routes.js';
+import aiRoutes from './ai.routes.js';
 import { sequelize } from '../models/database.js';
 import { QueryTypes } from 'sequelize';
 
@@ -59,5 +60,6 @@ router.use('/payments', paymentRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/medical-records', medicalRecordRoutes);
+router.use('/ai', aiRoutes);
 
 export default router;

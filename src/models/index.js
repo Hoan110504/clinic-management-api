@@ -92,3 +92,6 @@ export const InventoryTransaction = models.InventoryTransaction;
 // Export MedicineBatch if available
 export const MedicineBatch = models.MedicineBatch;
 
+// Export AiChatLog for AI Medical Chatbot feature
+export const AiChatLog = models.AiChatLog;
+

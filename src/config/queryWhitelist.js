@@ -1,0 +1,473 @@
+/**
+ * Query Whitelist Configuration
+ * 
+ * Defines all allowed queries for the AI Medical Chatbot with role-based access control.
+ * Each query includes:
+ * - id: Unique query identifier
+ * - description: Human-readable description for AI query selection
+ * - requiredRoles: Array of role IDs that can execute this query
+ * - handler: Async function that executes the query with role-based filtering
+ * 
+ * Role IDs: 1=Admin, 2=Doctor, 3=Receptionist, 4=Pharmacist, 5=Patient, 6=LabTech
+ * 
+ * Implements Requirements 2.1, 2.4, 2.6, 2.7, 23.2
+ */
+
+import { ROLES } from './constants.js';
+import db from '../models/index.js';
+import { Op } from 'sequelize';
+
+/**
+ * Query Whitelist Map
+ * Key: query_id (string)
+ * Value: Query configuration object
+ */
+const QUERY_WHITELIST = new Map();
+
+// ============================================================================
+// PATIENT-SCOPED QUERIES
+// These queries return data specific to the authenticated patient user
+// ============================================================================
+
+/**
+ * Query: my_appointments
+ * Returns appointments for the authenticated patient
+ * Roles: Patient (5)
+ */
+QUERY_WHITELIST.set('my_appointments', {
+  id: 'my_appointments',
+  description: 'Get my upcoming and past appointments with doctors',
+  requiredRoles: [ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Find patient record linked to this user
+    const patient = await db.Patient.findOne({
+      where: { userId }
+    });
+    
+    if (!patient) {
+      return [];
+    }
+    
+    // Get appointments for this patient
+    const appointments = await db.Appointment.findAll({
+      where: {
+        patientId: patient.id
+      },
+      include: [
+        {
+          model: db.User,
+          as: 'assignedDoctor',
+          attributes: ['id', 'fullName', 'email']
+        }
+      ],
+      order: [['appointmentDate', 'DESC'], ['timeSlot', 'ASC']],
+      limit: 50 // Limit to recent 50 appointments
+    });
+    
+    return appointments;
+  }
+});
+
+/**
+ * Query: my_prescriptions
+ * Returns prescriptions for the authenticated patient
+ * Roles: Patient (5)
+ */
+QUERY_WHITELIST.set('my_prescriptions', {
+  id: 'my_prescriptions',
+  description: 'Get my medication prescriptions and prescription details',
+  requiredRoles: [ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Find patient record linked to this user
+    const patient = await db.Patient.findOne({
+      where: { userId }
+    });
+    
+    if (!patient) {
+      return [];
+    }
+    
+    // Get prescriptions through medical examinations
+    const prescriptions = await db.Prescription.findAll({
+      include: [
+        {
+          model: db.MedicalExamination,
+          as: 'examination',
+          where: { PatientId: patient.id },
+          required: true,
+          attributes: ['ExaminationID', 'ExaminationDate', 'Diagnosis']
+        },
+        {
+          model: db.User,
+          as: 'doctor',
+          attributes: ['id', 'fullName']
+        },
+        {
+          model: db.PrescriptionItem,
+          as: 'prescriptionItems',
+          include: [
+            {
+              model: db.Medicine,
+              as: 'medicine',
+              attributes: ['id', 'name', 'unit', 'category']
+            }
+          ]
+        }
+      ],
+      order: [['prescriptionDate', 'DESC']],
+      limit: 30 // Limit to recent 30 prescriptions
+    });
+    
+    return prescriptions;
+  }
+});
+
+/**
+ * Query: my_lab_results
+ * Returns lab test results for the authenticated patient
+ * Roles: Patient (5)
+ */
+QUERY_WHITELIST.set('my_lab_results', {
+  id: 'my_lab_results',
+  description: 'Get my laboratory test results and clinical findings',
+  requiredRoles: [ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Find patient record linked to this user
+    const patient = await db.Patient.findOne({
+      where: { userId }
+    });
+    
+    if (!patient) {
+      return [];
+    }
+    
+    // Get lab results through medical examinations
+    const labResults = await db.LabResult.findAll({
+      include: [
+        {
+          model: db.MedicalExamination,
+          as: 'Examination',
+          where: { PatientId: patient.id },
+          required: true,
+          attributes: ['ExaminationID', 'ExaminationDate']
+        },
+        {
+          model: db.LabService,
+          as: 'Service',
+          attributes: ['ServiceID', 'ServiceName', 'Unit', 'NormalRange']
+        },
+        {
+          model: db.User,
+          as: 'Doctor',
+          attributes: ['id', 'fullName']
+        }
+      ],
+      order: [['resultDate', 'DESC']],
+      limit: 50 // Limit to recent 50 lab results
+    });
+    
+    return labResults;
+  }
+});
+
+/**
+ * Query: my_medical_history
+ * Returns medical examination history for the authenticated patient
+ * Roles: Patient (5)
+ */
+QUERY_WHITELIST.set('my_medical_history', {
+  id: 'my_medical_history',
+  description: 'Get my medical examination history, diagnoses, and treatment advice',
+  requiredRoles: [ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Find patient record linked to this user
+    const patient = await db.Patient.findOne({
+      where: { userId }
+    });
+    
+    if (!patient) {
+      return [];
+    }
+    
+    // Get medical examinations for this patient
+    const examinations = await db.MedicalExamination.findAll({
+      where: { PatientId: patient.id },
+      include: [
+        {
+          model: db.User,
+          as: 'doctor',
+          attributes: ['id', 'fullName']
+        },
+        {
+          model: db.Appointment,
+          as: 'appointment',
+          attributes: ['id', 'appointmentDate', 'timeSlot']
+        }
+      ],
+      order: [['ExaminationDate', 'DESC']],
+      limit: 30 // Limit to recent 30 examinations
+    });
+    
+    return examinations;
+  }
+});
+
+// ============================================================================
+// CLINICAL QUERIES
+// These queries return clinical data with role-based access control
+// ============================================================================
+
+/**
+ * Query: medicines_info
+ * Returns information about medicines in the system
+ * Roles: Admin (1), Doctor (2), Receptionist (3), Pharmacist (4)
+ */
+QUERY_WHITELIST.set('medicines_info', {
+  id: 'medicines_info',
+  description: 'Get information about medicines including name, category, unit, and price',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST],
+  handler: async (userId, userRole) => {
+    // Get active medicines with basic information
+    const medicines = await db.Medicine.findAll({
+      where: {
+        isActive: true
+      },
+      attributes: ['id', 'name', 'unit', 'category', 'price'],
+      order: [['name', 'ASC']],
+      limit: 100 // Limit to 100 medicines to avoid overwhelming the AI
+    });
+    
+    return medicines;
+  }
+});
+
+/**
+ * Query: patient_medical_history
+ * Returns medical history for a specific patient (doctors only)
+ * Note: This query requires additional filtering in the AI prompt to specify patient
+ * Roles: Doctor (2)
+ */
+QUERY_WHITELIST.set('patient_medical_history', {
+  id: 'patient_medical_history',
+  description: 'Get medical examination history for patients (doctors can access their assigned patients)',
+  requiredRoles: [ROLES.DOCTOR],
+  handler: async (userId, userRole) => {
+    // Get recent examinations where this doctor was assigned
+    const examinations = await db.MedicalExamination.findAll({
+      where: {
+        DoctorID: userId
+      },
+      include: [
+        {
+          model: db.Patient,
+          as: 'patient',
+          attributes: ['id', 'fullName', 'dateOfBirth', 'gender']
+        }
+      ],
+      order: [['ExaminationDate', 'DESC']],
+      limit: 50 // Limit to recent 50 examinations by this doctor
+    });
+    
+    return examinations;
+  }
+});
+
+/**
+ * Query: lab_tests_pending
+ * Returns pending lab tests that need results entry
+ * Roles: Doctor (2), LabTech (6)
+ */
+QUERY_WHITELIST.set('lab_tests_pending', {
+  id: 'lab_tests_pending',
+  description: 'Get pending laboratory tests that are waiting for results',
+  requiredRoles: [ROLES.DOCTOR, 6], // 6 = LabTech
+  handler: async (userId, userRole) => {
+    // Get lab order items that don't have results yet
+    const pendingTests = await db.LabOrderItem.findAll({
+      where: {
+        status: 0 // Pending status
+      },
+      include: [
+        {
+          model: db.LabOrder,
+          as: 'labOrder',
+          include: [
+            {
+              model: db.MedicalExamination,
+              as: 'examination',
+              include: [
+                {
+                  model: db.Patient,
+                  as: 'patient',
+                  attributes: ['id', 'fullName', 'phone']
+                }
+              ]
+            }
+          ]
+        },
+        {
+          model: db.LabService,
+          as: 'service',
+          attributes: ['ServiceID', 'ServiceName', 'Unit']
+        }
+      ],
+      order: [['createdAt', 'ASC']],
+      limit: 50 // Limit to 50 pending tests
+    });
+    
+    return pendingTests;
+  }
+});
+
+/**
+ * Query: low_stock_medicines
+ * Returns medicines with low stock levels
+ * Roles: Admin (1), Pharmacist (4)
+ */
+QUERY_WHITELIST.set('low_stock_medicines', {
+  id: 'low_stock_medicines',
+  description: 'Get medicines with low stock levels that need reordering',
+  requiredRoles: [ROLES.ADMIN, ROLES.PHARMACIST],
+  handler: async (userId, userRole) => {
+    // Get medicines with their current stock from batches
+    const medicines = await db.Medicine.findAll({
+      where: {
+        isActive: true
+      },
+      include: [
+        {
+          model: db.MedicineBatch,
+          as: 'batches',
+          where: {
+            quantity: {
+              [Op.gt]: 0 // Only active batches with stock
+            }
+          },
+          required: false,
+          attributes: ['id', 'quantity', 'expiryDate']
+        }
+      ],
+      attributes: ['id', 'name', 'unit', 'category'],
+      order: [['name', 'ASC']],
+      limit: 100
+    });
+    
+    // Calculate total stock and filter low stock items
+    const lowStockMedicines = medicines
+      .map(medicine => {
+        const totalStock = medicine.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+        return {
+          ...medicine.toJSON(),
+          totalStock
+        };
+      })
+      .filter(medicine => medicine.totalStock < 50) // Low stock threshold: 50 units
+      .slice(0, 50); // Limit to 50 items
+    
+    return lowStockMedicines;
+  }
+});
+
+/**
+ * Query: appointment_schedule
+ * Returns appointment schedule for doctors and receptionists
+ * Roles: Admin (1), Doctor (2), Receptionist (3)
+ */
+QUERY_WHITELIST.set('appointment_schedule', {
+  id: 'appointment_schedule',
+  description: 'Get upcoming appointment schedule for the clinic',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST],
+  handler: async (userId, userRole) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // For doctors, show only their appointments
+    // For admin and receptionist, show all appointments
+    const whereClause = {
+      appointmentDate: {
+        [Op.gte]: today
+      },
+      status: {
+        [Op.in]: [1, 2] // Scheduled or Waiting status
+      }
+    };
+    
+    // If doctor, filter by assigned doctor
+    if (userRole === ROLES.DOCTOR) {
+      whereClause.assignedDoctorId = userId;
+    }
+    
+    const appointments = await db.Appointment.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: db.Patient,
+          as: 'patient',
+          attributes: ['id', 'fullName', 'phone']
+        },
+        {
+          model: db.User,
+          as: 'assignedDoctor',
+          attributes: ['id', 'fullName']
+        }
+      ],
+      order: [['appointmentDate', 'ASC'], ['timeSlot', 'ASC']],
+      limit: 50 // Limit to next 50 appointments
+    });
+    
+    return appointments;
+  }
+});
+
+/**
+ * Get available queries for a specific user role
+ * @param {number} userRole - The user's role ID
+ * @returns {Array<Object>} Array of available query configurations
+ */
+export function getAvailableQueries(userRole) {
+  const availableQueries = [];
+  
+  for (const [queryId, config] of QUERY_WHITELIST.entries()) {
+    if (config.requiredRoles.includes(userRole)) {
+      availableQueries.push({
+        id: config.id,
+        description: config.description
+      });
+    }
+  }
+  
+  return availableQueries;
+}
+
+/**
+ * Get a specific query configuration by ID
+ * @param {string} queryId - The query identifier
+ * @returns {Object|null} Query configuration or null if not found
+ */
+export function getQuery(queryId) {
+  return QUERY_WHITELIST.get(queryId) || null;
+}
+
+/**
+ * Check if a query exists in the whitelist
+ * @param {string} queryId - The query identifier
+ * @returns {boolean} True if query exists
+ */
+export function isQueryWhitelisted(queryId) {
+  return QUERY_WHITELIST.has(queryId);
+}
+
+/**
+ * Check if a user role has permission to execute a query
+ * @param {string} queryId - The query identifier
+ * @param {number} userRole - The user's role ID
+ * @returns {boolean} True if user has permission
+ */
+export function hasQueryPermission(queryId, userRole) {
+  const query = QUERY_WHITELIST.get(queryId);
+  if (!query) return false;
+  
+  return query.requiredRoles.includes(userRole);
+}
+
+export default QUERY_WHITELIST;

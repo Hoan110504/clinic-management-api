@@ -143,10 +143,7 @@ const resolveDebtAmount = (payment) => {
 const getPlain = (value) => (value?.get ? value.get({ plain: true }) : (value || {}));
 
 const formatCashierDisplay = (user) => {
-  const staffCode = user?.staffCode || user?.staff_code || '';
-  const fullName = user?.fullName || user?.full_name || user?.username || '';
-  if (staffCode && fullName) return `${staffCode} - ${fullName}`;
-  return fullName || staffCode || '';
+  return user?.full_name || user?.fullName || user?.username || '';
 };
 
 const buildInvoiceBreakdownFromExamination = async (examinationId) => {
@@ -320,6 +317,7 @@ const serializePayment = (payment, overrides = {}) => {
   const prescription = raw.prescription || {};
   const labOrder = raw.labOrder || {};
   const doctor = examination.doctor || raw.doctor || {};
+  const cashier = raw.createdByUser || raw.createdBy || raw.cashier || {};
   const invoiceDate = resolveInvoiceDate(raw);
   const totalAmount = resolveTotalAmount(raw);
   const paymentMethodCode = normalizePaymentMethodCode(raw.paymentMethod ?? raw.PaymentMethod);
@@ -348,7 +346,7 @@ const serializePayment = (payment, overrides = {}) => {
     patientBirthDate: patient.dateOfBirth ?? raw.patientBirthDate ?? null,
     patientGender: patient.gender ?? raw.patientGender ?? '',
     patientAddress: patient.address ?? raw.patientAddress ?? '',
-    cashierName: overrides.cashierName ?? '',
+    cashierName: overrides.cashierName ?? formatCashierDisplay(cashier),
     doctorName: doctor.fullName ?? doctor.full_name ?? raw.doctorName ?? overrides.doctorName ?? '',
     consultationFee: toFiniteNumber(raw.consultationFee ?? 0, 0),
     labTestFee: toFiniteNumber(raw.labTestFee ?? 0, 0),
@@ -407,6 +405,12 @@ const buildPaymentIncludes = () => ([
   {
     model: LabOrder,
     as: 'labOrder',
+    required: false,
+  },
+  {
+    model: User,
+    as: 'createdByUser',
+    attributes: ['id', 'full_name', 'fullName', 'username'],
     required: false,
   },
 ]);
@@ -478,7 +482,7 @@ const getAllPayments = asyncHandler(async (req, res) => {
   });
 
   return paginatedResponse(res, {
-    data: rows.map((row) => serializePayment(row, { cashierName: formatCashierDisplay(req.user) })),
+    data: rows.map((row) => serializePayment(row)),
     page,
     limit,
     total: count,
@@ -497,10 +501,7 @@ const getPaymentById = asyncHandler(async (req, res) => {
   }
 
   const breakdown = await buildInvoiceBreakdownFromExamination(payment.examinationId ?? payment.ExaminationID);
-  return successResponse(res, serializePayment(payment, {
-    ...breakdown,
-    cashierName: formatCashierDisplay(req.user),
-  }));
+  return successResponse(res, serializePayment(payment, breakdown));
 });
 
 const getPaymentPreview = asyncHandler(async (req, res) => {
@@ -524,6 +525,7 @@ const createPayment = asyncHandler(async (req, res) => {
   const payment = await Payment.create({
     ...payload,
     patientId: resolvedPatientId,
+    createdBy: req.user?.id ?? null,
     totalAmount: payload.totalAmount,
     debtAmount: undefined,
   });
@@ -572,6 +574,7 @@ const processPayment = asyncHandler(async (req, res) => {
     paidAmount: nextPaidAmount,
     totalAmount,
     status: nextStatus,
+    createdBy: req.user?.id ?? payment.createdBy ?? null,
   });
 
   const refreshed = await Payment.findByPk(id, { include: buildPaymentIncludes() });
@@ -583,7 +586,6 @@ const processPayment = asyncHandler(async (req, res) => {
       debtAmount,
       changeAmount,
       paidAt: new Date().toISOString(),
-      cashierName: formatCashierDisplay(req.user),
     }),
     'Thanh toán thành công'
   );

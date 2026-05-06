@@ -51,6 +51,15 @@ export default (sequelize) => {
           key: 'LabOrderID',
         },
       },
+      createdBy: {
+        type: DataTypes.BIGINT,
+        allowNull: true,
+        field: 'CreatedBy',
+        references: {
+          model: 'Users',
+          key: 'id',
+        },
+      },
       invoiceDate: {
         type: DataTypes.DATE,
         allowNull: false,
@@ -124,6 +133,9 @@ export default (sequelize) => {
     }
     if (models?.LabOrder) {
       Payment.belongsTo(models.LabOrder, { foreignKey: 'labOrderId', as: 'labOrder' });
+    }
+    if (models?.User) {
+      Payment.belongsTo(models.User, { foreignKey: 'createdBy', as: 'createdByUser' });
     }
   };
 

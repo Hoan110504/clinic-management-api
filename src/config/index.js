@@ -79,12 +79,18 @@ const config = {
     level: process.env.LOG_LEVEL || 'debug',
   },
 
-    // Pagination defaults
-    pagination: {
+  // Pagination defaults
+  pagination: {
     defaultPage: 1,
     defaultLimit: 10,
     // Increased maxLimit to allow larger fetch requests (e.g., limit=1000)
     maxLimit: 1000,
+  },
+
+  // AI Medical Chatbot
+  ai: {
+    geminiApiKey: process.env.GEMINI_API_KEY,
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
   },
 };
 
@@ -97,6 +103,13 @@ const missingEnvVars = requiredEnvVars.filter(
 if (missingEnvVars.length > 0) {
   throw new Error(
     `Missing required environment variables: ${missingEnvVars.join(', ')}`
+  );
+}
+
+// Validate AI configuration
+if (!process.env.GEMINI_API_KEY) {
+  console.warn(
+    'Warning: GEMINI_API_KEY is not set. AI Medical Chatbot features will not be available.'
   );
 }
 

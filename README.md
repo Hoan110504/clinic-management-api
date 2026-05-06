@@ -12,6 +12,7 @@ Backend API server cho hệ thống quản lý phòng khám Nội Khoa.
 - **Validation**: express-validator
 - **Security**: helmet, cors, express-rate-limit
 - **Logging**: winston, morgan
+- **AI**: Google Gemini 2.0 Flash (AI Medical Chatbot)
 
 ## 📁 Cấu trúc thư mục
 
@@ -172,6 +173,27 @@ Server sẽ chạy tại: `http://localhost:5000/api`
 - `GET /api/dashboard/pharmacist` - Dashboard Dược sĩ
 - `GET /api/dashboard/patient` - Dashboard Bệnh nhân
 
+### AI Medical Chatbot 🤖
+- `POST /api/ai/chat` - Gửi tin nhắn đến AI chatbot
+- `GET /api/ai/history` - Lấy lịch sử hội thoại (10 tin nhắn gần nhất)
+- `GET /api/ai/rate-status` - Kiểm tra trạng thái giới hạn tốc độ
+- `DELETE /api/ai/history` - Xóa lịch sử hội thoại
+- `GET /api/ai/metrics` - Thống kê sử dụng AI (Admin only)
+
+**Tính năng:**
+- Trợ lý AI "Dr. AI" hỗ trợ tư vấn y tế thông minh
+- Truy vấn thông tin thuốc, lịch hẹn, kết quả xét nghiệm
+- Phân quyền theo vai trò người dùng
+- Bảo mật: JWT authentication, rate limiting, prompt injection prevention
+- Ghi log đầy đủ cho mục đích kiểm toán
+
+**Cài đặt:**
+1. Lấy API key từ [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Thêm vào `.env`: `GEMINI_API_KEY=your_api_key_here`
+3. Chạy migration: `npm run db:migrate`
+
+📖 **Xem tài liệu chi tiết:** [docs/AI_CHATBOT.md](docs/AI_CHATBOT.md)
+
 ## 🔒 Phân quyền
 
 | Chức năng | Admin | Doctor | Receptionist | Pharmacist | Lab Tech | Patient |
@@ -184,6 +206,7 @@ Server sẽ chạy tại: `http://localhost:5000/api`
 | Phát thuốc | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Xét nghiệm | ❌ | ✅ (yêu cầu) | ❌ | ❌ | ✅ | ❌ |
 | Thanh toán | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| AI Chatbot | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## 📝 Response Format
 
