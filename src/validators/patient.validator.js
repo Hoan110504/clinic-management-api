@@ -95,8 +95,8 @@ const listPatientsValidator = [
     .withMessage('Số trang không hợp lệ'),
   query('limit')
     .optional()
-    .isInt({ min: 1, max: 100 })
-    .withMessage('Số lượng mỗi trang phải từ 1-100'),
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Số lượng mỗi trang phải từ 1-1000'),
   query('search')
     .optional()
     .isString()
