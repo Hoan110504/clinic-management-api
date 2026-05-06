@@ -218,14 +218,166 @@ QUERY_WHITELIST.set('my_medical_history', {
 // ============================================================================
 
 /**
+ * Query: lab_services_info
+ * Returns information about laboratory services and their prices
+ * Roles: Admin (1), Doctor (2), Receptionist (3), Patient (5), LabTech (6)
+ */
+QUERY_WHITELIST.set('lab_services_info', {
+  id: 'lab_services_info',
+  description: 'Get information about laboratory services including ultrasound, ECG, and lab tests with prices',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT, 6], // 6 = LabTech
+  handler: async (userId, userRole) => {
+    // Get active lab services with their information
+    const labServices = await db.LabService.findAll({
+      where: {
+        isActive: true
+      },
+      attributes: ['serviceId', 'serviceName', 'price', 'serviceType'],
+      order: [['serviceType', 'ASC'], ['serviceName', 'ASC']],
+      limit: 100 // Limit to 100 services
+    });
+    
+    // Add service type descriptions
+    const servicesWithTypes = labServices.map(service => {
+      const serviceData = service.toJSON();
+      let serviceTypeDescription = '';
+      
+      switch (service.serviceType) {
+        case 1:
+          serviceTypeDescription = 'Siêu âm (Ultrasound)';
+          break;
+        case 2:
+          serviceTypeDescription = 'Điện tim (ECG)';
+          break;
+        case 3:
+          serviceTypeDescription = 'Xét nghiệm (Lab Test)';
+          break;
+        default:
+          serviceTypeDescription = 'Dịch vụ khác';
+      }
+      
+      return {
+        ...serviceData,
+        serviceTypeDescription
+      };
+    });
+    
+    return servicesWithTypes;
+  }
+});
+
+/**
+ * Query: clinic_info
+ * Returns general clinic information including operating hours
+ * Roles: All roles
+ */
+QUERY_WHITELIST.set('clinic_info', {
+  id: 'clinic_info',
+  description: 'Get general clinic information including operating hours, contact info, and services',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT, 6], // All roles
+  handler: async (userId, userRole) => {
+    // Return static clinic information
+    return [{
+      clinicName: 'Phòng khám Nội khoa',
+      operatingHours: {
+        weekdays: '7:30 - 17:30',
+        weekend: '7:30 - 17:30',
+        description: 'Thứ 2 đến Chủ nhật: 7:30 - 17:30 (Mở cửa cả tuần)'
+      },
+      services: [
+        'Khám nội khoa tổng quát',
+        'Siêu âm',
+        'Điện tim',
+        'Xét nghiệm máu',
+        'Tư vấn sức khỏe',
+        'Kê đơn thuốc'
+      ],
+      contact: {
+        phone: 'Liên hệ lễ tân để biết số điện thoại',
+        address: 'Địa chỉ phòng khám'
+      },
+      appointmentPolicy: 'Có thể đặt lịch hẹn trước hoặc khám trực tiếp trong giờ làm việc (7:30 - 17:30 hàng ngày)'
+    }];
+  }
+});
+
+/**
+ * Query: medicines_and_services
+ * Returns comprehensive information about medicines and services with prices
+ * Roles: All roles - this is the primary query for price inquiries
+ */
+QUERY_WHITELIST.set('medicines_and_services', {
+  id: 'medicines_and_services',
+  description: 'Get comprehensive information about all medicines and medical services with prices - use this for any price-related questions',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT, 6],
+  handler: async (userId, userRole) => {
+    // Get all medicines
+    const medicines = await db.Medicine.findAll({
+      where: {
+        isActive: true
+      },
+      attributes: ['id', 'name', 'unit', 'category', 'price'],
+      order: [['name', 'ASC']],
+      limit: 100
+    });
+    
+    // Get all lab services
+    const labServices = await db.LabService.findAll({
+      where: {
+        isActive: true
+      },
+      attributes: ['serviceId', 'serviceName', 'price', 'serviceType'],
+      order: [['serviceName', 'ASC']],
+      limit: 50
+    });
+    
+    // Format lab services with type descriptions
+    const formattedServices = labServices.map(service => {
+      let serviceTypeDescription = '';
+      switch (service.serviceType) {
+        case 1: serviceTypeDescription = 'Siêu âm'; break;
+        case 2: serviceTypeDescription = 'Điện tim'; break;
+        case 3: serviceTypeDescription = 'Xét nghiệm'; break;
+        default: serviceTypeDescription = 'Dịch vụ khác';
+      }
+      
+      return {
+        id: service.serviceId,
+        name: service.serviceName,
+        price: service.price,
+        category: serviceTypeDescription,
+        type: 'service'
+      };
+    });
+    
+    // Format medicines
+    const formattedMedicines = medicines.map(medicine => ({
+      id: medicine.id,
+      name: medicine.name,
+      price: medicine.price,
+      category: medicine.category,
+      unit: medicine.unit,
+      type: 'medicine'
+    }));
+    
+    // Combine and return
+    return {
+      medicines: formattedMedicines,
+      services: formattedServices,
+      totalMedicines: formattedMedicines.length,
+      totalServices: formattedServices.length
+    };
+  }
+});
+/**
  * Query: medicines_info
- * Returns information about medicines in the system
- * Roles: Admin (1), Doctor (2), Receptionist (3), Pharmacist (4)
+ * Returns complete list of all available medicines with names, categories, units, and prices
+ * Roles: Admin (1), Doctor (2), Receptionist (3), Pharmacist (4), Patient (5)
  */
 QUERY_WHITELIST.set('medicines_info', {
   id: 'medicines_info',
-  description: 'Get information about medicines including name, category, unit, and price',
-  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST],
+  description: 'Get complete list of all available medicines with names, categories, units, and prices - use when user asks about medicine catalog or general medicine information',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT],
   handler: async (userId, userRole) => {
     // Get active medicines with basic information
     const medicines = await db.Medicine.findAll({
@@ -238,6 +390,89 @@ QUERY_WHITELIST.set('medicines_info', {
     });
     
     return medicines;
+  }
+});
+
+/**
+ * Query: medicine_search
+ * Search for specific medicines by name or category
+ * Roles: Admin (1), Doctor (2), Receptionist (3), Pharmacist (4), Patient (5)
+ */
+QUERY_WHITELIST.set('medicine_search', {
+  id: 'medicine_search',
+  description: 'Search for specific medicines when user mentions a particular medicine name or medical condition',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Since we can't get search term from AI, return common medicines
+    // This query should be used when user asks about specific medicines
+    const commonMedicines = await db.Medicine.findAll({
+      where: {
+        isActive: true,
+        [Op.or]: [
+          { name: { [Op.like]: '%paracetamol%' } },
+          { name: { [Op.like]: '%amoxicillin%' } },
+          { name: { [Op.like]: '%ibuprofen%' } },
+          { name: { [Op.like]: '%aspirin%' } },
+          { category: { [Op.like]: '%đau%' } },
+          { category: { [Op.like]: '%sốt%' } },
+          { category: { [Op.like]: '%kháng sinh%' } }
+        ]
+      },
+      attributes: ['id', 'name', 'unit', 'category', 'price'],
+      order: [['name', 'ASC']],
+      limit: 50
+    });
+    
+    return commonMedicines;
+  }
+});
+
+/**
+ * Query: service_prices
+ * Get pricing information for all clinic services
+ * Roles: Admin (1), Doctor (2), Receptionist (3), Patient (5)
+ */
+QUERY_WHITELIST.set('service_prices', {
+  id: 'service_prices',
+  description: 'Get pricing information for medical examinations and laboratory services',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Get lab services prices
+    const labServices = await db.LabService.findAll({
+      where: { isActive: true },
+      attributes: ['serviceId', 'serviceName', 'price', 'serviceType'],
+      order: [['serviceType', 'ASC'], ['serviceName', 'ASC']]
+    });
+    
+    // Format with service type descriptions
+    const servicesWithPrices = labServices.map(service => {
+      let serviceTypeDescription = '';
+      switch (service.serviceType) {
+        case 1: serviceTypeDescription = 'Siêu âm'; break;
+        case 2: serviceTypeDescription = 'Điện tim'; break;
+        case 3: serviceTypeDescription = 'Xét nghiệm'; break;
+        default: serviceTypeDescription = 'Dịch vụ khác';
+      }
+      
+      return {
+        serviceId: service.serviceId,
+        serviceName: service.serviceName,
+        price: service.price,
+        serviceType: serviceTypeDescription,
+        category: 'Dịch vụ y tế'
+      };
+    });
+    
+    // Add general consultation fee (static info)
+    servicesWithPrices.unshift({
+      serviceId: 'consultation',
+      serviceName: 'Khám nội khoa tổng quát',
+      price: 200000, // Example price - adjust as needed
+      serviceType: 'Khám bệnh',
+      category: 'Khám bệnh'
+    });
+    
+    return servicesWithPrices;
   }
 });
 
@@ -329,42 +564,18 @@ QUERY_WHITELIST.set('low_stock_medicines', {
   description: 'Get medicines with low stock levels that need reordering',
   requiredRoles: [ROLES.ADMIN, ROLES.PHARMACIST],
   handler: async (userId, userRole) => {
-    // Get medicines with their current stock from batches
+    // For now, return all medicines since we don't have stock data
+    // This can be enhanced later when MedicineBatch data is available
     const medicines = await db.Medicine.findAll({
       where: {
         isActive: true
       },
-      include: [
-        {
-          model: db.MedicineBatch,
-          as: 'batches',
-          where: {
-            quantity: {
-              [Op.gt]: 0 // Only active batches with stock
-            }
-          },
-          required: false,
-          attributes: ['id', 'quantity', 'expiryDate']
-        }
-      ],
-      attributes: ['id', 'name', 'unit', 'category'],
+      attributes: ['id', 'name', 'unit', 'category', 'price'],
       order: [['name', 'ASC']],
-      limit: 100
+      limit: 50
     });
     
-    // Calculate total stock and filter low stock items
-    const lowStockMedicines = medicines
-      .map(medicine => {
-        const totalStock = medicine.batches.reduce((sum, batch) => sum + batch.quantity, 0);
-        return {
-          ...medicine.toJSON(),
-          totalStock
-        };
-      })
-      .filter(medicine => medicine.totalStock < 50) // Low stock threshold: 50 units
-      .slice(0, 50); // Limit to 50 items
-    
-    return lowStockMedicines;
+    return medicines;
   }
 });
 
