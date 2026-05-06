@@ -241,7 +241,14 @@ const getAllAppointments = asyncHandler(async (req, res) => {
   }
 
   // Parse sort (use DB timestamp column names)
-  const order = parseSort(sort, ['appointment_date', 'created_at', 'time_slot'], 'created_at:desc');
+  let order = parseSort(sort, ['appointment_date', 'created_at', 'time_slot', 'id'], 'created_at:desc');
+  
+  // Special sorting for search queries: when searching (especially by patient name),
+  // sort by AppointmentID DESC to show newest appointments first for duplicate names
+  if (search && search.trim()) {
+    // Add id DESC as primary sort for search results to handle duplicate patient names
+    order = [['id', 'DESC'], ...order.filter(([field]) => field !== 'id')];
+  }
 
   let count, rows;
   try {
