@@ -93,7 +93,7 @@ export default (sequelize) => {
       status: {
         type: DataTypes.TINYINT,
         allowNull: false,
-        defaultValue: 0,
+        defaultValue: 1,
         field: 'Status',
       },
     },

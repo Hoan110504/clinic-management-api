@@ -105,16 +105,43 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     lowStockCount = 0;
   }
 
-  // Recent appointments
-  const recentAppointments = await Appointment.findAll({
+  // Recent appointments: from today to end of current month (exclude past), include patient details, map status
+  const monthEnd = new Date();
+  monthEnd.setMonth(monthEnd.getMonth() + 1);
+  monthEnd.setDate(0);
+  monthEnd.setHours(23, 59, 59, 999);
+
+  let recentAppointments = await Appointment.findAll({
     where: {
       appointmentDate: {
         [Op.gte]: today,
+        [Op.lte]: monthEnd,
       },
     },
     order: [['appointmentDate', 'ASC'], ['timeSlot', 'ASC']],
     limit: 10,
+    include: [
+      {
+        model: Patient,
+        as: 'patient',
+        attributes: ['id', 'fullName', 'phone'],
+        required: false,
+      },
+    ],
   });
+
+  // Map status numbers to Vietnamese labels for display
+  const statusLabelMap = {
+    1: 'Đã đặt lịch',
+    2: 'Chờ khám',
+    3: 'Đã hoàn thành',
+    4: 'Đã hủy',
+  };
+
+  recentAppointments = recentAppointments.map((apt) => ({
+    ...apt.toJSON(),
+    status: statusLabelMap[apt.status] || apt.status,
+  }));
 
   // Chart 1: Lịch hẹn theo tháng (Line Chart)
   let appointmentsByMonth = [];
@@ -287,46 +314,36 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
     ],
   });
 
-  // Waiting / in-progress / completed counts
-  // Note: MedicalRecord model may not exist in this schema
+  // Medical examination statuses for today filtered by doctor
   let waitingPatients = 0;
   let inProgressCount = 0;
   let completedToday = 0;
-  if (typeof MedicalRecord !== 'undefined' && MedicalRecord) {
-    try {
-      waitingPatients = await MedicalRecord.count({
-        where: {
-          doctorId,
-          status: MEDICAL_RECORD_STATUS.WAITING,
-        },
-      });
-    } catch (err) {
-      console.warn('Could not count waiting patients:', err.message);
-    }
 
-    try {
-      inProgressCount = await MedicalRecord.count({
-        where: {
-          doctorId,
-          status: MEDICAL_RECORD_STATUS.IN_PROGRESS,
-        },
-      });
-    } catch (err) {
-      console.warn('Could not count in-progress patients:', err.message);
-    }
+  try {
+    // Get MedicalExamination records for today
+    const medicalExams = await sequelize.query(`
+      SELECT Status, COUNT(*) as count 
+      FROM [dbo].[MedicalExaminations]
+      WHERE DoctorID = ? 
+        AND CAST([CreatedAt] AS DATE) = CAST(GETDATE() AS DATE)
+      GROUP BY Status
+    `, {
+      replacements: [doctorId],
+      type: sequelize.QueryTypes.SELECT,
+    });
 
-    try {
-      completedToday = await MedicalRecord.count({
-        where: {
-          doctorId,
-          status: MEDICAL_RECORD_STATUS.COMPLETED,
-        },
-      });
-    } catch (err) {
-      console.warn('Could not count completed patients:', err.message);
-    }
-  } else {
-    console.warn('MedicalRecord model is not available; doctor dashboard counts set to 0');
+    // Map status codes to counts
+    medicalExams.forEach(exam => {
+      if (exam.Status === 0 || exam.Status === '0') {
+        waitingPatients = parseInt(exam.count) || 0;
+      } else if (exam.Status === 1 || exam.Status === '1') {
+        inProgressCount = parseInt(exam.count) || 0;
+      } else if (exam.Status === 2 || exam.Status === '2') {
+        completedToday = parseInt(exam.count) || 0;
+      }
+    });
+  } catch (err) {
+    console.warn('Could not fetch medical examination statuses:', err.message);
   }
 
   // Pending lab results (guard in case model isn't loaded)
@@ -344,12 +361,32 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
     console.warn('LabTest model is not available; pendingLabResults set to 0');
   }
 
+  // Pending lab order items (LabOrderItems with Status = 0, created today, for this doctor)
+  let pendingLabOrderItems = 0;
+  try {
+    const labOrderItemsCount = await sequelize.query(`
+      SELECT COUNT(*) as count
+      FROM [dbo].[LabOrderItems] loi
+      INNER JOIN [dbo].[LabOrders] lo ON loi.LabOrderID = lo.LabOrderID
+      WHERE loi.Status = 0
+        AND CAST(loi.[CreatedAt] AS DATE) = CAST(GETDATE() AS DATE)
+        AND lo.DoctorID = ?
+    `, {
+      replacements: [doctorId],
+      type: sequelize.QueryTypes.SELECT,
+    });
+    pendingLabOrderItems = (labOrderItemsCount && labOrderItemsCount[0]) ? parseInt(labOrderItemsCount[0].count) || 0 : 0;
+  } catch (err) {
+    console.warn('Could not fetch pending lab order items:', err.message);
+  }
+
   return successResponse(res, {
     todayAppointments,
     waitingPatients,
     inProgressCount,
     completedToday,
     pendingLabResults,
+    pendingLabOrderItems,
   });
 });
 
@@ -379,12 +416,17 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
     group: ['status'],
   });
 
-  // Upcoming appointments
+  // Upcoming appointments: from today to end of current month (exclude past)
+  const monthEnd = new Date();
+  monthEnd.setMonth(monthEnd.getMonth() + 1);
+  monthEnd.setDate(0);
+  monthEnd.setHours(23, 59, 59, 999);
+
   const upcomingAppointments = await Appointment.findAll({
-    where: {
+    where:{
       appointmentDate: {
         [Op.gte]: today,
-        [Op.lt]: tomorrow,
+        [Op.lte]: monthEnd,
       },
       status: {
         [Op.in]: [
@@ -393,8 +435,16 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
         ],
       },
     },
-    order: [['timeSlot', 'ASC']],
+    order: [['appointmentDate', 'ASC'], ['timeSlot', 'ASC']],
     limit: 10,
+    include: [
+      {
+        model: Patient,
+        as: 'patient',
+        attributes: ['id', 'fullName', 'phone'],
+        required: false,
+      },
+    ],
   });
 
   // Unpaid payments
@@ -452,22 +502,35 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
   // Chart 2: Trạng thái thanh toán (Doughnut Chart)
   let paymentStatusDistribution = [];
   try {
+    // Limit to current month for receptionist overview
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const nextMonth = new Date(monthStart);
+    nextMonth.setMonth(monthStart.getMonth() + 1);
+
     const allPayments = await Payment.findAll({
-      attributes: ['status'],
+      attributes: ['status', 'invoiceDate'],
+      where: {
+        invoiceDate: {
+          [Op.gte]: monthStart,
+          [Op.lt]: nextMonth,
+        },
+      },
       raw: true,
     });
-    
+
     const statusMap = {
       0: { label: 'Chưa thanh toán', count: 0 },
       1: { label: 'Đã thanh toán', count: 0 },
     };
-    
+
     allPayments.forEach(p => {
       if (statusMap[p.status] !== undefined) {
         statusMap[p.status].count += 1;
       }
     });
-    
+
     paymentStatusDistribution = Object.values(statusMap).filter(s => s.count > 0);
   } catch (err) {
     console.warn('Could not fetch payment status distribution:', err.message);
@@ -477,24 +540,37 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
   // Chart 3: Trạng thái lịch hẹn (Doughnut Chart) - with corrected status mapping
   let appointmentStatusDistribution = [];
   try {
+    // Limit to current month for receptionist overview
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const nextMonth = new Date(monthStart);
+    nextMonth.setMonth(monthStart.getMonth() + 1);
+
     const allAppointments = await Appointment.findAll({
-      attributes: ['status'],
+      attributes: ['status', 'appointmentDate'],
+      where: {
+        appointmentDate: {
+          [Op.gte]: monthStart,
+          [Op.lt]: nextMonth,
+        },
+      },
       raw: true,
     });
-    
+
     const statusMap = {
       1: { label: 'Đã đặt', count: 0 },
       2: { label: 'Chờ khám', count: 0 },
       3: { label: 'Hoàn thành', count: 0 },
       4: { label: 'Đã hủy', count: 0 },
     };
-    
+
     allAppointments.forEach(a => {
       if (statusMap[a.status] !== undefined) {
         statusMap[a.status].count += 1;
       }
     });
-    
+
     appointmentStatusDistribution = Object.values(statusMap).filter(s => s.count > 0);
   } catch (err) {
     console.warn('Could not fetch appointment status distribution:', err.message);
