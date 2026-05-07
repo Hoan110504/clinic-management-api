@@ -13,7 +13,9 @@
 import express from 'express';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { aiRateLimiter } from '../middleware/aiRateLimiter.js';
+import { aiSummaryRateLimiter } from '../middleware/aiSummaryRateLimiter.js';
 import { aiSanitizer } from '../middleware/aiSanitizer.js';
+import { validateSummarizeRequest } from '../validators/aiSummary.validator.js';
 import aiController from '../controllers/ai.controller.js';
 import { ROLES } from '../config/constants.js';
 
@@ -151,6 +153,39 @@ router.get(
   '/metrics',
   authorize(ROLES.ADMIN),
   aiController.getMetrics
+);
+
+/**
+ * @route POST /api/ai/summarize-medical-record
+ * @desc Generate AI summary for a medical record
+ * @access Doctors only (role = 2)
+ * @middleware auth → rate limiter → validator → controller
+ * 
+ * Request body:
+ * {
+ *   "medicalRecordId": 123,
+ *   "patientId": 456
+ * }
+ * 
+ * Response:
+ * {
+ *   "success": true,
+ *   "data": {
+ *     "summary": "Tiền sử: Bệnh nhân có tiền sử...",
+ *     "queryIds": ["getPatientBasicInfo", "getMedicalHistory", ...],
+ *     "generatedAt": "2024-01-15T10:30:00+07:00",
+ *     "remainingRequests": 8,
+ *     "cached": false
+ *   }
+ * }
+ * 
+ * Requirements: 7.1, 1.1, 1.2, 1.3, 1.4, 2.1, 2.2
+ */
+router.post(
+  '/summarize-medical-record',
+  aiSummaryRateLimiter,
+  validateSummarizeRequest,
+  aiController.summarizeMedicalRecord
 );
 
 export default router;

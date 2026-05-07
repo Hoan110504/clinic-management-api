@@ -16,11 +16,15 @@ import queryHandler from '../services/queryHandler.service.js';
 import conversationManager from '../services/conversationManager.js';
 import chatLogger from '../services/chatLogger.service.js';
 import metricsService from '../services/metrics.service.js';
+import medicalSummaryService from '../services/medicalSummary.service.js';
 import { getAvailableQueries } from '../config/queryWhitelist.js';
 import { getRateLimitStatus } from '../middleware/aiRateLimiter.js';
 import { AppError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
 import aiLogger, { logRequest, logError as logAiError } from '../utils/aiLogger.js';
+import models from '../models/index.js';
+
+const { MedicalExamination } = models;
 
 /**
  * Request timeout in milliseconds (30 seconds)
@@ -453,10 +457,103 @@ export const getMetrics = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/ai/summarize-medical-record
+ * 
+ * Generate AI summary for a medical record.
+ * Only accessible by doctors (role = 2).
+ * 
+ * Requirements: 1.1, 1.2, 1.3, 1.4, 7.1, 7.2, 7.5, 7.6, 7.7, 16.1-16.6
+ */
+export const summarizeMedicalRecord = async (req, res, next) => {
+  try {
+    const { medicalRecordId, patientId } = req.body;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    
+    // Verify user role is doctor (role === 2)
+    // Requirements: 1.2, 1.4
+    if (userRole !== 2) {
+      throw new AppError(
+        'Chỉ bác sĩ mới có quyền sử dụng tính năng này',
+        403,
+        'FORBIDDEN'
+      );
+    }
+    
+    // Verify medical record exists and belongs to specified patient
+    // Requirements: 7.5, 7.6
+    const examination = await MedicalExamination.findOne({
+      where: { ExaminationID: medicalRecordId },
+    });
+    
+    if (!examination) {
+      throw new AppError(
+        'Không tìm thấy phiếu khám',
+        404,
+        'RECORD_NOT_FOUND'
+      );
+    }
+    
+    if (examination.PatientId !== patientId) {
+      throw new AppError(
+        'Phiếu khám không thuộc về bệnh nhân này',
+        404,
+        'RECORD_NOT_FOUND'
+      );
+    }
+    
+    // Generate summary using medical summary service
+    // Requirements: 5.1, 5.7
+    const result = await medicalSummaryService.generateSummary(
+      medicalRecordId,
+      patientId,
+      userId,
+      userRole
+    );
+    
+    // Get remaining requests from rate limiter middleware
+    const remainingRequests = req.rateLimitInfo?.perPatientRemaining ?? 0;
+    
+    // Return success response
+    // Requirements: 7.7, 16.1, 16.2, 16.3, 16.4
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: result.summary,
+        queryIds: result.queryIds,
+        generatedAt: result.generatedAt,
+        remainingRequests,
+        cached: result.cached || false,
+      },
+    });
+    
+  } catch (error) {
+    // Map service errors to HTTP status codes
+    // Requirements: 12.1-12.6, 16.2, 16.4, 16.5, 16.6
+    if (error instanceof AppError) {
+      next(error);
+    } else {
+      // Unexpected error
+      logger.error('Unexpected error in summarizeMedicalRecord', {
+        error: error.message,
+        stack: error.stack,
+      });
+      
+      next(new AppError(
+        'Không thể tạo tóm tắt bệnh án',
+        500,
+        'INTERNAL_SERVER_ERROR'
+      ));
+    }
+  }
+};
+
 export default {
   chat,
   getHistory,
   getRateStatus,
   clearHistory,
   getMetrics,
+  summarizeMedicalRecord,
 };

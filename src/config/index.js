@@ -91,6 +91,14 @@ const config = {
   ai: {
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    summary: {
+      rateLimit: {
+        perPatient: parseInt(process.env.AI_SUMMARY_RATE_LIMIT_PER_PATIENT, 10) || 10,
+        global: parseInt(process.env.AI_SUMMARY_RATE_LIMIT_GLOBAL, 10) || 30,
+      },
+      timeout: parseInt(process.env.AI_SUMMARY_TIMEOUT_MS, 10) || 30000,
+      cacheTTL: parseInt(process.env.AI_SUMMARY_CACHE_TTL_MS, 10) || 3600000,
+    },
   },
 };
 
@@ -109,7 +117,7 @@ if (missingEnvVars.length > 0) {
 // Validate AI configuration
 if (!process.env.GEMINI_API_KEY) {
   console.warn(
-    'Warning: GEMINI_API_KEY is not set. AI Medical Chatbot features will not be available.'
+    'Warning: GEMINI_API_KEY is not set. AI Medical Chatbot and AI Medical Summary features will not be available.'
   );
 }
 
