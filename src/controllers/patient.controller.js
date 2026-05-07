@@ -392,7 +392,7 @@ const createPatient = asyncHandler(async (req, res) => {
     fullName,
     dateOfBirth,
     gender: genderToUse,
-    status: Number.isFinite(Number(status)) ? Number(status) : 0,
+    status: Number.isFinite(Number(status)) ? Number(status) : 1, // Default to 1 (Active) instead of 0
     phone,
     email: normalizedEmail,
     address,
