@@ -58,6 +58,12 @@ export default (sequelize) => {
       field: 'ImageUrl'
     },
 
+    images: {
+      type: DataTypes.TEXT('long'),
+      allowNull: true,
+      field: 'Images'
+    },
+
     conclusion: {
       type: DataTypes.STRING(1000),
       allowNull: true,

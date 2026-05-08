@@ -249,6 +249,15 @@ const toLabTestContract = async (item) => {
       labResultId: result.labResultId ?? result.LabResultID ?? null,
       resultText: result.resultText ?? result.ResultText ?? null,
       imageUrl: result.imageUrl ?? result.ImageUrl ?? null,
+      images: (() => {
+        try {
+          const raw = result.images ?? result.Images;
+          if (!raw) return (result.imageUrl ?? result.ImageUrl) ? [result.imageUrl ?? result.ImageUrl] : [];
+          return Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [raw];
+        } catch (e) {
+          return (result.imageUrl ?? result.ImageUrl) ? [result.imageUrl ?? result.ImageUrl] : [];
+        }
+      })(),
       conclusion: result.conclusion ?? result.Conclusion ?? null,
       note: result.note ?? result.Note ?? null,
       doctorId: result.doctorId ?? result.DoctorID ?? null,
@@ -626,6 +635,7 @@ const updateLabResult = asyncHandler(async (req, res) => {
     resultText,
     results,
     imageUrl,
+    images,
     conclusion,
     note,
     notes,
@@ -659,6 +669,7 @@ const updateLabResult = asyncHandler(async (req, res) => {
     const updates = {};
     if (resolvedResultText !== undefined) updates.resultText = resolvedResultText || null;
     if (imageUrl !== undefined) updates.imageUrl = imageUrl || null;
+    if (images !== undefined) updates.images = Array.isArray(images) ? JSON.stringify(images) : (images || null);
     if (conclusion !== undefined) updates.conclusion = conclusion || null;
     if (resolvedNote !== undefined) updates.note = resolvedNote || null;
     if (resultDate !== undefined) updates.resultDate = new Date(resultDate);
@@ -676,6 +687,7 @@ const updateLabResult = asyncHandler(async (req, res) => {
       serviceId,
       resultText: resolvedResultText || null,
       imageUrl: imageUrl || null,
+      images: Array.isArray(images) ? JSON.stringify(images) : (images || null),
       conclusion: conclusion || null,
       note: resolvedNote || null,
       doctorId,
