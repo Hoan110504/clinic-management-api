@@ -306,6 +306,17 @@ const getAllLabTests = asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const { status, serviceId, labOrderId, examinationId, patientId, labOrderStatus, examinationStatus, createdAtDate } = req.query;
 
+  // DEBUG LOG - xoa sau khi fix xong
+  console.log('[getAllLabTests DEBUG]', {
+    userId: req.user?.id,
+    userRole: req.user?.role,
+    userRoleType: typeof req.user?.role,
+    isDoctor: Number(req.user?.role) === ROLES.DOCTOR,
+    ROLES_DOCTOR: ROLES.DOCTOR,
+    createdAtDate,
+    queryKeys: Object.keys(req.query),
+  });
+
   const where = {};
   if (status !== undefined && status !== null && status !== '') {
     const statusNum = toLabItemStatus(status);
@@ -329,8 +340,8 @@ const getAllLabTests = asyncHandler(async (req, res) => {
     const year = Number(matched[1]);
     const month = Number(matched[2]);
     const day = Number(matched[3]);
-    const vnOffsetMs = 7 * 60 * 60 * 1000;
-    const startUtc = new Date(Date.UTC(year, month - 1, day) - vnOffsetMs);
+    //const vnOffsetMs = 7 * 60 * 60 * 1000;
+    const startUtc = new Date(Date.UTC(year, month - 1, day));
     const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000);
 
     where.createdAt = {
@@ -351,6 +362,12 @@ const getAllLabTests = asyncHandler(async (req, res) => {
         throw new BadRequestError('LabOrder status khong hop le');
       }
       labOrderWhere.status = parsedLabOrderStatus;
+    }
+
+    // Filter by the ordering doctor (LabOrders.DoctorID), not the examination's doctor.
+    // This ensures bac si sees lab tests THEY ordered, regardless of who owns the examination.
+    if (req.user && Number(req.user.role) === ROLES.DOCTOR) {
+      labOrderWhere.doctorId = req.user.id;
     }
 
     if (Object.keys(labOrderWhere).length > 0) {
@@ -376,10 +393,6 @@ const getAllLabTests = asyncHandler(async (req, res) => {
           throw new BadRequestError('Examination status khong hop le');
         }
         examinationWhere.Status = parsedExaminationStatus;
-      }
-
-      if (req.user && Number(req.user.role) === ROLES.DOCTOR) {
-        examinationWhere.DoctorID = req.user.id;
       }
 
       if (Object.keys(examinationWhere).length > 0) {
@@ -413,6 +426,14 @@ const getAllLabTests = asyncHandler(async (req, res) => {
     }
   }
 
+  // DEBUG LOG - xoa sau khi fix xong
+  const labOrderDebug = include.find(i => i?.as === 'LabOrder');
+  console.log('[getAllLabTests DEBUG] where =', JSON.stringify(where, null, 2));
+  console.log('[getAllLabTests DEBUG] labOrderInclude.where =', JSON.stringify(labOrderDebug?.where, null, 2));
+  console.log('[getAllLabTests DEBUG] labOrderInclude.required =', labOrderDebug?.required);
+  const examDebug = (labOrderDebug?.include || []).find(i => i?.as === 'examination');
+  console.log('[getAllLabTests DEBUG] examinationInclude.where =', JSON.stringify(examDebug?.where, null, 2));
+
   const items = await LabOrderItem.findAndCountAll({
     where,
     include,
@@ -421,6 +442,7 @@ const getAllLabTests = asyncHandler(async (req, res) => {
     offset,
     distinct: true,
   });
+  console.log('[getAllLabTests DEBUG] items.count =', items.count);
 
   const rows = await Promise.all(items.rows.map((item) => toLabTestContract(item)));
 
