@@ -482,12 +482,12 @@ const updateProfile = asyncHandler(async (req, res) => {
     emergencyPhone,
     emergency_phone,
   } = req.body;
-  // Normalize email: convert empty string or whitespace-only to empty string
-  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : '';
+  // Normalize email: convert empty string or whitespace-only to null
+  const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
   const user = req.user;
 
-  // Check email uniqueness if changed
-  if (normalizedEmail !== '' && normalizedEmail !== user.email) {
+  // Check email uniqueness if changed (only when a non-null email is provided)
+  if (normalizedEmail !== null && normalizedEmail !== user.email) {
     const existingEmail = await User.findOne({ where: { email: normalizedEmail } });
     if (existingEmail) {
       throw new ConflictError('Email đã được sử dụng');
@@ -498,6 +498,7 @@ const updateProfile = asyncHandler(async (req, res) => {
  await user.update({
   fullName: fullName || user.fullName,
   phone: phone || user.phone,
+  // If normalizedEmail is null, keep existing email; if it's a string, set it (allows clearing to null only via explicit null)
   email: normalizedEmail ?? user.email,
   address: address || user.address,
   signature: signature || user.signature,
