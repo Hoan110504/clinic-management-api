@@ -472,6 +472,8 @@ const updateProfile = asyncHandler(async (req, res) => {
     email,
     address,
     signature,
+    dateOfBirth,
+    gender,
     medicalHistory,
     medical_history,
     allergies,
@@ -494,23 +496,27 @@ const updateProfile = asyncHandler(async (req, res) => {
 
   // Update user
  await user.update({
-  full_name: fullName || user.full_name,
+  fullName: fullName || user.fullName,
   phone: phone || user.phone,
   email: normalizedEmail ?? user.email,
   address: address || user.address,
   signature: signature || user.signature,
+  dateOfBirth: dateOfBirth || user.dateOfBirth,
+  gender: gender || user.gender,
 });
 
   // Update patient record if exists (include medical history and allergies)
  const patientUpdate = {
-  full_name: fullName || undefined,
+  fullName: fullName || undefined,
   phone: phone || undefined,
   email: normalizedEmail ?? undefined,
   address: address || undefined,
-  medical_history: medicalHistory || undefined,
+  dateOfBirth: dateOfBirth || undefined,
+  gender: gender || undefined,
+  medicalHistory: medicalHistory || medical_history || undefined,
   allergies: allergies || undefined,
-  emergency_contact: emergencyContact || undefined,
-  emergency_phone: emergencyPhone || undefined,
+  emergencyContact: emergencyContact || emergency_contact || undefined,
+  emergencyPhone: emergencyPhone || emergency_phone || undefined,
 };
       // Remove undefined keys to avoid overwriting with null
       Object.keys(patientUpdate).forEach((k) => patientUpdate[k] === undefined && delete patientUpdate[k]);

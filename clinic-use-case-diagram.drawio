@@ -1,0 +1,341 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Clinic Use Case Diagram" id="clinic-usecase">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="2000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- System Boundary -->
+        <mxCell id="system" value="Hệ Thống Quản Lý Phòng Khám" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;verticalAlign=top;align=center;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="40" width="1000" height="1900" as="geometry" />
+        </mxCell>
+
+        <!-- Actors -->
+        <!-- Admin -->
+        <mxCell id="actor-admin" value="Quản trị viên" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="100" y="200" width="60" height="120" as="geometry" />
+        </mxCell>
+        
+        <!-- Receptionist -->
+        <mxCell id="actor-receptionist" value="Lễ tân" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="100" y="500" width="60" height="120" as="geometry" />
+        </mxCell>
+        
+        <!-- Doctor -->
+        <mxCell id="actor-doctor" value="Bác sĩ" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="100" y="900" width="60" height="120" as="geometry" />
+        </mxCell>
+        
+        <!-- Pharmacist -->
+        <mxCell id="actor-pharmacist" value="Dược sĩ" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="700" width="60" height="120" as="geometry" />
+        </mxCell>
+        
+        <!-- Patient -->
+        <mxCell id="actor-patient" value="Bệnh nhân" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="1400" width="60" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Use Cases - Admin Section -->
+        <mxCell id="uc-user-management" value="Quản lý người dùng" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="80" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-reports" value="Xem báo cáo thống kê" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="160" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-system-config" value="Cấu hình hệ thống" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="240" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-all-data" value="Xem toàn bộ dữ liệu" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="320" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Separator Line 1 -->
+        <mxCell id="separator1" value="" style="line;strokeWidth=2;html=1;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="320" y="400" width="960" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- Use Cases - Receptionist Section -->
+        <mxCell id="uc-register-patient" value="Đăng ký bệnh nhân" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="430" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-manage-appointments" value="Quản lý lịch hẹn" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="510" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-checkin-patient" value="Check-in bệnh nhân" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="590" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-process-payment" value="Xử lý thanh toán" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="670" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-patient-info" value="Xem thông tin bệnh nhân" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="750" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Separator Line 2 -->
+        <mxCell id="separator2" value="" style="line;strokeWidth=2;html=1;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="320" y="840" width="960" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- Use Cases - Doctor Section -->
+        <mxCell id="uc-view-queue" value="Xem hàng đợi khám" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="870" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-start-examination" value="Bắt đầu khám bệnh" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="950" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-record-vitals" value="Ghi nhận sinh hiệu" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1030" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-diagnose" value="Chẩn đoán bệnh" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1110" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-create-prescription" value="Kê đơn thuốc" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1190" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-order-lab-tests" value="Chỉ định xét nghiệm" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1270" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-lab-results" value="Xem kết quả xét nghiệm" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1350" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-ai-summary" value="Tạo tóm tắt AI" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1430" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-complete-exam" value="Hoàn thành khám" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1510" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Separator Line 3 -->
+        <mxCell id="separator3" value="" style="line;strokeWidth=2;html=1;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="320" y="1600" width="960" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- Use Cases - Pharmacist Section -->
+        <mxCell id="uc-view-prescriptions" value="Xem đơn thuốc chờ" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="630" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-dispense-medicine" value="Phát thuốc" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="710" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-manage-inventory" value="Quản lý kho thuốc" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="790" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-check-stock" value="Kiểm tra tồn kho" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="870" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Separator Line 4 -->
+        <mxCell id="separator4" value="" style="line;strokeWidth=2;html=1;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="320" y="960" width="960" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- Use Cases - Patient Section -->
+        <mxCell id="uc-patient-register" value="Đăng ký tài khoản" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1000" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-book-appointment" value="Đặt lịch hẹn" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1080" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-appointments" value="Xem lịch hẹn của tôi" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1160" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-cancel-appointment" value="Hủy lịch hẹn" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1240" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-medical-records" value="Xem hồ sơ bệnh án" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1320" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-prescriptions-patient" value="Xem đơn thuốc" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1400" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-lab-results-patient" value="Xem kết quả xét nghiệm" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1480" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-view-payments" value="Xem lịch sử thanh toán" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1560" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-update-profile" value="Cập nhật thông tin cá nhân" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1640" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Separator Line 5 -->
+        <mxCell id="separator5" value="" style="line;strokeWidth=2;html=1;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="320" y="1730" width="960" height="10" as="geometry" />
+        </mxCell>
+
+        <!-- Use Cases - Common/AI Section -->
+        <mxCell id="uc-ai-chat" value="Trò chuyện với AI" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="1760" width="200" height="60" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="uc-change-password" value="Đổi mật khẩu" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="1840" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Connections - Admin -->
+        <mxCell id="conn-admin-1" edge="1" parent="1" source="actor-admin" target="uc-user-management">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-admin-2" edge="1" parent="1" source="actor-admin" target="uc-view-reports">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-admin-3" edge="1" parent="1" source="actor-admin" target="uc-system-config">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-admin-4" edge="1" parent="1" source="actor-admin" target="uc-view-all-data">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Connections - Receptionist -->
+        <mxCell id="conn-recep-1" edge="1" parent="1" source="actor-receptionist" target="uc-register-patient">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-recep-2" edge="1" parent="1" source="actor-receptionist" target="uc-manage-appointments">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-recep-3" edge="1" parent="1" source="actor-receptionist" target="uc-checkin-patient">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-recep-4" edge="1" parent="1" source="actor-receptionist" target="uc-process-payment">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-recep-5" edge="1" parent="1" source="actor-receptionist" target="uc-view-patient-info">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Connections - Doctor -->
+        <mxCell id="conn-doctor-1" edge="1" parent="1" source="actor-doctor" target="uc-view-queue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-2" edge="1" parent="1" source="actor-doctor" target="uc-start-examination">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-3" edge="1" parent="1" source="actor-doctor" target="uc-record-vitals">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-4" edge="1" parent="1" source="actor-doctor" target="uc-diagnose">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-5" edge="1" parent="1" source="actor-doctor" target="uc-create-prescription">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-6" edge="1" parent="1" source="actor-doctor" target="uc-order-lab-tests">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-7" edge="1" parent="1" source="actor-doctor" target="uc-view-lab-results">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-8" edge="1" parent="1" source="actor-doctor" target="uc-ai-summary">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-9" edge="1" parent="1" source="actor-doctor" target="uc-complete-exam">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Connections - Pharmacist -->
+        <mxCell id="conn-pharm-1" edge="1" parent="1" source="actor-pharmacist" target="uc-view-prescriptions">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-pharm-2" edge="1" parent="1" source="actor-pharmacist" target="uc-dispense-medicine">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-pharm-3" edge="1" parent="1" source="actor-pharmacist" target="uc-manage-inventory">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-pharm-4" edge="1" parent="1" source="actor-pharmacist" target="uc-check-stock">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Connections - Patient -->
+        <mxCell id="conn-patient-1" edge="1" parent="1" source="actor-patient" target="uc-patient-register">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-2" edge="1" parent="1" source="actor-patient" target="uc-book-appointment">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-3" edge="1" parent="1" source="actor-patient" target="uc-view-appointments">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-4" edge="1" parent="1" source="actor-patient" target="uc-cancel-appointment">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-5" edge="1" parent="1" source="actor-patient" target="uc-view-medical-records">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-6" edge="1" parent="1" source="actor-patient" target="uc-view-prescriptions-patient">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-7" edge="1" parent="1" source="actor-patient" target="uc-view-lab-results-patient">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-8" edge="1" parent="1" source="actor-patient" target="uc-view-payments">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-9" edge="1" parent="1" source="actor-patient" target="uc-update-profile">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Connections - Common features (all actors) -->
+        <mxCell id="conn-admin-ai" edge="1" parent="1" source="actor-admin" target="uc-ai-chat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-recep-ai" edge="1" parent="1" source="actor-receptionist" target="uc-ai-chat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-ai" edge="1" parent="1" source="actor-doctor" target="uc-ai-chat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-pharm-ai" edge="1" parent="1" source="actor-pharmacist" target="uc-ai-chat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-ai" edge="1" parent="1" source="actor-patient" target="uc-ai-chat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn-admin-pwd" edge="1" parent="1" source="actor-admin" target="uc-change-password">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-recep-pwd" edge="1" parent="1" source="actor-receptionist" target="uc-change-password">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-doctor-pwd" edge="1" parent="1" source="actor-doctor" target="uc-change-password">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-pharm-pwd" edge="1" parent="1" source="actor-pharmacist" target="uc-change-password">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="conn-patient-pwd" edge="1" parent="1" source="actor-patient" target="uc-change-password">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
