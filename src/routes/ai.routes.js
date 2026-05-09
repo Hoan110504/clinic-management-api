@@ -188,4 +188,15 @@ router.post(
   aiController.summarizeMedicalRecord
 );
 
+/**
+ * @route POST /api/ai/check-prescription
+ * @desc Check prescription safety using AI
+ * @access Doctors only (role = 2)
+ */
+router.post(
+  '/check-prescription',
+  authorize(ROLES.DOCTOR),
+  aiController.checkPrescriptionSafety
+);
+
 export default router;

@@ -22,7 +22,8 @@ import { getRateLimitStatus } from '../middleware/aiRateLimiter.js';
 import { AppError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
 import aiLogger, { logRequest, logError as logAiError } from '../utils/aiLogger.js';
-import models from '../models/index.js';
+import models, { Sequelize } from '../models/index.js';
+import patientSafetyService from '../services/patientSafetyService.js';
 
 const { MedicalExamination } = models;
 
@@ -549,6 +550,102 @@ export const summarizeMedicalRecord = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/ai/check-prescription
+ * 
+ * Check prescription safety using AI.
+ * Takes patient information and a list of medicines to check for interactions.
+ * Accessible by doctors (role = 2).
+ */
+export const checkPrescriptionSafety = async (req, res, next) => {
+  try {
+    const { patientId, medicines, currentDiagnosis } = req.body;
+    const userRole = req.user.role;
+    
+    if (userRole !== 2) {
+      throw new AppError(
+        'Chỉ bác sĩ mới có quyền sử dụng tính năng này',
+        403,
+        'FORBIDDEN'
+      );
+    }
+    
+    if (!medicines || !Array.isArray(medicines) || medicines.length === 0) {
+      throw new AppError('Danh sách thuốc không được để trống', 400, 'INVALID_INPUT');
+    }
+
+    // Fetch patient data for medical history and allergies
+    const patientRecord = await models.Patient.findByPk(patientId);
+    let patientData = { currentDiagnosis };
+    
+    if (patientRecord) {
+      // Calculate age
+      let age = null;
+      if (patientRecord.dateOfBirth) {
+        const diffMs = Date.now() - new Date(patientRecord.dateOfBirth).getTime();
+        const ageDt = new Date(diffMs); 
+        age = Math.abs(ageDt.getUTCFullYear() - 1970);
+      }
+
+      patientData = {
+        ...patientData,
+        medicalHistory: patientRecord.medicalHistory,
+        allergies: patientRecord.allergies,
+        age,
+        gender: patientRecord.gender === 'M' ? 'Nam' : (patientRecord.gender === 'F' ? 'Nữ' : null)
+      };
+    }
+
+    // Fetch existing medications from DB (last 30 days, non-cancelled)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const existingPrescriptions = await models.Prescription.findAll({
+      where: {
+        Status: { [Sequelize.Op.in]: [0, 1] },
+        PrescriptionDate: { [Sequelize.Op.gte]: thirtyDaysAgo }
+      },
+      include: [
+        {
+          model: models.MedicalExamination,
+          as: 'examination',
+          where: { PatientId: patientId },
+          required: true
+        },
+        {
+          model: models.PrescriptionItem,
+          as: 'prescriptionItems',
+          include: [{ model: models.Medicine, as: 'medicine' }]
+        }
+      ]
+    });
+
+    const existingMedicines = [];
+    existingPrescriptions.forEach(p => {
+      if (p.prescriptionItems) {
+        p.prescriptionItems.forEach(item => {
+          existingMedicines.push({
+            medicineName: item.medicine?.name || 'Không rõ',
+            dosage: item.dosage,
+            instructions: item.instructions
+          });
+        });
+      }
+    });
+
+    // Call safety service with both new and existing medications
+    const safetyReport = await patientSafetyService.checkPrescriptionSafety(patientData, medicines, existingMedicines);
+
+    res.status(200).json({
+      success: true,
+      data: safetyReport
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   chat,
   getHistory,
@@ -556,4 +653,5 @@ export default {
   clearHistory,
   getMetrics,
   summarizeMedicalRecord,
+  checkPrescriptionSafety,
 };

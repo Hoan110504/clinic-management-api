@@ -262,7 +262,9 @@ const getAllPrescriptions = asyncHandler(async (req, res) => {
 
 const getPrescriptionById = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const prescription = await Prescription.findOne({ where: { prescriptionId: id }, include: buildPrescriptionIncludes() });
+  const numId = toIntOrNull(id);
+  if (!numId) throw new NotFoundError('Không tìm thấy đơn thuốc (ID không hợp lệ)');
+  const prescription = await Prescription.findOne({ where: { prescriptionId: numId }, include: buildPrescriptionIncludes() });
   if (!prescription) throw new NotFoundError('Không tìm thấy đơn thuốc');
   return successResponse(res, mapPrescriptionRow(prescription));
 });
