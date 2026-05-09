@@ -16,6 +16,8 @@ import { sequelize } from '../models/database.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
 import { APPOINTMENT_STATUS, ROLES, TIME_SLOTS } from '../config/constants.js';
+import * as socketService from '../socket/index.js';
+
 
 // Precompute valid status values and a small mapping for common code keys
 const VALID_APPOINTMENT_STATUSES = Object.values(APPOINTMENT_STATUS || {});
@@ -597,30 +599,16 @@ const createAppointment = asyncHandler(async (req, res) => {
     // ignore
   }
 
-  // Emit real-time notification via Socket.IO to receptionists
+  // Emit real-time notification via Socket.IO to receptionists and admins
   try {
     const io = req.app?.get?.('io');
     if (io) {
       const appointmentPlain = appointment.get ? appointment.get({ plain: true }) : appointment;
-      io.to('receptionists').emit('appointment:new', {
-        appointment: appointmentPlain,
-        message: `Có lịch hẹn mới: ${appointmentPlain.patientName || 'Bệnh nhân'} - ${appointmentPlain.appointmentDate} ${appointmentPlain.timeSlot}`,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Notify the patient who created the appointment
-      if (req.user?.id) {
-        io.to(`patient:${req.user.id}`).emit('appointment:confirmed', {
-          appointment: appointmentPlain,
-          message: 'Đã đặt lịch khám thành công',
-          timestamp: new Date().toISOString(),
-        });
-      }
+      socketService.emitAppointmentCreated(io, appointmentPlain);
       logger.info(`[Appointment] New appointment created and broadcasted: ${appointment.id}`);
     }
   } catch (error) {
     logger.warn('[Appointment] Socket.IO broadcast failed:', error.message);
-    // Don't throw - appointment creation should succeed even if socket fails
   }
 
   const responsePayload = appointment.get ? appointment.get({ plain: true }) : appointment;
@@ -767,7 +755,18 @@ const cancelAppointment = asyncHandler(async (req, res) => {
     throw e;
   }
 
+  // Emit real-time notification via Socket.IO
+  try {
+    const io = req.app?.get?.('io');
+    if (io) {
+      socketService.emitAppointmentCancelled(io, appointment);
+    }
+  } catch (error) {
+    logger.warn('[Appointment] Socket.IO cancel broadcast failed:', error.message);
+  }
+
   return successResponse(res, appointment, 'Hủy lịch hẹn thành công');
+
 });
 
 /**
@@ -803,6 +802,17 @@ const confirmAppointment = asyncHandler(async (req, res) => {
       status: confirmedStatusCode,
       confirmedAt: new Date(),
     });
+
+    // Emit real-time notification to patient and staff
+    try {
+      const io = req.app?.get?.('io');
+      if (io) {
+        socketService.emitAppointmentConfirmed(io, appointment);
+      }
+    } catch (error) {
+      logger.warn('[Appointment] Socket.IO confirm broadcast failed:', error.message);
+    }
+
   } catch (e) {
     console.error('confirmAppointment: DB update failed. attempted status=', confirmedStatus, e?.message || e);
     throw e;
@@ -854,7 +864,19 @@ const checkInAppointment = asyncHandler(async (req, res) => {
     );
 
     await tx.commit();
+
+    // Emit real-time notification to doctors
+    try {
+      const io = req.app?.get?.('io');
+      if (io) {
+        socketService.emitPatientArrived(io, plain);
+      }
+    } catch (error) {
+      logger.warn('[Appointment] Socket.IO check-in broadcast failed:', error.message);
+    }
+
     return successResponse(res, plain, 'Check-in thành công');
+
   } catch (e) {
     await tx.rollback();
     throw e;

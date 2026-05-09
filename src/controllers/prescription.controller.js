@@ -11,6 +11,8 @@ import { formatToVietnamISOString } from '../utils/timezone.js';
 import { successResponse, createdResponse, paginatedResponse, noContentResponse } from '../utils/response.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { ROLES } from '../config/constants.js';
+import * as socketService from '../socket/index.js';
+
 
 const firstDefined = (...values) => values.find((v) => v !== undefined && v !== null);
 
@@ -341,7 +343,21 @@ const createPrescription = asyncHandler(async (req, res) => {
     });
 
     await tx.commit();
-    return createdResponse(res, mapPrescriptionRow(created || prescription), 'Tạo đơn thuốc thành công');
+
+    const responseData = mapPrescriptionRow(created || prescription);
+
+    // Emit real-time notification to pharmacists
+    try {
+      const io = req.app?.get?.('io');
+      if (io) {
+        socketService.emitPrescriptionCreated(io, responseData);
+      }
+    } catch (error) {
+      logger.warn('[Prescription] Socket.IO creation broadcast failed:', error.message);
+    }
+
+    return createdResponse(res, responseData, 'Tạo đơn thuốc thành công');
+
   } catch (err) {
     try { await tx.rollback(); } catch (e) { /* ignore */ }
     throw err;
@@ -665,7 +681,21 @@ const dispensePrescription = asyncHandler(async (req, res) => {
     });
 
     await tx.commit();
-    return successResponse(res, mapPrescriptionRow(fresh || prescription), 'Xác nhận phát thuốc thành công');
+
+    const responseDataDispensed = mapPrescriptionRow(fresh || prescription);
+
+    // Emit real-time notification to doctors
+    try {
+      const io = req.app?.get?.('io');
+      if (io) {
+        socketService.emitPrescriptionDispensed(io, responseDataDispensed);
+      }
+    } catch (error) {
+      logger.warn('[Prescription] Socket.IO dispense broadcast failed:', error.message);
+    }
+
+    return successResponse(res, responseDataDispensed, 'Xác nhận phát thuốc thành công');
+
   } catch (err) {
     try { await tx.rollback(); } catch (_e) { /* ignore */ }
     throw err;
