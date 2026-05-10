@@ -166,6 +166,11 @@ export default (sequelize) => {
         allowNull: true,
         field: 'cancel_reason',
       },
+      specialRequests: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        field: 'special_requests',
+      },
       cancelledBy: {
         type: DataTypes.BIGINT,
         allowNull: true,
@@ -175,24 +180,12 @@ export default (sequelize) => {
           key: 'id',
         },
       },
-      rescheduledFrom: {
-        type: DataTypes.DATEONLY,
-        allowNull: true,
-        field: 'rescheduled_from',
-      },
-      rescheduledAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: 'rescheduled_at',
-      },
     },
     {
       tableName: 'Appointments',
       timestamps: true,
-      paranoid: true,
       createdAt: 'created_at',
       updatedAt: 'updated_at',
-      deletedAt: 'deleted_at',
       indexes: [
         { fields: ['patient_id'] },
         { fields: ['appointment_date'] },

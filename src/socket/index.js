@@ -1,5 +1,6 @@
 import logger from '../utils/logger.js';
 import { ROLES } from '../config/constants.js';
+import { Notification } from '../models/index.js';
 
 const activeUsers = new Map(); // Map of userId -> socketId
 
@@ -18,19 +19,19 @@ export function setupSocketIO(io) {
       logger.info(`[Socket] User ${userId} (role: ${role}) joined with socket ${socket.id}`);
 
       // Join rooms based on role for targeted broadcasts
-      if (role === ROLES.ADMIN) {
+      if (Number(role) === ROLES.ADMIN) {
         socket.join('admins');
         logger.info(`[Socket] Admin ${userId} joined 'admins' room`);
-      } else if (role === ROLES.DOCTOR) {
+      } else if (Number(role) === ROLES.DOCTOR) {
         socket.join('doctors');
         logger.info(`[Socket] Doctor ${userId} joined 'doctors' room`);
-      } else if (role === ROLES.RECEPTIONIST) {
+      } else if (Number(role) === ROLES.RECEPTIONIST) {
         socket.join('receptionists');
         logger.info(`[Socket] Receptionist ${userId} joined 'receptionists' room`);
-      } else if (role === ROLES.PHARMACIST) {
+      } else if (Number(role) === ROLES.PHARMACIST) {
         socket.join('pharmacists');
         logger.info(`[Socket] Pharmacist ${userId} joined 'pharmacists' room`);
-      } else if (role === ROLES.PATIENT) {
+      } else if (Number(role) === ROLES.PATIENT) {
         socket.join(`patient:${userId}`);
         logger.info(`[Socket] Patient ${userId} joined patient-specific room`);
       }
@@ -53,17 +54,86 @@ export function setupSocketIO(io) {
 }
 
 /**
- * Requirement 1: Patient Book Appointment
+ * Helper to save and emit notification
+ */
+async function createAndEmitNotification(io, { targetRoles = [], userId = null, title, content, type, relatedId }) {
+  try {
+    let savedNotification = null;
+
+    // Save to database for each target role or specific user
+    if (targetRoles.length > 0) {
+      for (const roleId of targetRoles) {
+        savedNotification = await Notification.create({
+          role: String(roleId),
+          title,
+          content,
+          type,
+          relatedId: String(relatedId),
+          isRead: false
+        });
+      }
+    } else if (userId) {
+      savedNotification = await Notification.create({
+        userId,
+        title,
+        content,
+        type,
+        relatedId: String(relatedId),
+        isRead: false
+      });
+    }
+
+    if (!savedNotification) return;
+
+    // Use the saved object for socket data (ensures id and createdAt are present)
+    const socketData = savedNotification.get ? savedNotification.get({ plain: true }) : savedNotification;
+
+    // Emit to rooms
+    let emitter = io;
+    if (targetRoles.includes(ROLES.ADMIN)) emitter = emitter.to('admins');
+    if (targetRoles.includes(ROLES.RECEPTIONIST)) emitter = emitter.to('receptionists');
+    if (targetRoles.includes(ROLES.DOCTOR)) emitter = emitter.to('doctors');
+    if (targetRoles.includes(ROLES.PHARMACIST)) emitter = emitter.to('pharmacists');
+    
+    if (userId) {
+      emitter = emitter.to(`patient:${userId}`);
+    }
+
+    // Final check to avoid broadcasting to everyone if no target was set
+    if (targetRoles.length > 0 || userId) {
+      emitter.emit('notification:new', socketData);
+      logger.info(`[Socket] Notification emitted: ${type} to ${targetRoles.length > 0 ? 'roles ' + targetRoles.join(',') : 'user ' + userId}`);
+    }
+    
+  } catch (error) {
+    logger.error('[Socket] createAndEmitNotification error:', error);
+  }
+}
+
+/**
+ * Requirement: Patient Book Appointment
  * Broadcast to: Receptionists and Admins
  */
-export function emitAppointmentCreated(io, appointment) {
+export async function emitAppointmentCreated(io, appointment) {
   try {
+    const title = 'Lịch hẹn mới';
+    const content = `Bệnh nhân ${appointment.patientName} vừa đặt một lịch hẹn mới.`;
+    
+    await createAndEmitNotification(io, {
+      targetRoles: [ROLES.RECEPTIONIST, ROLES.ADMIN],
+      title,
+      content,
+      type: 'APPOINTMENT_NEW',
+      relatedId: appointment.id
+    });
+
+    // Still emit specific event for legacy/other listeners
     const data = {
       appointmentId: appointment.id,
       appointmentCode: appointment.appointmentId || appointment.AppointmentID,
       patientName: appointment.patientName,
-      message: `Có lịch hẹn #${appointment.appointmentId || appointment.id} mới`,
-      appointment, // Include full object
+      message: content,
+      appointment,
       timestamp: new Date().toISOString(),
       type: 'APPOINTMENT_NEW',
     };
@@ -75,21 +145,32 @@ export function emitAppointmentCreated(io, appointment) {
 }
 
 /**
- * Requirement 2: Patient Cancel Appointment
- * Broadcast to: Receptionists and Admins
+ * Requirement: Patient/Staff Cancel Appointment
+ * Broadcast to: Receptionists, Admins, and Doctors
  */
-export function emitAppointmentCancelled(io, appointment) {
+export async function emitAppointmentCancelled(io, appointment) {
   try {
+    const title = 'Lịch hẹn bị hủy';
+    const content = `Lịch hẹn của bệnh nhân ${appointment.patientName} đã bị hủy.`;
+
+    await createAndEmitNotification(io, {
+      targetRoles: [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.DOCTOR],
+      title,
+      content,
+      type: 'APPOINTMENT_CANCELLED',
+      relatedId: appointment.id
+    });
+
     const data = {
       appointmentId: appointment.id,
       appointmentCode: appointment.appointmentId || appointment.AppointmentID,
       patientName: appointment.patientName,
-      message: `Bệnh nhân hủy lịch hẹn #${appointment.appointmentId || appointment.id}`,
-      appointment, // Include full object
+      message: content,
+      appointment,
       timestamp: new Date().toISOString(),
       type: 'APPOINTMENT_CANCELLED',
     };
-    io.to('receptionists').to('admins').emit('appointment:cancelled', data);
+    io.to('receptionists').to('admins').to('doctors').emit('appointment:cancelled', data);
     logger.info(`[Socket Emit] Appointment cancelled: ${appointment.id}`);
   } catch (error) {
     logger.error('[Socket Emit Error] emitAppointmentCancelled:', error);
@@ -100,25 +181,32 @@ export function emitAppointmentCancelled(io, appointment) {
  * Custom: Appointment Confirmed
  * Broadcast to: Patient and Staff
  */
-export function emitAppointmentConfirmed(io, appointment) {
+export async function emitAppointmentConfirmed(io, appointment) {
   try {
+    const title = 'Lịch hẹn đã xác nhận';
+    const content = `Lịch hẹn ngày ${appointment.appointmentDate} đã được xác nhận.`;
+
+    // Notify Patient (if userId is available)
+    // We might need to look up the userId for this patientId
+    // For now, if appointment has userId (some schemas do)
+    if (appointment.userId) {
+       await createAndEmitNotification(io, {
+        userId: appointment.userId,
+        title,
+        content,
+        type: 'APPOINTMENT_CONFIRMED',
+        relatedId: appointment.id
+      });
+    }
+
     const data = {
       appointmentId: appointment.id,
-      message: `Lịch hẹn #${appointment.id} đã được xác nhận`,
+      message: content,
       appointment,
       timestamp: new Date().toISOString(),
       type: 'APPOINTMENT_CONFIRMED',
     };
-    // Send to specific patient
-    if (appointment.patientId) {
-      // Assuming patientId in appointment links to a Patient, but we need User ID for the room
-      // If we don't have User ID here, we might need to pass it or just broadcast and let frontend filter
-      // For now, let's assume rooms are joined by patientId or we broadcast to all patients (less ideal)
-      // Actually, my setupSocketIO joins 'patient:${userId}'
-      // Let's broadcast to 'patients' room if exists, or just rely on global filtering if needed
-      io.to('patients').emit('appointment:confirmed', data);
-    }
-    // Also notify staff
+    
     io.to('receptionists').to('admins').emit('appointment:status-changed', data);
     logger.info(`[Socket Emit] Appointment confirmed: ${appointment.id}`);
   } catch (error) {
@@ -127,17 +215,28 @@ export function emitAppointmentConfirmed(io, appointment) {
 }
 
 /**
- * Requirement 3: Receptionist Confirm Arrived
+ * Requirement: Receptionist Confirm Arrived
  * Broadcast to: Doctors
  */
-export function emitPatientArrived(io, appointment) {
+export async function emitPatientArrived(io, appointment) {
   try {
+    const title = 'Bệnh nhân đã tới';
+    const content = `Bệnh nhân ${appointment.patientName} đã có mặt tại phòng khám.`;
+
+    await createAndEmitNotification(io, {
+      targetRoles: [ROLES.DOCTOR],
+      title,
+      content,
+      type: 'PATIENT_ARRIVED',
+      relatedId: appointment.id
+    });
+
     const data = {
       appointmentId: appointment.id,
       appointmentCode: appointment.appointmentId || appointment.AppointmentID,
       patientName: appointment.patientName,
-      message: `Bệnh nhân ${appointment.patientName} đã tới`,
-      appointment, // Include full object
+      message: content,
+      appointment,
       timestamp: new Date().toISOString(),
       type: 'PATIENT_ARRIVED',
     };
@@ -149,15 +248,26 @@ export function emitPatientArrived(io, appointment) {
 }
 
 /**
- * Requirement 4: Doctor Confirm Prescription
+ * Requirement: Doctor Confirm Prescription
  * Broadcast to: Pharmacists
  */
-export function emitPrescriptionCreated(io, prescription) {
+export async function emitPrescriptionCreated(io, prescription) {
   try {
+    const title = 'Có đơn thuốc mới';
+    const content = `Đơn thuốc mới cho bệnh nhân ${prescription.patientName || 'n/a'}.`;
+
+    await createAndEmitNotification(io, {
+      targetRoles: [ROLES.PHARMACIST],
+      title,
+      content,
+      type: 'PRESCRIPTION_NEW',
+      relatedId: prescription.id || prescription.prescriptionId
+    });
+
     const data = {
       prescriptionId: prescription.id || prescription.prescriptionId,
-      message: `Có đơn thuốc #${prescription.id || prescription.prescriptionId} mới`,
-      prescription, // Include full object
+      message: content,
+      prescription,
       timestamp: new Date().toISOString(),
       type: 'PRESCRIPTION_NEW',
     };
@@ -169,15 +279,26 @@ export function emitPrescriptionCreated(io, prescription) {
 }
 
 /**
- * Requirement 5: Pharmacist Confirm Dispense
+ * Requirement: Pharmacist Confirm Dispense
  * Broadcast to: Doctors
  */
-export function emitPrescriptionDispensed(io, prescription) {
+export async function emitPrescriptionDispensed(io, prescription) {
   try {
+    const title = 'Đơn thuốc đã phát';
+    const content = `Đơn thuốc #${prescription.id || prescription.prescriptionId} đã được phát cho bệnh nhân.`;
+
+    await createAndEmitNotification(io, {
+      targetRoles: [ROLES.DOCTOR],
+      title,
+      content,
+      type: 'PRESCRIPTION_DISPENSED',
+      relatedId: prescription.id || prescription.prescriptionId
+    });
+
     const data = {
       prescriptionId: prescription.id || prescription.prescriptionId,
-      message: `Đơn thuốc #${prescription.id || prescription.prescriptionId} đã được phát`,
-      prescription, // Include full object
+      message: content,
+      prescription,
       timestamp: new Date().toISOString(),
       type: 'PRESCRIPTION_DISPENSED',
     };
@@ -187,7 +308,6 @@ export function emitPrescriptionDispensed(io, prescription) {
     logger.error('[Socket Emit Error] emitPrescriptionDispensed:', error);
   }
 }
-
 
 export { activeUsers };
 

@@ -17,6 +17,7 @@ import inventoryRoutes from './inventory.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import medicalRecordRoutes from './medicalRecord.routes.js';
 import aiRoutes from './ai.routes.js';
+import notificationRoutes from './notification.routes.js';
 import { sequelize } from '../models/database.js';
 import { QueryTypes } from 'sequelize';
 
@@ -61,5 +62,6 @@ router.use('/inventory', inventoryRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/medical-records', medicalRecordRoutes);
 router.use('/ai', aiRoutes);
+router.use('/notifications', notificationRoutes);
 
 export default router;

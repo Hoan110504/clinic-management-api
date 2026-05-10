@@ -95,3 +95,6 @@ export const MedicineBatch = models.MedicineBatch;
 // Export AiChatLog for AI Medical Chatbot feature
 export const AiChatLog = models.AiChatLog;
 
+// Export Notification for real-time notification feature
+export const Notification = models.Notification;
+

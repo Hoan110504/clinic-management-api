@@ -433,6 +433,7 @@ const createAppointment = asyncHandler(async (req, res) => {
     source,
     patientNotes,
     internalNotes,
+    specialRequests,
   } = req.body;
 
   // Kiểm tra trùng lịch: cùng bác sĩ, cùng ngày, cùng khung giờ
@@ -485,6 +486,7 @@ const createAppointment = asyncHandler(async (req, res) => {
     source: source || 'Offline',
     patientNotes,
     internalNotes,
+    specialRequests,
   };
 
   // If the requester is a PATIENT, ensure the appointment is linked to their canonical Patient record
@@ -749,6 +751,7 @@ const cancelAppointment = asyncHandler(async (req, res) => {
       status: cancelStatusCode,
       cancelledAt: new Date(),
       cancelReason: reason,
+      cancelledBy: req.user?.id || null,
     });
   } catch (e) {
     console.error('cancelAppointment: DB update failed. attempted status=', cancelStatus, e?.message || e);
