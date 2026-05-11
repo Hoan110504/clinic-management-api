@@ -606,8 +606,9 @@ const createAppointment = asyncHandler(async (req, res) => {
     const io = req.app?.get?.('io');
     if (io) {
       const appointmentPlain = appointment.get ? appointment.get({ plain: true }) : appointment;
-      socketService.emitAppointmentCreated(io, appointmentPlain);
-      logger.info(`[Appointment] New appointment created and broadcasted: ${appointment.id}`);
+      // Pass the source to determine if toast should be shown
+      socketService.emitAppointmentCreated(io, appointmentPlain, req.user?.role);
+      logger.info(`[Appointment] New appointment created and broadcasted: ${appointment.id}, source: ${appointmentPlain.source}`);
     }
   } catch (error) {
     logger.warn('[Appointment] Socket.IO broadcast failed:', error.message);
@@ -762,7 +763,9 @@ const cancelAppointment = asyncHandler(async (req, res) => {
   try {
     const io = req.app?.get?.('io');
     if (io) {
-      socketService.emitAppointmentCancelled(io, appointment);
+      const appointmentPlain = appointment.get ? appointment.get({ plain: true }) : appointment;
+      socketService.emitAppointmentCancelled(io, appointmentPlain, req.user?.role);
+      logger.info(`[Appointment] Appointment cancelled and broadcasted: ${appointment.id}, cancelledByRole: ${req.user?.role}`);
     }
   } catch (error) {
     logger.warn('[Appointment] Socket.IO cancel broadcast failed:', error.message);

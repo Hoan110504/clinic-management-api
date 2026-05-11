@@ -129,13 +129,22 @@ async function createAndEmitNotification(io, { targetRoles = [], userId = null, 
 /**
  * Requirement: Patient Book Appointment
  * Broadcast to: Receptionists, Admins, and Assigned Doctor (by UserID)
+ * @param {Object} io - Socket.IO instance
+ * @param {Object} appointment - Appointment object
+ * @param {Number} creatorRole - Role of the user who created the appointment
  */
-export async function emitAppointmentCreated(io, appointment) {
+export async function emitAppointmentCreated(io, appointment, creatorRole = null) {
   try {
     const title = 'Lịch hẹn mới';
     const content = `Bệnh nhân ${appointment.patientName} vừa đặt một lịch hẹn mới.`;
     
+    // Determine if toast should be shown based on source
+    // Online (Patient) = show toast for everyone
+    // Offline (Staff) = show toast only for Doctor, not for Receptionist/Admin
+    const isOnline = appointment.source === 'Online';
+    
     logger.info(`[Socket Emit] emitAppointmentCreated called for appointment ${appointment.id}`);
+    logger.info(`[Socket Emit] source: ${appointment.source}, isOnline: ${isOnline}`);
     logger.info(`[Socket Emit] assignedDoctorId: ${appointment.assignedDoctorId}, preferredDoctorId: ${appointment.preferredDoctorId}`);
     
     // Notify receptionists and admins
@@ -178,9 +187,12 @@ export async function emitAppointmentCreated(io, appointment) {
           appointment,
           timestamp: new Date().toISOString(),
           type: 'APPOINTMENT_NEW',
+          showToastForDoctor: true, // Doctor always gets toast
+          showToastForStaff: isOnline, // Staff only gets toast if patient created
+          source: appointment.source,
         };
         io.to(doctorSocketId).emit('appointment:new', data);
-        logger.info(`[Socket Emit] ✅ Appointment created notification sent to doctor ${doctorId} via socket ${doctorSocketId}`);
+        logger.info(`[Socket Emit] ✅ Appointment created notification sent to doctor ${doctorId} (showToast: true)`);
       } else {
         logger.warn(`[Socket Emit] ⚠️ Doctor ${doctorId} is not connected (no socket found in activeUsers Map)`);
         logger.warn(`[Socket Emit] ⚠️ Available keys in activeUsers: ${JSON.stringify(Array.from(activeUsers.keys()))}`);
@@ -189,7 +201,7 @@ export async function emitAppointmentCreated(io, appointment) {
       logger.warn(`[Socket Emit] ⚠️ No assigned doctor for appointment ${appointment.id}`);
     }
 
-    // Still emit specific event for legacy/other listeners (receptionists/admins)
+    // Emit to receptionists and admins
     const data = {
       appointmentId: appointment.id,
       appointmentCode: appointment.appointmentId || appointment.AppointmentID,
@@ -198,10 +210,13 @@ export async function emitAppointmentCreated(io, appointment) {
       appointment,
       timestamp: new Date().toISOString(),
       type: 'APPOINTMENT_NEW',
+      showToastForDoctor: true, // Doctor always gets toast
+      showToastForStaff: isOnline, // Staff only gets toast if patient created
+      source: appointment.source,
     };
     io.to('receptionists').to('admins').emit('appointment:new', data);
     
-    logger.info(`[Socket Emit] Appointment created: ${appointment.id}`);
+    logger.info(`[Socket Emit] Appointment created: ${appointment.id} (source: ${appointment.source}, showToastForStaff: ${isOnline})`);
   } catch (error) {
     logger.error('[Socket Emit Error] emitAppointmentCreated:', error);
   }
@@ -210,11 +225,22 @@ export async function emitAppointmentCreated(io, appointment) {
 /**
  * Requirement: Patient/Staff Cancel Appointment
  * Broadcast to: Receptionists, Admins, and Doctors
+ * @param {Object} io - Socket.IO instance
+ * @param {Object} appointment - Appointment object
+ * @param {Number} cancelledByRole - Role of the user who cancelled the appointment
  */
-export async function emitAppointmentCancelled(io, appointment) {
+export async function emitAppointmentCancelled(io, appointment, cancelledByRole = null) {
   try {
     const title = 'Lịch hẹn bị hủy';
     const content = `Lịch hẹn của bệnh nhân ${appointment.patientName} đã bị hủy.`;
+
+    // Determine if toast should be shown based on who cancelled
+    // Patient cancelled = show toast for everyone
+    // Staff cancelled = show toast only for Doctor, not for Receptionist/Admin
+    const cancelledByPatient = cancelledByRole === ROLES.PATIENT;
+    
+    logger.info(`[Socket Emit] emitAppointmentCancelled called for appointment ${appointment.id}`);
+    logger.info(`[Socket Emit] cancelledByRole: ${cancelledByRole}, cancelledByPatient: ${cancelledByPatient}`);
 
     await createAndEmitNotification(io, {
       targetRoles: [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.DOCTOR],
@@ -232,9 +258,12 @@ export async function emitAppointmentCancelled(io, appointment) {
       appointment,
       timestamp: new Date().toISOString(),
       type: 'APPOINTMENT_CANCELLED',
+      showToastForDoctor: true, // Doctor always gets toast
+      showToastForStaff: cancelledByPatient, // Staff only gets toast if patient cancelled
+      cancelledByRole,
     };
     io.to('receptionists').to('admins').to('doctors').emit('appointment:cancelled', data);
-    logger.info(`[Socket Emit] Appointment cancelled: ${appointment.id}`);
+    logger.info(`[Socket Emit] Appointment cancelled: ${appointment.id} (cancelledByRole: ${cancelledByRole}, showToastForStaff: ${cancelledByPatient})`);
   } catch (error) {
     logger.error('[Socket Emit Error] emitAppointmentCancelled:', error);
   }
