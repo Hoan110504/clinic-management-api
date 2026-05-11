@@ -522,6 +522,36 @@ const createPayment = asyncHandler(async (req, res) => {
     throw new BadRequestError('PatientId không hợp lệ');
   }
 
+  const existingPayment = payload.examinationId
+    ? await Payment.findOne({
+        where: { examinationId: payload.examinationId },
+        include: buildPaymentIncludes(),
+      })
+    : null;
+
+  if (existingPayment) {
+    await existingPayment.update({
+      ...payload,
+      patientId: resolvedPatientId,
+      createdBy: req.user?.id ?? existingPayment.createdBy ?? null,
+      totalAmount: payload.totalAmount,
+      debtAmount: undefined,
+    });
+
+    const refreshedExisting = await Payment.findByPk(existingPayment.id, { include: buildPaymentIncludes() });
+    const nextExistingPayload = {
+      ...breakdown,
+      paidAmount: payload.paidAmount,
+      status: payload.status,
+      paymentMethod: payload.paymentMethod,
+      patientId: resolvedPatientId,
+      doctorName: breakdown.doctorName,
+      cashierName: formatCashierDisplay(req.user),
+    };
+
+    return successResponse(res, serializePayment(refreshedExisting || existingPayment, nextExistingPayload), 'Cập nhật hóa đơn thành công');
+  }
+
   const payment = await Payment.create({
     ...payload,
     patientId: resolvedPatientId,
@@ -574,7 +604,7 @@ const processPayment = asyncHandler(async (req, res) => {
     paidAmount: nextPaidAmount,
     totalAmount,
     status: nextStatus,
-    createdBy: req.user?.id ?? payment.createdBy ?? null,
+    createdBy: req.user?.id ?? null,
   });
 
   const refreshed = await Payment.findByPk(id, { include: buildPaymentIncludes() });

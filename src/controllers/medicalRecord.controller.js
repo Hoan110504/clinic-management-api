@@ -4,7 +4,7 @@
  * No legacy fallbacks or alternate models.
  */
 import { Op } from 'sequelize';
-import { MedicalExamination, Appointment, Patient, User } from '../models/index.js';
+import { MedicalExamination, Appointment, Patient, User, Payment, LabOrder, LabOrderItem, LabService, Prescription, PrescriptionItem, Medicine } from '../models/index.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import { successResponse, createdResponse, paginatedResponse, errorResponse } from '../utils/response.js';
 import { formatToVietnamISOString } from '../utils/timezone.js';
@@ -362,6 +362,60 @@ const completeExamination = asyncHandler(async (req, res) => {
   await examination.update({ Status: 2, UpdatedAt: new Date() });
   await examination.reload();
   await syncAppointmentCompletedFromExam(examination.get({ plain: true }), 2);
+
+  // Attempt to create a related Payment record so reception can process payment.
+  try {
+    const examinationId = Number(examination.ExaminationID || examination.ExaminationId || examination.id || id);
+    if (Number.isFinite(examinationId) && examinationId > 0) {
+      // Check existing payment for this examination
+      const existing = await Payment.findOne({ where: { examinationId } });
+      if (!existing) {
+        // Build simple invoice totals from lab orders and prescriptions
+        let labTotal = 0;
+        let medicineTotal = 0;
+
+        const labOrders = await LabOrder.findAll({ where: { examinationId }, include: [{ model: LabOrderItem, as: 'items', required: false, include: [{ model: LabService, as: 'Service', required: false }] }] });
+        for (const order of labOrders) {
+          const plain = order.get ? order.get({ plain: true }) : order;
+          const items = Array.isArray(plain.items) ? plain.items : [];
+          for (const item of items) {
+            const it = item.get ? item.get({ plain: true }) : item;
+            if (Number(it.status ?? it.Status ?? 0) !== 2) continue;
+            const svc = (it.Service && (it.Service.get ? it.Service.get({ plain: true }) : it.Service)) || {};
+            const price = Number(svc.price ?? svc.Price ?? 0) || 0;
+            labTotal += price;
+          }
+        }
+
+        const prescriptions = await Prescription.findAll({ where: { examinationId, status: 1 }, include: [{ model: PrescriptionItem, as: 'prescriptionItems', required: false, include: [{ model: Medicine, as: 'medicine', required: false }] }] });
+        for (const pres of prescriptions) {
+          const pp = pres.get ? pres.get({ plain: true }) : pres;
+          const items = Array.isArray(pp.prescriptionItems) ? pp.prescriptionItems : [];
+          for (const it of items) {
+            const itemPlain = it.get ? it.get({ plain: true }) : it;
+            const med = (itemPlain.medicine && (itemPlain.medicine.get ? itemPlain.medicine.get({ plain: true }) : itemPlain.medicine)) || {};
+            const qty = Math.max(0, Number(itemPlain.quantity ?? itemPlain.quantityPrescribed ?? itemPlain.QuantityPrescribed) || 0);
+            const price = Number(med.price ?? med.Price ?? 0) || 0;
+            medicineTotal += price * qty;
+          }
+        }
+
+        const totalAmount = Math.max(0, labTotal + medicineTotal);
+        // Create unpaid payment only if there's a non-zero total OR always create a placeholder payment for UI
+        await Payment.create({
+          patientId: examination.PatientId || null,
+          examinationId,
+          invoiceDate: new Date(),
+          totalAmount,
+          paidAmount: 0,
+          status: 0,
+          createdBy: req.user?.id ?? null,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('completeExamination: failed to create payment', e && e.message);
+  }
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hoàn thành khám thành công');
 });
