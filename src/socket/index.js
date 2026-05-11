@@ -12,28 +12,35 @@ export function setupSocketIO(io) {
     // User joins - track their socket connection
     socket.on('user:join', (data) => {
       const { userId, role } = data;
-      activeUsers.set(userId, socket.id);
-      socket.userId = userId;
+      
+      // Convert userId to number for consistency
+      const userIdNum = Number(userId);
+      
+      activeUsers.set(userIdNum, socket.id);
+      socket.userId = userIdNum;
       socket.userRole = role;
 
-      logger.info(`[Socket] User ${userId} (role: ${role}) joined with socket ${socket.id}`);
+      logger.info(`[Socket] User ${userIdNum} (role: ${role}) joined with socket ${socket.id}`);
+      logger.info(`[Socket] activeUsers Map: ${JSON.stringify(Array.from(activeUsers.entries()))}`);
 
       // Join rooms based on role for targeted broadcasts
       if (Number(role) === ROLES.ADMIN) {
         socket.join('admins');
-        logger.info(`[Socket] Admin ${userId} joined 'admins' room`);
+        logger.info(`[Socket] Admin ${userIdNum} joined 'admins' room`);
       } else if (Number(role) === ROLES.DOCTOR) {
         socket.join('doctors');
-        logger.info(`[Socket] Doctor ${userId} joined 'doctors' room`);
+        // Also join user-specific room for targeted notifications
+        socket.join(`doctor:${userIdNum}`);
+        logger.info(`[Socket] Doctor ${userIdNum} joined 'doctors' room and 'doctor:${userIdNum}' room`);
       } else if (Number(role) === ROLES.RECEPTIONIST) {
         socket.join('receptionists');
-        logger.info(`[Socket] Receptionist ${userId} joined 'receptionists' room`);
+        logger.info(`[Socket] Receptionist ${userIdNum} joined 'receptionists' room`);
       } else if (Number(role) === ROLES.PHARMACIST) {
         socket.join('pharmacists');
-        logger.info(`[Socket] Pharmacist ${userId} joined 'pharmacists' room`);
+        logger.info(`[Socket] Pharmacist ${userIdNum} joined 'pharmacists' room`);
       } else if (Number(role) === ROLES.PATIENT) {
-        socket.join(`patient:${userId}`);
-        logger.info(`[Socket] Patient ${userId} joined patient-specific room`);
+        socket.join(`patient:${userIdNum}`);
+        logger.info(`[Socket] Patient ${userIdNum} joined patient-specific room`);
       }
     });
 
@@ -42,6 +49,7 @@ export function setupSocketIO(io) {
       if (socket.userId) {
         activeUsers.delete(socket.userId);
         logger.info(`[Socket] User ${socket.userId} disconnected`);
+        logger.info(`[Socket] activeUsers Map after disconnect: ${JSON.stringify(Array.from(activeUsers.entries()))}`);
       }
       logger.info(`[Socket] Socket ${socket.id} disconnected`);
     });
@@ -96,13 +104,21 @@ async function createAndEmitNotification(io, { targetRoles = [], userId = null, 
     if (targetRoles.includes(ROLES.PHARMACIST)) emitter = emitter.to('pharmacists');
     
     if (userId) {
-      emitter = emitter.to(`patient:${userId}`);
+      // Send to user-specific room (works for patients and specific doctors)
+      const userSocketId = activeUsers.get(userId);
+      if (userSocketId) {
+        io.to(userSocketId).emit('notification:new', socketData);
+        logger.info(`[Socket] Notification sent to user ${userId} via socket ${userSocketId}`);
+      } else {
+        // User not connected, but notification is saved in DB
+        logger.info(`[Socket] User ${userId} not connected, notification saved to DB only`);
+      }
     }
 
     // Final check to avoid broadcasting to everyone if no target was set
-    if (targetRoles.length > 0 || userId) {
+    if (targetRoles.length > 0) {
       emitter.emit('notification:new', socketData);
-      logger.info(`[Socket] Notification emitted: ${type} to ${targetRoles.length > 0 ? 'roles ' + targetRoles.join(',') : 'user ' + userId}`);
+      logger.info(`[Socket] Notification emitted: ${type} to roles ${targetRoles.join(',')}`);
     }
     
   } catch (error) {
@@ -112,13 +128,17 @@ async function createAndEmitNotification(io, { targetRoles = [], userId = null, 
 
 /**
  * Requirement: Patient Book Appointment
- * Broadcast to: Receptionists and Admins
+ * Broadcast to: Receptionists, Admins, and Assigned Doctor (by UserID)
  */
 export async function emitAppointmentCreated(io, appointment) {
   try {
     const title = 'Lịch hẹn mới';
     const content = `Bệnh nhân ${appointment.patientName} vừa đặt một lịch hẹn mới.`;
     
+    logger.info(`[Socket Emit] emitAppointmentCreated called for appointment ${appointment.id}`);
+    logger.info(`[Socket Emit] assignedDoctorId: ${appointment.assignedDoctorId}, preferredDoctorId: ${appointment.preferredDoctorId}`);
+    
+    // Notify receptionists and admins
     await createAndEmitNotification(io, {
       targetRoles: [ROLES.RECEPTIONIST, ROLES.ADMIN],
       title,
@@ -127,7 +147,49 @@ export async function emitAppointmentCreated(io, appointment) {
       relatedId: appointment.id
     });
 
-    // Still emit specific event for legacy/other listeners
+    // Notify the assigned doctor specifically by UserID
+    const doctorIdRaw = appointment.assignedDoctorId || appointment.preferredDoctorId;
+    const doctorId = doctorIdRaw ? Number(doctorIdRaw) : null;
+    
+    logger.info(`[Socket Emit] Resolved doctorId: ${doctorId} (type: ${typeof doctorId})`);
+    
+    if (doctorId) {
+      logger.info(`[Socket Emit] Attempting to notify doctor ${doctorId}`);
+      logger.info(`[Socket Emit] Active users Map: ${JSON.stringify(Array.from(activeUsers.entries()))}`);
+      
+      await createAndEmitNotification(io, {
+        userId: doctorId,
+        title,
+        content: `Bạn có lịch hẹn mới với bệnh nhân ${appointment.patientName}.`,
+        type: 'APPOINTMENT_NEW',
+        relatedId: appointment.id
+      });
+      
+      // Emit to specific doctor
+      const doctorSocketId = activeUsers.get(doctorId);
+      logger.info(`[Socket Emit] Doctor ${doctorId} socketId from Map: ${doctorSocketId}`);
+      
+      if (doctorSocketId) {
+        const data = {
+          appointmentId: appointment.id,
+          appointmentCode: appointment.appointmentId || appointment.AppointmentID,
+          patientName: appointment.patientName,
+          message: content,
+          appointment,
+          timestamp: new Date().toISOString(),
+          type: 'APPOINTMENT_NEW',
+        };
+        io.to(doctorSocketId).emit('appointment:new', data);
+        logger.info(`[Socket Emit] ✅ Appointment created notification sent to doctor ${doctorId} via socket ${doctorSocketId}`);
+      } else {
+        logger.warn(`[Socket Emit] ⚠️ Doctor ${doctorId} is not connected (no socket found in activeUsers Map)`);
+        logger.warn(`[Socket Emit] ⚠️ Available keys in activeUsers: ${JSON.stringify(Array.from(activeUsers.keys()))}`);
+      }
+    } else {
+      logger.warn(`[Socket Emit] ⚠️ No assigned doctor for appointment ${appointment.id}`);
+    }
+
+    // Still emit specific event for legacy/other listeners (receptionists/admins)
     const data = {
       appointmentId: appointment.id,
       appointmentCode: appointment.appointmentId || appointment.AppointmentID,
@@ -138,6 +200,7 @@ export async function emitAppointmentCreated(io, appointment) {
       type: 'APPOINTMENT_NEW',
     };
     io.to('receptionists').to('admins').emit('appointment:new', data);
+    
     logger.info(`[Socket Emit] Appointment created: ${appointment.id}`);
   } catch (error) {
     logger.error('[Socket Emit Error] emitAppointmentCreated:', error);
@@ -216,32 +279,58 @@ export async function emitAppointmentConfirmed(io, appointment) {
 
 /**
  * Requirement: Receptionist Confirm Arrived
- * Broadcast to: Doctors
+ * Broadcast to: Assigned Doctor (by UserID)
  */
 export async function emitPatientArrived(io, appointment) {
   try {
     const title = 'Bệnh nhân đã tới';
     const content = `Bệnh nhân ${appointment.patientName} đã có mặt tại phòng khám.`;
 
-    await createAndEmitNotification(io, {
-      targetRoles: [ROLES.DOCTOR],
-      title,
-      content,
-      type: 'PATIENT_ARRIVED',
-      relatedId: appointment.id
-    });
+    logger.info(`[Socket Emit] emitPatientArrived called for appointment ${appointment.id}`);
+    logger.info(`[Socket Emit] assignedDoctorId: ${appointment.assignedDoctorId}, preferredDoctorId: ${appointment.preferredDoctorId}`);
 
-    const data = {
-      appointmentId: appointment.id,
-      appointmentCode: appointment.appointmentId || appointment.AppointmentID,
-      patientName: appointment.patientName,
-      message: content,
-      appointment,
-      timestamp: new Date().toISOString(),
-      type: 'PATIENT_ARRIVED',
-    };
-    io.to('doctors').emit('patient:arrived', data);
-    logger.info(`[Socket Emit] Patient arrived: ${appointment.id}`);
+    // Notify the assigned doctor specifically by UserID
+    const doctorIdRaw = appointment.assignedDoctorId || appointment.preferredDoctorId;
+    const doctorId = doctorIdRaw ? Number(doctorIdRaw) : null;
+    
+    logger.info(`[Socket Emit] Resolved doctorId: ${doctorId} (type: ${typeof doctorId})`);
+    
+    if (doctorId) {
+      logger.info(`[Socket Emit] Attempting to notify doctor ${doctorId}`);
+      logger.info(`[Socket Emit] Active users Map: ${JSON.stringify(Array.from(activeUsers.entries()))}`);
+      
+      await createAndEmitNotification(io, {
+        userId: doctorId,
+        title,
+        content,
+        type: 'PATIENT_ARRIVED',
+        relatedId: appointment.id
+      });
+
+      const data = {
+        appointmentId: appointment.id,
+        appointmentCode: appointment.appointmentId || appointment.AppointmentID,
+        patientName: appointment.patientName,
+        message: content,
+        appointment,
+        timestamp: new Date().toISOString(),
+        type: 'PATIENT_ARRIVED',
+      };
+      
+      // Emit to specific doctor's socket
+      const doctorSocketId = activeUsers.get(doctorId);
+      logger.info(`[Socket Emit] Doctor ${doctorId} socketId from Map: ${doctorSocketId}`);
+      
+      if (doctorSocketId) {
+        io.to(doctorSocketId).emit('patient:arrived', data);
+        logger.info(`[Socket Emit] ✅ Patient arrived notification sent to doctor ${doctorId} via socket ${doctorSocketId}`);
+      } else {
+        logger.warn(`[Socket Emit] ⚠️ Doctor ${doctorId} is not connected (no socket found in activeUsers Map)`);
+        logger.warn(`[Socket Emit] ⚠️ Available keys in activeUsers: ${JSON.stringify(Array.from(activeUsers.keys()))}`);
+      }
+    } else {
+      logger.warn(`[Socket Emit] ⚠️ No assigned doctor for appointment ${appointment.id}`);
+    }
   } catch (error) {
     logger.error('[Socket Emit Error] emitPatientArrived:', error);
   }
