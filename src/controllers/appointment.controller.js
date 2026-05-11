@@ -928,11 +928,12 @@ const getTodayAppointments = asyncHandler(async (req, res) => {
 
   // Role-based filtering
   if (req.user && req.user.role === ROLES.DOCTOR) {
-    const waitingCode = labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
-    // doctor sees their appointments or any waiting appointment
+    // For doctor account, include both assigned and preferred appointments.
+    // This ensures Online appointments (often set via preferredDoctorId) are visible.
+    delete where.assignedDoctorId;
     where[Op.or] = [
       { assignedDoctorId: req.user.id },
-      { status: waitingCode },
+      { preferredDoctorId: req.user.id },
     ];
   }
 
