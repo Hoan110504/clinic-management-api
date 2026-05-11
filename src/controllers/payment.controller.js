@@ -135,9 +135,11 @@ const resolvePaidAmount = (payment) => {
 
 const resolveDebtAmount = (payment) => {
   const raw = payment?.get ? payment.get({ plain: true }) : (payment || {});
-  const totalAmount = resolveTotalAmount(raw);
+  // Use FinalAmount if available, otherwise fall back to totalAmount
+  const finalAmount = toFiniteNumber(raw.finalAmount ?? raw.FinalAmount, null);
+  const amountToUse = finalAmount !== null ? finalAmount : resolveTotalAmount(raw);
   const paidAmount = resolvePaidAmount(raw);
-  return toFiniteNumber(raw.debtAmount ?? raw.DebtAmount ?? Math.max(0, totalAmount - paidAmount), 0);
+  return toFiniteNumber(raw.debtAmount ?? raw.DebtAmount ?? Math.max(0, amountToUse - paidAmount), 0);
 };
 
 const getPlain = (value) => (value?.get ? value.get({ plain: true }) : (value || {}));
@@ -300,9 +302,11 @@ const paymentAmountFromRequest = (body = {}) => {
   }
 
   const derivedTotal = Math.max(0, subtotal - discountAmount);
+  const finalAmount = Math.max(0, toFiniteNumber(body.finalAmount ?? body.total, derivedTotal));
   return {
     subtotal,
     discountAmount,
+    finalAmount,
     totalAmount: Math.max(0, toFiniteNumber(body.totalAmount ?? body.total, derivedTotal)),
     consultationFee,
     labTestFee,
@@ -355,6 +359,7 @@ const serializePayment = (payment, overrides = {}) => {
     discountType: raw.discountType ?? null,
     discountValue: toFiniteNumber(raw.discountValue ?? 0, 0),
     discountAmount: toFiniteNumber(raw.discountAmount ?? 0, 0),
+    finalAmount: toFiniteNumber(raw.finalAmount ?? totalAmount, totalAmount),
     paidAmount,
     amountPaid: paidAmount,
     debtAmount,
@@ -446,10 +451,22 @@ const buildPaymentWhere = (query = {}) => {
 const resolvePaymentPayload = (body = {}) => {
   const paymentAmount = paymentAmountFromRequest(body);
   const paidAmount = Math.max(0, toFiniteNumber(body.paidAmount ?? body.amountPaid, 0));
-  const debtAmount = Math.max(0, toFiniteNumber(body.debtAmount ?? Math.max(0, paymentAmount.totalAmount - paidAmount), 0));
+  
+  // Use discountAmount from body if provided, otherwise use calculated value
+  const discountAmount = body.discountAmount !== undefined && body.discountAmount !== null
+    ? Math.max(0, toFiniteNumber(body.discountAmount, 0))
+    : paymentAmount.discountAmount;
+  
+  // Use finalAmount from body if provided, otherwise use calculated value
+  const finalAmount = body.finalAmount !== undefined && body.finalAmount !== null
+    ? Math.max(0, toFiniteNumber(body.finalAmount, 0))
+    : paymentAmount.finalAmount;
+  
+  const debtAmount = Math.max(0, toFiniteNumber(body.debtAmount ?? Math.max(0, finalAmount - paidAmount), 0));
+  // If debtAmount <= 0 => fully paid (PAID). If debtAmount > 0 => partial (Còn nợ).
   const derivedStatus = debtAmount > 0
     ? PAYMENT_STATUS_CODE.PARTIAL
-    : (paidAmount > 0 ? PAYMENT_STATUS_CODE.PAID : PAYMENT_STATUS_CODE.UNPAID);
+    : PAYMENT_STATUS_CODE.PAID;
   return {
     patientId: toPositiveInteger(body.patientId),
     examinationId: toPositiveInteger(body.examinationId ?? body.medicalRecordId ?? body.ExaminationID ?? body.recordId),
@@ -457,6 +474,8 @@ const resolvePaymentPayload = (body = {}) => {
     labOrderId: toPositiveInteger(body.labOrderId ?? body.LabOrderID),
     invoiceDate: body.invoiceDate ? new Date(body.invoiceDate) : new Date(),
     totalAmount: paymentAmount.totalAmount,
+    finalAmount,
+    discountAmount,
     paidAmount,
     debtAmount,
     paymentMethod: normalizePaymentMethodCode(body.paymentMethod),
@@ -535,6 +554,8 @@ const createPayment = asyncHandler(async (req, res) => {
       patientId: resolvedPatientId,
       createdBy: req.user?.id ?? existingPayment.createdBy ?? null,
       totalAmount: payload.totalAmount,
+      finalAmount: payload.finalAmount,
+      discountAmount: payload.discountAmount,
       debtAmount: undefined,
     });
 
@@ -557,6 +578,8 @@ const createPayment = asyncHandler(async (req, res) => {
     patientId: resolvedPatientId,
     createdBy: req.user?.id ?? null,
     totalAmount: payload.totalAmount,
+    finalAmount: payload.finalAmount,
+    discountAmount: payload.discountAmount,
     debtAmount: undefined,
   });
   const created = await Payment.findByPk(payment.id, { include: buildPaymentIncludes() });
@@ -578,6 +601,8 @@ const processPayment = asyncHandler(async (req, res) => {
   const { paymentMethod } = req.body;
   const paidInput = req.body.paidAmount ?? req.body.amountPaid;
   const requestedTotalAmount = req.body.totalAmount ?? req.body.total;
+  const discountType = req.body.discountType;
+  const discountValue = toFiniteNumber(req.body.discountValue, 0);
 
   const payment = await Payment.findByPk(id, { include: buildPaymentIncludes() });
   if (!payment) {
@@ -593,9 +618,29 @@ const processPayment = asyncHandler(async (req, res) => {
   const totalAmount = requestedTotalAmount !== undefined && requestedTotalAmount !== null && requestedTotalAmount !== ''
     ? Math.max(0, toFiniteNumber(requestedTotalAmount, resolveTotalAmount(payment)))
     : resolveTotalAmount(payment);
+  
+  const requestedDiscountAmount = req.body.discountAmount ?? req.body.DiscountAmount;
+  const requestedFinalAmount = req.body.finalAmount ?? req.body.FinalAmount;
+  
+  // Use discountAmount from request if provided, otherwise calculate from discountType/discountValue or keep existing
+  let discountAmount = toFiniteNumber(payment.discountAmount ?? 0, 0);
+  if (requestedDiscountAmount !== undefined && requestedDiscountAmount !== null) {
+    discountAmount = Math.max(0, toFiniteNumber(requestedDiscountAmount, 0));
+  } else if (discountType && discountValue !== null && discountValue !== undefined) {
+    if (discountType === 'percent') {
+      discountAmount = (totalAmount * discountValue) / 100;
+    } else if (discountType === 'amount') {
+      discountAmount = discountValue;
+    }
+  }
+  
+  // Use finalAmount from request if provided, otherwise calculate from totalAmount - discountAmount
+  const finalAmount = requestedFinalAmount !== undefined && requestedFinalAmount !== null
+    ? Math.max(0, toFiniteNumber(requestedFinalAmount, 0))
+    : Math.max(0, totalAmount - discountAmount);
   const nextPaidAmount = Math.max(0, resolvePaidAmount(payment) + paidAmount);
-  const debtAmount = Math.max(0, totalAmount - nextPaidAmount);
-  const changeAmount = Math.max(0, nextPaidAmount - totalAmount);
+  const debtAmount = Math.max(0, finalAmount - nextPaidAmount);
+  const changeAmount = Math.max(0, nextPaidAmount - finalAmount);
   const nextMethodCode = aggregatePaymentMethodCode(payment.paymentMethod, paymentMethod);
   const nextStatus = debtAmount > 0 ? PAYMENT_STATUS_CODE.PARTIAL : PAYMENT_STATUS_CODE.PAID;
 
@@ -603,6 +648,8 @@ const processPayment = asyncHandler(async (req, res) => {
     paymentMethod: nextMethodCode,
     paidAmount: nextPaidAmount,
     totalAmount,
+    finalAmount,
+    discountAmount,
     status: nextStatus,
     createdBy: req.user?.id ?? null,
   });
