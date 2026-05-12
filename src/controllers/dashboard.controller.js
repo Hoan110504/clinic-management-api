@@ -915,7 +915,6 @@ const getPatientDashboard = asyncHandler(async (req, res) => {
       status: PAYMENT_STATUS_CODE.UNPAID,
     },
     order: [['createdAt', 'DESC']],
-    limit: 5,
   });
 
   // Recent lab results - simplified
