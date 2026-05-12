@@ -603,7 +603,7 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // Pending prescriptions - simplified without Patient association
+  // Pending prescriptions with patient via examination relationship
   const pendingPrescriptions = await Prescription.findAll({
     where: { status: 0 }, // 0 = waiting for dispensing
     order: [['prescriptionDate', 'ASC']],
@@ -614,6 +614,20 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
         as: 'doctor',
         attributes: ['id', 'fullName'],
         required: false,
+      },
+      {
+        model: sequelize.models.MedicalExamination,
+        as: 'examination',
+        required: false,
+        attributes: ['ExaminationID', 'PatientId'],
+        include: [
+          {
+            model: Patient,
+            as: 'patient',
+            attributes: ['id', 'fullName', 'phone'],
+            required: false,
+          },
+        ],
       },
     ],
   });
@@ -678,9 +692,9 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
   // Chart 1: Số đơn thuốc theo tháng (Bar Chart)
   let prescriptionsByMonth = [];
   try {
-    // Get all prescriptions and group by month
     const allPrescriptions = await Prescription.findAll({
       attributes: ['prescriptionDate'],
+      where: { status: 1 },
       raw: true,
     });
     
@@ -693,7 +707,6 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
       monthMap[idx + 1] = { month, count: 0 };
     });
     
-    // Count prescriptions by month
     allPrescriptions.forEach(p => {
       if (p.prescriptionDate) {
         const date = new Date(p.prescriptionDate);
@@ -710,34 +723,33 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
     prescriptionsByMonth = [];
   }
 
-  // Chart 2: Tình trạng kho thuốc (Doughnut Chart)
+  // Chart 2: Tình trạng tồn kho thuốc theo lô (Doughnut Chart)
   let medicineInventoryStatus = [];
   try {
-    const allMedicines = await Medicine.findAll({
-      attributes: ['id', 'quantity', 'min_quantity'],
-      where: { isActive: true },
+    const allBatches = await sequelize.models.MedicineBatch.findAll({
+      attributes: ['id', 'quantityInStock'],
       raw: true,
     });
-    
-    let inStock = 0;      // Thuốc còn nhiều (quantity > min_quantity)
-    let lowStock = 0;     // Thuốc sắp hết (0 < quantity <= min_quantity)
-    let outOfStock = 0;   // Thuốc hết hàng (quantity = 0)
-    
-    allMedicines.forEach(m => {
-      const minQty = m.min_quantity || 10;
-      if (m.quantity === 0) {
+
+    let outOfStock = 0;
+    let lowStock = 0;
+    let inStock = 0;
+
+    allBatches.forEach((batch) => {
+      const stock = Number(batch.quantityInStock ?? 0);
+      if (stock === 0) {
         outOfStock += 1;
-      } else if (m.quantity <= minQty) {
+      } else if (stock > 0 && stock < 20) {
         lowStock += 1;
-      } else {
+      } else if (stock >= 20) {
         inStock += 1;
       }
     });
     
     medicineInventoryStatus = [
-      { label: 'Thuốc còn nhiều', value: inStock },
-      { label: 'Thuốc sắp hết', value: lowStock },
-      { label: 'Thuốc hết hàng', value: outOfStock },
+      { label: 'Hết hàng', value: outOfStock },
+      { label: 'Sắp hết hàng', value: lowStock },
+      { label: 'Còn hàng', value: inStock },
     ];
   } catch (err) {
     console.warn('Could not fetch medicine inventory status:', err.message);
@@ -748,18 +760,48 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
   let topMedicinesDispensed = [];
   try {
     const allPrescriptions = await Prescription.findAll({
-      attributes: ['medicineName', [Prescription.sequelize.fn('COUNT', Prescription.sequelize.col('id')), 'count']],
-      where: { status: 1 }, // Only dispensed prescriptions
-      group: ['medicineName'],
-      order: [[Prescription.sequelize.fn('COUNT', Prescription.sequelize.col('id')), 'DESC']],
-      limit: 5,
-      raw: true,
+      attributes: ['prescriptionId'],
+      where: { status: 1 },
+      include: [
+        {
+          model: sequelize.models.PrescriptionItem,
+          as: 'prescriptionItems',
+          required: true,
+          where: { status: 1 },
+          attributes: ['medicineId', 'quantityPrescribed', 'status'],
+          include: [
+            {
+              model: Medicine,
+              as: 'medicine',
+              attributes: ['id', 'name'],
+              required: false,
+            },
+          ],
+        },
+      ],
     });
-    
-    topMedicinesDispensed = allPrescriptions.map(p => ({
-      label: p.medicineName || 'N/A',
-      value: p.count || 0,
-    }));
+
+    const medicineMap = new Map();
+
+    allPrescriptions.forEach((prescription) => {
+      const items = Array.isArray(prescription.prescriptionItems) ? prescription.prescriptionItems : [];
+      items.forEach((item) => {
+        const medicineId = item.medicineId ?? item.MedicineId;
+        if (!medicineId) return;
+
+        const quantity = Number(item.quantityPrescribed ?? item.QuantityPrescribed ?? 0);
+        const medicineName = item.medicine?.name || item.medicine?.medicineName || item.medicineName || `Thuốc #${medicineId}`;
+        const current = medicineMap.get(String(medicineId)) || { label: medicineName, value: 0 };
+
+        current.label = medicineName || current.label;
+        current.value += Number.isFinite(quantity) ? quantity : 0;
+        medicineMap.set(String(medicineId), current);
+      });
+    });
+
+    topMedicinesDispensed = Array.from(medicineMap.values())
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
   } catch (err) {
     console.warn('Could not fetch top medicines dispensed:', err.message);
     topMedicinesDispensed = [];
