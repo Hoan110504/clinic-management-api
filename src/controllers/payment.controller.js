@@ -321,7 +321,8 @@ const serializePayment = (payment, overrides = {}) => {
   const prescription = raw.prescription || {};
   const labOrder = raw.labOrder || {};
   const doctor = examination.doctor || raw.doctor || {};
-  const cashier = raw.createdByUser || raw.createdBy || raw.cashier || {};
+  const cashier = raw.collectedByUser || raw.createdByUser || raw.cashier || {};
+  const cashierId = raw.collectedBy ?? raw.CollectedBy ?? raw.createdBy ?? raw.CreatedBy ?? null;
   const invoiceDate = resolveInvoiceDate(raw);
   const totalAmount = resolveTotalAmount(raw);
   const paymentMethodCode = normalizePaymentMethodCode(raw.paymentMethod ?? raw.PaymentMethod);
@@ -351,11 +352,12 @@ const serializePayment = (payment, overrides = {}) => {
     patientGender: patient.gender ?? raw.patientGender ?? '',
     patientAddress: patient.address ?? raw.patientAddress ?? '',
     cashierName: overrides.cashierName ?? formatCashierDisplay(cashier),
+    collectedBy: cashierId !== null && cashierId !== undefined ? String(cashierId) : null,
     doctorName: doctor.fullName ?? doctor.full_name ?? raw.doctorName ?? overrides.doctorName ?? '',
-    consultationFee: toFiniteNumber(raw.consultationFee ?? 0, 0),
-    labTestFee: toFiniteNumber(raw.labTestFee ?? 0, 0),
-    medicineFee: toFiniteNumber(raw.medicineFee ?? 0, 0),
-    subtotal: toFiniteNumber(raw.subtotal ?? totalAmount, totalAmount),
+    consultationFee: toFiniteNumber(overrides.consultationFee ?? raw.consultationFee ?? 0, 0),
+    labTestFee: toFiniteNumber(overrides.labTestFee ?? raw.labTestFee ?? 0, 0),
+    medicineFee: toFiniteNumber(overrides.medicineFee ?? raw.medicineFee ?? 0, 0),
+    subtotal: toFiniteNumber(overrides.subtotal ?? raw.subtotal ?? totalAmount, totalAmount),
     discountType: raw.discountType ?? null,
     discountValue: toFiniteNumber(raw.discountValue ?? 0, 0),
     discountAmount: toFiniteNumber(raw.discountAmount ?? 0, 0),
@@ -366,13 +368,12 @@ const serializePayment = (payment, overrides = {}) => {
     changeAmount: overrides.changeAmount ?? 0,
     paidAt: overrides.paidAt ?? invoiceDate,
     notes: raw.notes ?? null,
-    services: raw.services ?? [],
-    medicines: raw.medicines ?? [],
+    services: overrides.services ?? raw.services ?? [],
+    medicines: overrides.medicines ?? raw.medicines ?? [],
     patient: raw.patient ? summarizeRelatedEntity(patient, 'id', 'fullName') : (patient?.id ? summarizeRelatedEntity(patient, 'id', 'fullName') : null),
     examination: raw.examination ? summarizeRelatedEntity(examination, 'examinationId', 'examinationCode') : null,
     prescription: raw.prescription ? summarizeRelatedEntity(prescription, 'prescriptionId', 'prescriptionCode') : null,
     labOrder: raw.labOrder ? summarizeRelatedEntity(labOrder, 'labOrderId', 'labOrderCode') : null,
-    ...overrides,
   };
 };
 
@@ -410,6 +411,12 @@ const buildPaymentIncludes = () => ([
   {
     model: LabOrder,
     as: 'labOrder',
+    required: false,
+  },
+  {
+    model: User,
+    as: 'collectedByUser',
+    attributes: ['id', 'full_name', 'fullName', 'username'],
     required: false,
   },
   {
@@ -552,7 +559,7 @@ const createPayment = asyncHandler(async (req, res) => {
     await existingPayment.update({
       ...payload,
       patientId: resolvedPatientId,
-      createdBy: req.user?.id ?? existingPayment.createdBy ?? null,
+      collectedBy: req.user?.id ?? existingPayment.collectedBy ?? null,
       totalAmount: payload.totalAmount,
       finalAmount: payload.finalAmount,
       discountAmount: payload.discountAmount,
@@ -576,7 +583,7 @@ const createPayment = asyncHandler(async (req, res) => {
   const payment = await Payment.create({
     ...payload,
     patientId: resolvedPatientId,
-    createdBy: req.user?.id ?? null,
+    collectedBy: req.user?.id ?? null,
     totalAmount: payload.totalAmount,
     finalAmount: payload.finalAmount,
     discountAmount: payload.discountAmount,
@@ -651,7 +658,7 @@ const processPayment = asyncHandler(async (req, res) => {
     finalAmount,
     discountAmount,
     status: nextStatus,
-    createdBy: req.user?.id ?? null,
+    collectedBy: req.user?.id ?? payment.collectedBy ?? null,
   });
 
   const refreshed = await Payment.findByPk(id, { include: buildPaymentIncludes() });

@@ -180,8 +180,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
   let revenueByMonth = [];
   try {
     const allPayments = await Payment.findAll({
-      attributes: ['invoiceDate', 'totalAmount'],
-      where: { status: PAYMENT_STATUS_CODE.PAID },
+      attributes: ['invoiceDate', 'paidAmount'],
       raw: true,
     });
     
@@ -199,7 +198,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
         const date = new Date(p.invoiceDate);
         const month = date.getMonth() + 1;
         if (monthMap[month]) {
-          monthMap[month].revenue += (p.totalAmount || 0);
+          monthMap[month].revenue += Number(p.paidAmount || 0);
         }
       }
     });

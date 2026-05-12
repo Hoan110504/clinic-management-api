@@ -60,6 +60,15 @@ export default (sequelize) => {
           key: 'id',
         },
       },
+      collectedBy: {
+        type: DataTypes.BIGINT,
+        allowNull: true,
+        field: 'CollectedBy',
+        references: {
+          model: 'Users',
+          key: 'id',
+        },
+      },
       invoiceDate: {
         type: DataTypes.DATE,
         allowNull: false,
@@ -148,6 +157,7 @@ export default (sequelize) => {
     }
     if (models?.User) {
       Payment.belongsTo(models.User, { foreignKey: 'createdBy', as: 'createdByUser' });
+      Payment.belongsTo(models.User, { foreignKey: 'collectedBy', as: 'collectedByUser' });
     }
   };
 
