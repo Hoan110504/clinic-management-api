@@ -27,7 +27,8 @@ import { labelToCode } from '../utils/statusHelpers.js';
 
 const PAYMENT_STATUS_CODE = {
   UNPAID: 0,
-  PAID: 1,
+  PARTIAL: 1,
+  PAID: 2,
 };
 
 /**
@@ -69,8 +70,8 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
   let todayRevenue = 0;
   let pendingPayments = 0;
   try {
-    // Try using Payment model first
-    todayRevenue = await Payment.sum('totalAmount', {
+    // Try using Payment model first - sum paidAmount for PAID payments
+    todayRevenue = await Payment.sum('paidAmount', {
       where: {
         invoiceDate: {
           [Op.gte]: today,
@@ -176,11 +177,14 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     appointmentsByMonth = [];
   }
 
-  // Chart 2: Doanh thu theo tháng (Bar Chart)
+  // Chart 2: Doanh thu theo tháng (Bar Chart) - matching Reports page logic
   let revenueByMonth = [];
   try {
     const allPayments = await Payment.findAll({
       attributes: ['invoiceDate', 'paidAmount'],
+      where: {
+        status: PAYMENT_STATUS_CODE.PAID,
+      },
       raw: true,
     });
     
@@ -192,7 +196,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
       monthMap[idx + 1] = { month, revenue: 0 };
     });
     
-    // Sum revenue by month
+    // Sum revenue by month from paidAmount for paid payments only
     allPayments.forEach(p => {
       if (p.invoiceDate) {
         const date = new Date(p.invoiceDate);
@@ -246,7 +250,8 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     
     const statusMap = {
       0: { label: 'Chưa thanh toán', count: 0 },
-      1: { label: 'Đã thanh toán', count: 0 },
+      1: { label: 'Còn nợ', count: 0 },
+      2: { label: 'Đã thanh toán', count: 0 },
     };
     
     allPayments.forEach(p => {
