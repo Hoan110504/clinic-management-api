@@ -6,7 +6,7 @@ import { authController } from '../controllers/index.js';
 import { authenticate } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { authValidator } from '../validators/index.js';
-import { authLimiter, registerLimiter } from '../middleware/rateLimiter.js';
+import { authLimiter, registerLimiter, passwordResetLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -91,17 +91,48 @@ router.put('/profile', authenticate, authController.updateProfile);
 
 /**
  * @route POST /api/auth/forgot-password
- * @desc Quên mật khẩu - tạo mã reset
+ * @desc Quên mật khẩu - gửi OTP đặt lại mật khẩu
  * @access Public
  */
-router.post('/forgot-password', authLimiter, authController.forgotPassword);
+router.post(
+  '/forgot-password',
+  passwordResetLimiter,
+  validate(authValidator.passwordResetRequest),
+  authController.requestPasswordResetOtp
+);
+
+router.post(
+  '/forgot-password/request-otp',
+  passwordResetLimiter,
+  validate(authValidator.passwordResetRequest),
+  authController.requestPasswordResetOtp
+);
+
+router.post(
+  '/forgot-password/verify-otp',
+  passwordResetLimiter,
+  validate(authValidator.passwordResetVerify),
+  authController.verifyPasswordResetOtp
+);
+
+router.post(
+  '/forgot-password/reset-password',
+  passwordResetLimiter,
+  validate(authValidator.passwordResetConfirm),
+  authController.resetPasswordWithOtp
+);
 
 /**
  * @route POST /api/auth/reset-password
- * @desc Đặt lại mật khẩu bằng mã reset
+ * @desc Đặt lại mật khẩu bằng OTP
  * @access Public
  */
-router.post('/reset-password', authLimiter, authController.resetPassword);
+router.post(
+  '/reset-password',
+  passwordResetLimiter,
+  validate(authValidator.passwordResetConfirm),
+  authController.resetPasswordWithOtp
+);
 
 /**
  * @route POST /api/auth/complete-profile

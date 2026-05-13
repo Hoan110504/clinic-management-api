@@ -62,6 +62,7 @@ const toMedicalExaminationContract = (row) => {
   if (!row) return null;
   const doctorName = row.doctor?.full_name || row.doctor?.fullName || row.doctorName || null;
   const patient = row.patient || {};
+  const appointment = row.appointment || {};
   return {
     id: row.ExaminationID,
     examinationId: row.ExaminationID,
@@ -94,6 +95,10 @@ const toMedicalExaminationContract = (row) => {
     status: row.Status || 0,
     createdAt: row.CreatedAt ? formatToVietnamISOString(row.CreatedAt) : null,
     updatedAt: row.UpdatedAt ? formatToVietnamISOString(row.UpdatedAt) : null,
+    appointment: appointment ? {
+      id: appointment.Id,
+      examType: appointment.exam_type || null,
+    } : null,
     vitalSigns: {
       bloodPressure: row.BloodPressure || '',
       pulse: row.Pulse || null,
@@ -179,6 +184,7 @@ const getAllRecords = asyncHandler(async (req, res) => {
     include: [
       { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone', 'dateOfBirth', 'gender', 'address'], required: false },
       { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+      { model: Appointment, as: 'appointment', attributes: ['Id', 'exam_type'], required: false },
     ],
     order,
     limit,

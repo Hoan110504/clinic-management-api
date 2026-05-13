@@ -3,10 +3,9 @@
  * Xử lý đăng nhập, đăng ký, refresh token, quên mật khẩu
  */
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
 import { Op } from 'sequelize';
 import config from '../config/index.js';
-import { User, Patient } from '../models/index.js';
+import { User, Patient, PasswordResetOtp } from '../models/index.js';
 import { asyncHandler } from '../utils/helpers.js';
 import {
   successResponse,
@@ -20,6 +19,15 @@ import {
   NotFoundError,
 } from '../utils/errors.js';
 import { ROLES } from '../config/constants.js';
+import {
+  buildPasswordResetToken,
+  generateOtpCode,
+  hashResetValue,
+  maskDestination,
+  passwordResetConfig,
+  resolveIdentifierChannel,
+  sendPasswordResetOtp,
+} from '../services/passwordReset.service.js';
 
 /**
  * Tạo cặp token (access + refresh)
@@ -44,12 +52,12 @@ const generateTokens = (user) => {
 
 /**
  * Đăng nhập
- * Luồng: Tìm user theo username → So sánh password (bcrypt) → Tạo tokens
+ * Luồng: Tìm user theo số điện thoại hoặc email → So sánh password (bcrypt) → Tạo tokens
  *   → Lưu refresh token vào DB → Lấy thông tin bệnh nhân (nếu có) → Trả về
  * POST /api/auth/login
  */
 const login = asyncHandler(async (req, res) => {
-  const { username, password } = req.body;
+  const { identifier, password } = req.body;
 
   // Helper to map logical attribute names to model column names
   const getAttr = (model, candidates) => {
@@ -60,20 +68,26 @@ const login = asyncHandler(async (req, res) => {
     return null;
   };
 
-  // Determine attribute names for username and active flag depending on model (DB schema variations)
-const usernameAttr = 'username';
-const isActiveAttr = 'is_active';
+  if (!identifier || !password) {
+    throw new BadRequestError('Vui lòng cung cấp số điện thoại/email và mật khẩu');
+  }
 
-  // Build where clause using detected attributes
-  const where = {};
-  if (usernameAttr) where[usernameAttr] = username;
-  if (isActiveAttr) where[isActiveAttr] = true;
+  const normalizedIdentifier = String(identifier).trim();
+  const emailIdentifier = normalizedIdentifier.toLowerCase();
 
-  // Tìm user theo username và trạng thái hoạt động
-  const user = await User.findOne({ where });
+  // Find user by phone or email
+  const user = await User.findOne({
+    where: {
+      isActive: true,
+      [Op.or]: [
+        { phone: normalizedIdentifier },
+        { email: emailIdentifier },
+      ],
+    },
+  });
 
   if (!user) {
-    throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
+    throw new UnauthorizedError('Tài khoản hoặc mật khẩu không đúng');
   }
 
   // So sánh mật khẩu với hash trong DB (bcrypt)
@@ -109,7 +123,7 @@ const isActiveAttr = 'is_active';
   }
 
   if (!isMatch) {
-    throw new UnauthorizedError('Tên đăng nhập hoặc mật khẩu không đúng');
+    throw new UnauthorizedError('Tài khoản hoặc mật khẩu không đúng');
   }
 
   const roleId = Number(user.role);
@@ -197,13 +211,12 @@ const lastLoginAttr = 'last_login_at';
 
 /**
  * Đăng ký tài khoản bệnh nhân mới
- * Luồng: Kiểm tra trùng username/email → Tạo User (role=patient)
+ * Luồng: Kiểm tra trùng phone/email → Tạo User (role=patient)
  *   → Tạo Patient record liên kết → Tạo tokens → Trả về
  * POST /api/auth/register
  */
 const register = asyncHandler(async (req, res) => {
   const {
-    username,
     email,
     password,
     fullName,
@@ -216,51 +229,30 @@ const register = asyncHandler(async (req, res) => {
     allergies,
   } = req.body;
 
+  // Phone is required as account identifier
+  if (!phone || String(phone).trim() === '') {
+    throw new ValidationError('Dữ liệu không hợp lệ', [
+      { field: 'phone', message: 'Số điện thoại là bắt buộc' },
+    ]);
+  }
+
   // Normalize email: convert empty string to null to avoid UNIQUE constraint violation
   const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
 
-  // Kiểm tra username/email/phone đã tồn tại (bao gồm soft-deleted)
-  const existingUser = await User.findOne({ where: { username }, paranoid: false });
-  if (existingUser) {
-    if (existingUser.deletedAt) {
-      await existingUser.destroy({ force: true });
+  // Kiểm tra phone chưa tồn tại (bao gồm soft-deleted)
+  const existingPhone = phone ? await User.findOne({ where: { phone }, paranoid: false }) : null;
+  if (existingPhone) {
+    if (existingPhone.deletedAt) {
+      await existingPhone.destroy({ force: true });
     } else {
       throw new ValidationError('Dữ liệu không hợp lệ', [
-        { field: 'username', message: 'Tên đăng nhập đã tồn tại' },
+        { field: 'phone', message: 'Số điện thoại đã được sử dụng' },
       ]);
-    }
-  }
-
-  // Kiểm tra email chỉ khi người dùng cung cấp email (non-empty)
-  if (normalizedEmail) {
-    const existingEmail = await User.findOne({ where: { email: normalizedEmail }, paranoid: false });
-    if (existingEmail) {
-      if (existingEmail.deletedAt) {
-        await existingEmail.destroy({ force: true });
-      } else {
-        throw new ValidationError('Dữ liệu không hợp lệ', [
-          { field: 'email', message: 'Email đã được sử dụng' },
-        ]);
-      }
-    }
-  }
-
-  if (phone) {
-    const existingPhone = await User.findOne({ where: { phone }, paranoid: false });
-    if (existingPhone) {
-      if (existingPhone.deletedAt) {
-        await existingPhone.destroy({ force: true });
-      } else {
-        throw new ValidationError('Dữ liệu không hợp lệ', [
-          { field: 'phone', message: 'Số điện thoại đã được sử dụng' },
-        ]);
-      }
     }
   }
 
   // Tạo user với role mặc định là patient
   const user = await User.create({
-    username,
     email: normalizedEmail,
     password,
     fullName,
@@ -432,13 +424,22 @@ const changePassword = asyncHandler(async (req, res) => {
  * POST /api/auth/complete-change-password
  */
 const completeChangePassword = asyncHandler(async (req, res) => {
-  const { username, currentPassword, newPassword } = req.body;
+  const { identifier, currentPassword, newPassword } = req.body;
 
-  if (!username || !currentPassword || !newPassword) {
+  if (!identifier || !currentPassword || !newPassword) {
     throw new BadRequestError('Thiếu thông tin');
   }
 
-  const user = await User.findOne({ where: { username } });
+  const normalizedIdentifier = String(identifier).trim();
+  const emailIdentifier = normalizedIdentifier.toLowerCase();
+  const user = await User.findOne({
+    where: {
+      [Op.or]: [
+        { phone: normalizedIdentifier },
+        { email: emailIdentifier },
+      ],
+    },
+  });
   if (!user) throw new NotFoundError('Không tìm thấy người dùng');
 
   const isMatch = await user.comparePassword(currentPassword);
@@ -539,71 +540,224 @@ const updateProfile = asyncHandler(async (req, res) => {
   return successResponse(res, user.toJSON(), 'Cập nhật hồ sơ thành công');
 });
 
-/**
- * Quên mật khẩu - tạo reset token tạm thời
- * Trong môi trường production nên gửi qua email, ở đây trả token trực tiếp
- * POST /api/auth/forgot-password
- */
+const findUserByIdentifier = async (identifier) => {
+  const normalizedIdentifier = String(identifier || '').trim();
+  const emailIdentifier = normalizedIdentifier.toLowerCase();
 
-const forgotPassword = asyncHandler(async (req, res) => {
+  const normalizePhoneCandidates = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return [];
+
+    const variants = new Set();
+    const compact = raw.replace(/[\s().-]/g, '');
+    const digitsOnly = compact.replace(/[^0-9+]/g, '');
+
+    variants.add(raw);
+    variants.add(compact);
+    variants.add(digitsOnly);
+
+    if (digitsOnly.startsWith('0') && digitsOnly.length > 1) {
+      variants.add(`+84${digitsOnly.slice(1)}`);
+      variants.add(`84${digitsOnly.slice(1)}`);
+    }
+
+    if (digitsOnly.startsWith('84') && !digitsOnly.startsWith('+84')) {
+      variants.add(`+${digitsOnly}`);
+    }
+
+    if (digitsOnly.startsWith('+84')) {
+      variants.add(digitsOnly);
+      variants.add(digitsOnly.replace(/^\+/, ''));
+      variants.add(`0${digitsOnly.slice(3)}`);
+    }
+
+    return [...variants].filter(Boolean);
+  };
+
+  const phoneCandidates = normalizePhoneCandidates(normalizedIdentifier);
+
+  return User.findOne({
+    where: {
+      isActive: true,
+      [Op.or]: [
+        { phone: { [Op.in]: phoneCandidates } },
+        { email: emailIdentifier },
+      ],
+    },
+  });
+};
+
+const requestPasswordResetOtp = asyncHandler(async (req, res) => {
   const { identifier } = req.body;
+  const normalizedIdentifier = String(identifier || '').trim();
 
-  if (!identifier) {
-    throw new BadRequestError('Vui lòng nhập tên đăng nhập hoặc email');
+  if (!normalizedIdentifier) {
+    throw new BadRequestError('Vui lòng nhập số điện thoại hoặc email');
   }
 
-  // Tìm user theo username hoặc email
-  const user = await User.findOne({
+  const channel = resolveIdentifierChannel(normalizedIdentifier);
+  if (!channel) {
+    throw new BadRequestError('Số điện thoại hoặc email không hợp lệ');
+  }
+
+  const user = await findUserByIdentifier(normalizedIdentifier);
+  if (!user) {
+    return successResponse(res, {
+      message: 'Nếu tài khoản tồn tại, OTP sẽ được gửi đến kênh đã đăng ký',
+      channel,
+      destinationMasked: null,
+    }, 'Nếu tài khoản tồn tại, OTP sẽ được gửi');
+  }
+
+  const now = Date.now();
+  const recentRequests = await PasswordResetOtp.count({
     where: {
-      [Op.or]: [
-        { username: identifier },
-        { email: identifier },
-      ],
-      isActive: true,
+      userId: user.id,
+      createdAt: {
+        [Op.gte]: new Date(now - passwordResetConfig.requestWindowMs),
+      },
     },
   });
 
-  if (!user) {
-    // Không tiết lộ user có tồn tại hay không (bảo mật)
-    return successResponse(res, null,
-      'Nếu tài khoản tồn tại, hướng dẫn đặt lại mật khẩu sẽ được gửi'
-    );
+  if (recentRequests >= passwordResetConfig.maxRequestsPerWindow) {
+    throw new BadRequestError('Vui lòng thử lại sau 1 giờ');
   }
 
-  // Tạo reset token ngẫu nhiên (6 ký tự, dễ nhập thủ công)
-  const resetToken = crypto.randomBytes(3).toString('hex').toUpperCase();
-  const resetExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 phút
+  const latestActiveRequest = await PasswordResetOtp.findOne({
+    where: {
+      userId: user.id,
+      channel,
+      consumedAt: null,
+    },
+    order: [['createdAt', 'DESC']],
+  });
 
-  // Lưu token vào refreshToken field (tận dụng field có sẵn)
-  // Format: RESET:<token>:<expires_timestamp>
-  user.refreshToken = `RESET:${resetToken}:${resetExpires.getTime()}`;
-  await user.save();
+  if (latestActiveRequest?.lastSentAt) {
+    const lastSentAt = new Date(latestActiveRequest.lastSentAt).getTime();
+    if (now - lastSentAt < passwordResetConfig.resendCooldownMs) {
+      return successResponse(res, {
+        message: 'OTP đã được gửi gần đây. Vui lòng kiểm tra lại.',
+        channel,
+        destinationMasked: maskDestination(channel, latestActiveRequest.destination),
+      }, 'Nếu tài khoản tồn tại, OTP sẽ được gửi');
+    }
+  }
 
-  // TODO: Gửi email chứa resetToken trong production
-  // Ở môi trường dev, trả token trực tiếp để test
+  const otp = generateOtpCode();
+  const destination = channel === 'email' ? user.email : user.phone;
+
+  if (latestActiveRequest) {
+    latestActiveRequest.identifier = normalizedIdentifier;
+    latestActiveRequest.destination = destination;
+    latestActiveRequest.otpHash = hashResetValue(otp);
+    latestActiveRequest.resetTokenHash = null;
+    latestActiveRequest.resetTokenExpiresAt = null;
+    latestActiveRequest.expiresAt = new Date(Date.now() + passwordResetConfig.otpTtlMs);
+    latestActiveRequest.verifiedAt = null;
+    latestActiveRequest.consumedAt = null;
+    latestActiveRequest.attemptCount = 0;
+    latestActiveRequest.sendCount = (latestActiveRequest.sendCount || 0) + 1;
+    latestActiveRequest.lastSentAt = new Date();
+    latestActiveRequest.ipAddress = req.ip || null;
+    latestActiveRequest.userAgent = req.get('user-agent') || null;
+    await latestActiveRequest.save();
+  } else {
+    await PasswordResetOtp.create({
+      userId: user.id,
+      identifier: normalizedIdentifier,
+      channel,
+      destination,
+      otpHash: hashResetValue(otp),
+      expiresAt: new Date(Date.now() + passwordResetConfig.otpTtlMs),
+      verifiedAt: null,
+      consumedAt: null,
+      attemptCount: 0,
+      sendCount: 1,
+      lastSentAt: new Date(),
+      ipAddress: req.ip || null,
+      userAgent: req.get('user-agent') || null,
+    });
+  }
+
+  await sendPasswordResetOtp({
+    channel,
+    destination,
+    otp,
+    fullName: user.fullName,
+  });
+
   const responseData = {
-    message: 'Mã xác nhận đã được tạo',
-    email: user.email ? user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3') : null,
+    message: 'OTP đã được gửi',
+    channel,
+    destinationMasked: maskDestination(channel, destination),
+    expiresInSeconds: Math.floor(passwordResetConfig.otpTtlMs / 1000),
   };
 
-  if (process.env.NODE_ENV === 'development') {
-    responseData.resetToken = resetToken;
+  if (config.isDevelopment) {
+    responseData.debugOtp = otp;
   }
 
-  return successResponse(res, responseData,
-    'Nếu tài khoản tồn tại, hướng dẫn đặt lại mật khẩu sẽ được gửi'
-  );
+  return successResponse(res, responseData, 'Nếu tài khoản tồn tại, OTP sẽ được gửi');
 });
 
-/**
- * Đặt lại mật khẩu bằng reset token
- * POST /api/auth/reset-password
- */
-const resetPassword = asyncHandler(async (req, res) => {
-  const { token, newPassword, confirmPassword } = req.body;
+const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
+  const { identifier, otp } = req.body;
+  const normalizedIdentifier = String(identifier || '').trim();
 
-  if (!token || !newPassword) {
-    throw new BadRequestError('Vui lòng cung cấp mã xác nhận và mật khẩu mới');
+  if (!normalizedIdentifier || !otp) {
+    throw new BadRequestError('Thiếu thông tin');
+  }
+
+  const channel = resolveIdentifierChannel(normalizedIdentifier);
+  const user = await findUserByIdentifier(normalizedIdentifier);
+  if (!user || !channel) {
+    throw new BadRequestError('Mã OTP không hợp lệ hoặc đã hết hạn');
+  }
+
+  const record = await PasswordResetOtp.findOne({
+    where: {
+      userId: user.id,
+      identifier: normalizedIdentifier,
+      channel,
+      consumedAt: null,
+    },
+    order: [['createdAt', 'DESC']],
+  });
+
+  if (!record || !record.otpHash || !record.expiresAt || new Date(record.expiresAt).getTime() < Date.now()) {
+    throw new BadRequestError('Mã OTP không hợp lệ hoặc đã hết hạn');
+  }
+
+  const submittedHash = hashResetValue(String(otp).trim());
+  if (submittedHash !== record.otpHash) {
+    record.attemptCount = (record.attemptCount || 0) + 1;
+    if (record.attemptCount >= passwordResetConfig.maxAttempts) {
+      record.consumedAt = new Date();
+    }
+    await record.save();
+    throw new BadRequestError('Mã OTP không hợp lệ hoặc đã hết hạn');
+  }
+
+  const resetToken = buildPasswordResetToken();
+  record.verifiedAt = new Date();
+  record.resetTokenHash = hashResetValue(resetToken);
+  record.resetTokenExpiresAt = new Date(Date.now() + passwordResetConfig.resetTokenTtlMs);
+  await record.save();
+
+  return successResponse(res, {
+    resetToken,
+    expiresInSeconds: Math.floor(passwordResetConfig.resetTokenTtlMs / 1000),
+    channel,
+    destinationMasked: maskDestination(channel, record.destination),
+  }, 'OTP hợp lệ');
+});
+
+const resetPasswordWithOtp = asyncHandler(async (req, res) => {
+  const { identifier, resetToken, newPassword, confirmPassword } = req.body;
+  const normalizedIdentifier = String(identifier || '').trim();
+
+  if (!normalizedIdentifier || !resetToken || !newPassword) {
+    throw new BadRequestError('Vui lòng cung cấp mã xác thực và mật khẩu mới');
   }
 
   if (newPassword.length < 6) {
@@ -614,29 +768,35 @@ const resetPassword = asyncHandler(async (req, res) => {
     throw new BadRequestError('Mật khẩu xác nhận không khớp');
   }
 
-  // Tìm user có reset token phù hợp và chưa hết hạn
-  const users = await User.findAll({
-    where: {
-      isActive: true,
-    },
-  });
-
-  const user = users.find((u) => {
-    if (!u.refreshToken || !u.refreshToken.startsWith('RESET:')) return false;
-    const parts = u.refreshToken.split(':');
-    if (parts.length !== 3) return false;
-    const [, savedToken, expires] = parts;
-    return savedToken === token.toUpperCase() && parseInt(expires) > Date.now();
-  });
-
-  if (!user) {
-    throw new BadRequestError('Mã xác nhận không hợp lệ hoặc đã hết hạn');
+  const channel = resolveIdentifierChannel(normalizedIdentifier);
+  const user = await findUserByIdentifier(normalizedIdentifier);
+  if (!user || !channel) {
+    throw new BadRequestError('Mã xác thực không hợp lệ hoặc đã hết hạn');
   }
 
-  // Cập nhật mật khẩu và xóa reset token
+  const tokenHash = hashResetValue(String(resetToken).trim());
+  const record = await PasswordResetOtp.findOne({
+    where: {
+      userId: user.id,
+      identifier: normalizedIdentifier,
+      channel,
+      resetTokenHash: tokenHash,
+      consumedAt: null,
+    },
+    order: [['createdAt', 'DESC']],
+  });
+
+  if (!record || !record.verifiedAt || !record.resetTokenExpiresAt || new Date(record.resetTokenExpiresAt).getTime() < Date.now()) {
+    throw new BadRequestError('Mã xác thực không hợp lệ hoặc đã hết hạn');
+  }
+
   user.password = newPassword;
   user.refreshToken = null;
+  user.mustChangePassword = false;
   await user.save();
+
+  record.consumedAt = new Date();
+  await record.save();
 
   return successResponse(res, null, 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.');
 });
@@ -720,8 +880,9 @@ export {
   getCurrentUser,
   changePassword,
   updateProfile,
-  forgotPassword,
-  resetPassword,
+  requestPasswordResetOtp,
+  verifyPasswordResetOtp,
+  resetPasswordWithOtp,
   completeChangePassword,
   completeProfile,
 };

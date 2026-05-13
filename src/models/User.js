@@ -2,7 +2,7 @@
  * User Model
  * Handles all user types: admin, doctor, receptionist, pharmacist, patient
  */
-import { DataTypes } from 'sequelize';
+import { DataTypes, Op } from 'sequelize';
 import bcrypt from 'bcryptjs';
 import validator from 'validator';
 import config from '../config/index.js';
@@ -18,15 +18,6 @@ export default (sequelize) => {
         primaryKey: true,
         allowNull: false,
         field: 'id',
-      },
-      username: {
-        type: DataTypes.STRING(50),
-        allowNull: false,
-        unique: true,
-        validate: {
-          len: [3, 50],
-          isAlphanumeric: true,
-        },
       },
       staffCode: {
         type: DataTypes.STRING(16),
@@ -69,7 +60,8 @@ export default (sequelize) => {
       },
       phone: {
         type: DataTypes.STRING(15),
-        allowNull: true,
+        allowNull: false,
+        unique: true,
         validate: {
           is: /^[0-9+\-\s()]*$/,
         },
@@ -137,7 +129,6 @@ export default (sequelize) => {
       updatedAt: 'updated_at',
       deletedAt: 'deleted_at',
       indexes: [
-        { fields: ['username'] },
         { fields: ['email'] },
         { fields: ['role'] },
         { fields: ['phone'] },
@@ -188,8 +179,8 @@ export default (sequelize) => {
   };
 
   // Class methods
-  User.findByUsername = function (username) {
-    return this.findOne({ where: { username, isActive: true } });
+  User.findByPhone = function (phone) {
+    return this.findOne({ where: { phone, isActive: true } });
   };
 
   User.findByEmail = function (email) {

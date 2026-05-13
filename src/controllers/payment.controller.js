@@ -387,17 +387,12 @@ const buildPaymentIncludes = () => ([
   {
     model: MedicalExamination,
     as: 'examination',
+    attributes: ['ExaminationID', 'DoctorID', 'PatientId', 'ExaminationDate', 'Diagnosis', 'Status'],
     include: [
       {
         model: User,
         as: 'doctor',
         attributes: ['id', 'fullName', 'full_name'],
-        required: false,
-      },
-      {
-        model: Patient,
-        as: 'patient',
-        attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender', 'address'],
         required: false,
       },
     ],
@@ -406,11 +401,13 @@ const buildPaymentIncludes = () => ([
   {
     model: Prescription,
     as: 'prescription',
+    attributes: ['PrescriptionID', 'ExaminationID', 'Status'],
     required: false,
   },
   {
     model: LabOrder,
     as: 'labOrder',
+    attributes: ['LabOrderID', 'ExaminationID', 'Status'],
     required: false,
   },
   {
@@ -443,13 +440,9 @@ const buildPaymentWhere = (query = {}) => {
     };
   }
 
+  // Simplified search - removed nested associations to prevent SQL errors
   if (search) {
-    const like = `%${search}%`;
-    where[Op.or] = [
-      { id: { [Op.like]: like } },
-      { '$patient.fullName$': { [Op.like]: like } },
-      { '$patient.phone$': { [Op.like]: like } },
-    ];
+    where.id = { [Op.like]: `%${search}%` };
   }
 
   return where;
@@ -498,17 +491,34 @@ const getAllPayments = asyncHandler(async (req, res) => {
   const where = buildPaymentWhere(req.query);
   const order = parseSort(sort, ['invoiceDate', 'totalAmount', 'status', 'createdAt', 'updatedAt'], 'invoiceDate:desc');
 
+  // Simplified query - fetch payments first, then manually populate related data if needed
   const { count, rows } = await Payment.findAndCountAll({
     where,
     order,
     limit,
     offset,
-    distinct: true,
-    include: buildPaymentIncludes(),
+  });
+
+  // Manually fetch related patient data for each payment
+  const patientIds = [...new Set(rows.map(r => r.patientId).filter(Boolean))];
+  const patients = patientIds.length > 0 
+    ? await Patient.findAll({ where: { id: patientIds }, attributes: ['id', 'fullName', 'phone'] })
+    : [];
+  
+  const patientMap = new Map(patients.map(p => [p.id, p]));
+
+  // Attach patient data to each payment
+  const enrichedRows = rows.map(row => {
+    const plain = row.get({ plain: true });
+    const patient = patientMap.get(plain.patientId);
+    return {
+      ...plain,
+      patient: patient ? patient.get({ plain: true }) : null,
+    };
   });
 
   return paginatedResponse(res, {
-    data: rows.map((row) => serializePayment(row)),
+    data: enrichedRows.map((row) => serializePayment(row)),
     page,
     limit,
     total: count,

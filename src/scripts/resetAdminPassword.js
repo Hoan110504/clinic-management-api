@@ -15,14 +15,14 @@ async function run() {
       process.exit(1);
     }
 
-    const username = 'admin';
+    const phone = '0901234567';
     const newPassword = 'admin123';
 
-    let user = await User.findOne({ where: { username } });
+    let user = await User.findOne({ where: { phone } });
     if (!user) {
       logger.info('Admin user not found, creating new admin...');
       user = await User.create({
-        username,
+        phone,
         email: 'admin@phongkham.com',
         password: newPassword,
         fullName: 'Quản Trị Viên',
@@ -36,7 +36,7 @@ async function run() {
       logger.info('Updated admin password.');
     }
 
-    logger.info(`Admin credentials: ${username} / ${newPassword}`);
+    logger.info(`Admin credentials: ${phone} / ${newPassword}`);
     process.exit(0);
   } catch (err) {
     logger.error('Failed to reset admin password:', err);

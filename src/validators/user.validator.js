@@ -6,13 +6,13 @@ import { body, param, query } from 'express-validator';
 import { ROLES, GENDER } from '../config/constants.js';
 
 const createUserValidator = [
-  body('username')
+  body('phone')
     .notEmpty()
-    .withMessage('Tên đăng nhập không được để trống')
-    .isLength({ min: 3, max: 50 })
-    .withMessage('Tên đăng nhập phải từ 3-50 ký tự')
-    .isAlphanumeric()
-    .withMessage('Tên đăng nhập chỉ được chứa chữ cái và số'),
+    .withMessage('Số điện thoại không được để trống')
+    .isLength({ min: 3, max: 15 })
+    .withMessage('Số điện thoại phải từ 3-15 ký tự')
+    .matches(/^[0-9+\-\s()]*$/)
+    .withMessage('Số điện thoại không hợp lệ'),
   body('email')
     .optional({ nullable: true, checkFalsy: true })
     .isEmail()
@@ -35,10 +35,6 @@ const createUserValidator = [
     .toInt()
     .isIn(Object.values(ROLES))
     .withMessage('Vai trò không hợp lệ'),
-  body('phone')
-    .optional()
-    .matches(/^[0-9+\-\s()]*$/)
-    .withMessage('Số điện thoại không hợp lệ'),
   body('gender')
     .optional()
     .isIn(Object.values(GENDER))

@@ -83,14 +83,13 @@ const getAllUsers = asyncHandler(async (req, res) => {
   if (search) {
     where[Op.or] = [
       { fullName: { [Op.like]: `%${search}%` } },
-      { username: { [Op.like]: `%${search}%` } },
       { email: { [Op.like]: `%${search}%` } },
       { phone: { [Op.like]: `%${search}%` } },
     ];
   }
 
   // Parse sort
-  const order = parseSort(sort, ['created_at', 'full_name', 'username', 'role']);
+  const order = parseSort(sort, ['created_at', 'full_name', 'role']);
 
   // Include Patient association for patients to get patientCode
   const include = [];
@@ -180,7 +179,6 @@ const getUserById = asyncHandler(async (req, res) => {
  */
 const createUser = asyncHandler(async (req, res) => {
   const {
-    username,
     email,
     password,
     fullName,
@@ -193,24 +191,15 @@ const createUser = asyncHandler(async (req, res) => {
     signature,
   } = req.body;
 
+  // Phone is required as account identifier
+  if (!phone || String(phone).trim() === '') {
+    throw new ValidationError('Dữ liệu không hợp lệ', [
+      { field: 'phone', message: 'Số điện thoại là bắt buộc' },
+    ]);
+  }
+
   // Normalize email: convert empty string to null to avoid UNIQUE constraint violation
   const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
-
-  // Check existing username
-  // Check existing username/email including soft-deleted records so we can
-  // either fail fast or clean up soft-deleted duplicates before creating.
-  const existingUser = await User.findOne({ where: { username }, paranoid: false });
-  if (existingUser) {
-    if (existingUser.deletedAt) {
-      // Remove soft-deleted conflicting record so we can recreate
-      await existingUser.destroy({ force: true });
-    } else {
-      // Return field-level validation error for username
-      throw new ValidationError('Dữ liệu không hợp lệ', [
-        { field: 'username', message: 'Tên đăng nhập đã tồn tại' },
-      ]);
-    }
-  }
 
   // Check existing email only when provided
   if (normalizedEmail) {
@@ -249,19 +238,18 @@ const createUser = asyncHandler(async (req, res) => {
     // Create user within transaction
     try {
       user = await User.create({
-        username,
-        staffCode: nextStaffCode,
-        email: normalizedEmail,
-        password,
-        fullName,
-        role,
-        phone,
-        dateOfBirth,
-        gender,
-        address,
-        idNumber,
-        signature,
-      }, { transaction: t });
+          staffCode: nextStaffCode,
+          email: normalizedEmail,
+          password,
+          fullName,
+          role,
+          phone,
+          dateOfBirth,
+          gender,
+          address,
+          idNumber,
+          signature,
+        }, { transaction: t });
     } catch (err) {
       // Handle DB unique constraint errors caused by soft-deleted rows (MSSQL UQ__...)
       if (err && err.name === 'SequelizeUniqueConstraintError') {
@@ -280,7 +268,6 @@ const createUser = asyncHandler(async (req, res) => {
 
           // Retry create once within same transaction
           user = await User.create({
-            username,
             staffCode: await buildNextStaffCode(role, t),
             email: normalizedEmail,
             password,
@@ -393,7 +380,6 @@ const createUser = asyncHandler(async (req, res) => {
             conflictCount: conflicts.length,
             conflicts: conflicts.map((c) => ({ id: c.id, userId: c.userId, deletedAt: c.deletedAt })),
             requestBodySample: {
-              username: req.body.username,
               email: req.body.email,
               phone: req.body.phone,
             },
@@ -416,7 +402,6 @@ const createUser = asyncHandler(async (req, res) => {
               try {
                 // Recreate user
                 user = await User.create({
-                  username,
                   staffCode: await buildNextStaffCode(role, t2),
                   email: normalizedEmail,
                   password,
@@ -509,7 +494,7 @@ const createUser = asyncHandler(async (req, res) => {
           errFields: err.fields,
           errErrors: Array.isArray(err.errors) ? err.errors.map(e => ({ path: e.path, message: e.message, value: e.value })) : undefined,
           parent: err.parent && err.parent.message ? String(err.parent.message) : undefined,
-          requestBodySample: { username: req.body.username, email: req.body.email, phone: req.body.phone },
+          requestBodySample: { email: req.body.email, phone: req.body.phone },
         });
       } catch (logErr) {
         // ignore logging failures
@@ -536,7 +521,6 @@ const createUser = asyncHandler(async (req, res) => {
       // 2) Parse parent message (MSSQL / dialect error text) for keywords
       const parentMsg = err.parent && err.parent.message ? String(err.parent.message).toLowerCase() : '';
       if (parentMsg) {
-        if (parentMsg.includes('username')) details.push({ field: 'username', message: 'Tên đăng nhập đã tồn tại' });
         if (parentMsg.includes('email')) details.push({ field: 'email', message: 'Email đã được sử dụng' });
         if (parentMsg.includes('phone')) details.push({ field: 'phone', message: 'Số điện thoại đã được sử dụng' });
         if (parentMsg.includes('patients') || parentMsg.includes('cccd') || parentMsg.includes('cmnd') || parentMsg.includes('id_number')) {
@@ -606,8 +590,6 @@ const updateUser = asyncHandler(async (req, res) => {
     }
   }
 
-  // Don't allow changing username
-  delete updateData.username;
   // Don't allow changing password through this endpoint
   delete updateData.password;
 
