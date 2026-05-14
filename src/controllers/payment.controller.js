@@ -392,7 +392,7 @@ const buildPaymentIncludes = () => ([
       {
         model: User,
         as: 'doctor',
-        attributes: ['id', 'fullName', 'full_name'],
+        attributes: ['id', 'fullName', 'phone'],
         required: false,
       },
     ],
@@ -413,13 +413,13 @@ const buildPaymentIncludes = () => ([
   {
     model: User,
     as: 'collectedByUser',
-    attributes: ['id', 'full_name', 'fullName', 'username'],
+    attributes: ['id', 'fullName', 'phone'],
     required: false,
   },
   {
     model: User,
     as: 'createdByUser',
-    attributes: ['id', 'full_name', 'fullName', 'username'],
+    attributes: ['id', 'fullName', 'phone'],
     required: false,
   },
 ]);

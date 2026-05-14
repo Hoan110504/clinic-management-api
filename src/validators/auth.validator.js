@@ -93,6 +93,24 @@ const passwordResetVerifyValidator = [
     .withMessage('Mã OTP phải gồm 6 chữ số'),
 ];
 
+const passwordResetVerifyPhoneValidator = [
+  body('identifier')
+    .notEmpty()
+    .withMessage('Số điện thoại hoặc email không được để trống')
+    .custom((value) => {
+      const text = String(value || '').trim();
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
+      if (!isEmail && !isPhone) {
+        throw new Error('Số điện thoại hoặc email không hợp lệ');
+      }
+      return true;
+    }),
+  body('firebaseIdToken')
+    .notEmpty()
+    .withMessage('Firebase id token không được để trống'),
+];
+
 const passwordResetConfirmValidator = [
   body('identifier')
     .notEmpty()
@@ -191,6 +209,7 @@ const refreshToken = refreshTokenValidator;
 const completeChangePassword = completeChangePasswordValidator;
 const passwordResetRequest = passwordResetRequestValidator;
 const passwordResetVerify = passwordResetVerifyValidator;
+const passwordResetVerifyPhone = passwordResetVerifyPhoneValidator;
 const passwordResetConfirm = passwordResetConfirmValidator;
 
 export {

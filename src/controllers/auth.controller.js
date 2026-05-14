@@ -28,6 +28,7 @@ import {
   resolveIdentifierChannel,
   sendPasswordResetOtp,
 } from '../services/passwordReset.service.js';
+import { verifyIdToken } from '../services/firebase.service.js';
 
 /**
  * Tạo cặp token (access + refresh)
@@ -667,6 +668,7 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
       identifier: normalizedIdentifier,
       channel,
       destination,
+      // Store a verifiable OTP for both channels so the client can fall back when Firebase Phone Auth is unavailable.
       otpHash: hashResetValue(otp),
       expiresAt: new Date(Date.now() + passwordResetConfig.otpTtlMs),
       verifiedAt: null,
@@ -679,12 +681,10 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
     });
   }
 
-  await sendPasswordResetOtp({
-    channel,
-    destination,
-    otp,
-    fullName: user.fullName,
-  });
+  // For email, send OTP via SMTP. For SMS, instruct client to use Firebase Phone Authentication.
+  if (channel === 'email') {
+    await sendPasswordResetOtp({ channel, destination, otp, fullName: user.fullName });
+  }
 
   const responseData = {
     message: 'OTP đã được gửi',
@@ -750,6 +750,67 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
     channel,
     destinationMasked: maskDestination(channel, record.destination),
   }, 'OTP hợp lệ');
+});
+
+const verifyPasswordResetViaFirebase = asyncHandler(async (req, res) => {
+  const { identifier, firebaseIdToken } = req.body;
+  const normalizedIdentifier = String(identifier || '').trim();
+
+  if (!normalizedIdentifier || !firebaseIdToken) {
+    throw new BadRequestError('Thiếu thông tin');
+  }
+
+  const channel = resolveIdentifierChannel(normalizedIdentifier);
+  if (!channel || channel !== 'sms') {
+    throw new BadRequestError('Kênh xác thực không hợp lệ');
+  }
+
+  const user = await findUserByIdentifier(normalizedIdentifier);
+  if (!user) throw new BadRequestError('Tài khoản không tồn tại');
+
+  // Verify token with Firebase Admin
+  let decoded;
+  try {
+    decoded = await verifyIdToken(firebaseIdToken);
+  } catch (e) {
+    throw new BadRequestError('Firebase token không hợp lệ');
+  }
+
+  const phoneFromToken = decoded?.phone_number;
+  if (!phoneFromToken) throw new BadRequestError('Firebase token không chứa số điện thoại');
+
+  const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+  const tokenDigits = normalizeDigits(phoneFromToken);
+  const userDigits = normalizeDigits(user.phone);
+
+  if (!tokenDigits || !userDigits || (!tokenDigits.endsWith(userDigits) && !userDigits.endsWith(tokenDigits))) {
+    throw new BadRequestError('Số điện thoại trong Firebase token không khớp');
+  }
+
+  const record = await PasswordResetOtp.findOne({
+    where: {
+      userId: user.id,
+      identifier: normalizedIdentifier,
+      channel: 'sms',
+      consumedAt: null,
+    },
+    order: [['createdAt', 'DESC']],
+  });
+
+  if (!record) throw new BadRequestError('Yêu cầu đặt lại mật khẩu không hợp lệ hoặc đã hết hạn');
+
+  const resetToken = buildPasswordResetToken();
+  record.verifiedAt = new Date();
+  record.resetTokenHash = hashResetValue(resetToken);
+  record.resetTokenExpiresAt = new Date(Date.now() + passwordResetConfig.resetTokenTtlMs);
+  await record.save();
+
+  return successResponse(res, {
+    resetToken,
+    expiresInSeconds: Math.floor(passwordResetConfig.resetTokenTtlMs / 1000),
+    channel: 'sms',
+    destinationMasked: maskDestination('sms', record.destination),
+  }, 'Số điện thoại đã được xác thực');
 });
 
 const resetPasswordWithOtp = asyncHandler(async (req, res) => {
@@ -882,6 +943,7 @@ export {
   updateProfile,
   requestPasswordResetOtp,
   verifyPasswordResetOtp,
+  verifyPasswordResetViaFirebase,
   resetPasswordWithOtp,
   completeChangePassword,
   completeProfile,

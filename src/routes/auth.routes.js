@@ -116,6 +116,13 @@ router.post(
 );
 
 router.post(
+  '/forgot-password/verify-phone',
+  passwordResetLimiter,
+  validate(authValidator.passwordResetVerifyPhone),
+  authController.verifyPasswordResetViaFirebase
+);
+
+router.post(
   '/forgot-password/reset-password',
   passwordResetLimiter,
   validate(authValidator.passwordResetConfirm),

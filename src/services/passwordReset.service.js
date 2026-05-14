@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
-import Twilio from 'twilio';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 
@@ -67,49 +66,6 @@ const resolveSmtpFromAddress = () => {
   return configuredFrom;
 };
 
-const getTwilioClient = () => {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-  if (!accountSid || !authToken) return null;
-  return Twilio(accountSid, authToken);
-};
-
-const isTwilioRecipientVerified = async (client, phoneNumber) => {
-  if (!client || !phoneNumber) return false;
-
-  try {
-    const verified = await client.outgoingCallerIds.list({ phoneNumber, limit: 1 });
-    return Array.isArray(verified) && verified.length > 0;
-  } catch (error) {
-    logger.warn('Không kiểm tra được số nhận đã verify trên Twilio', {
-      phoneNumber: maskPhone(phoneNumber),
-      error: error?.message,
-    });
-    return false;
-  }
-};
-
-const normalizePhoneToE164 = (phone) => {
-  const raw = String(phone || '').trim();
-  if (!raw) return raw;
-
-  let digits = raw.replace(/[\s().-]/g, '');
-  if (digits.startsWith('+')) {
-    return `+${digits.slice(1).replace(/\D/g, '')}`;
-  }
-
-  digits = digits.replace(/\D/g, '');
-  // VN local format 0xxxxxxxxx -> +84xxxxxxxxx
-  if (digits.startsWith('0')) {
-    return `+84${digits.slice(1)}`;
-  }
-  // If already starts with country code without plus
-  if (digits.startsWith('84')) {
-    return `+${digits}`;
-  }
-  return `+${digits}`;
-};
 
 const maskEmail = (email) => {
   const text = String(email || '').trim();
@@ -149,45 +105,14 @@ const sendEmailOtp = async ({ to, otp, fullName }) => {
   return { provider: 'smtp', delivered: true };
 };
 
-const sendSmsOtp = async ({ to, otp, fullName }) => {
-  const client = getTwilioClient();
-  const from = process.env.TWILIO_PHONE_NUMBER;
-  const toE164 = normalizePhoneToE164(to);
-
-  if (!client || !from) {
-    if (config.isDevelopment) {
-      logger.info('Password reset OTP (sms fallback)', { to: maskPhone(to), otp, fullName });
-      return { provider: 'log', delivered: true };
-    }
-    throw new Error('Thiếu cấu hình Twilio để gửi OTP qua SMS');
-  }
-
-  const recipientVerified = await isTwilioRecipientVerified(client, toE164);
-  if (!recipientVerified) {
-    throw new Error('So dien thoai nhan chua duoc verify trong Twilio trial. Hay verify so nhan trong Twilio Console');
-  }
-
-  try {
-    await client.messages.create({
-      body: `Ma OTP dat lai mat khau cua ban la: ${otp}. Hieu luc 10 phut.`,
-      from,
-      to: toE164,
-    });
-  } catch (error) {
-    const twilioCode = error?.code;
-    if (twilioCode === 21606 || twilioCode === 21212 || twilioCode === 21659) {
-      throw new Error('So dien thoai gui Twilio khong hop le hoac khong thuoc tai khoan Twilio');
-    }
-    if (twilioCode === 21608) {
-      throw new Error('Twilio trial chi gui den so da verify trong Twilio Console');
-    }
-    if (twilioCode === 20003 || twilioCode === 20429) {
-      throw new Error('Twilio authentication/permission error. Kiem tra SID, token va trial restrictions');
-    }
-    throw error;
-  }
-
-  return { provider: 'twilio', delivered: true };
+// SMS delivery is handled by Firebase Phone Authentication on the client.
+// Server-side SMS sending via Twilio was removed; the flow is:
+// 1) Client triggers Firebase phone verification (reCAPTCHA + send SMS).
+// 2) Client obtains `idToken` after signInWithPhoneNumber confirmation.
+// 3) Client calls server endpoint `/forgot-password/verify-phone` with that token.
+// The server verifies the token via Firebase Admin and issues a password reset token.
+const sendSmsOtp = async () => {
+  throw new Error('SMS delivery no longer supported server-side. Use Firebase Phone Authentication on the client and call /forgot-password/verify-phone');
 };
 
 export const sendPasswordResetOtp = async ({ channel, destination, otp, fullName }) => {
