@@ -248,7 +248,7 @@ const getPatientById = asyncHandler(async (req, res) => {
     ],
   });
 
-        attributes: ['id', 'fullName', 'staffCode', 'email', 'phone', 'lastLoginAt'],
+  if (!patient) {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
@@ -427,14 +427,78 @@ const updatePatient = asyncHandler(async (req, res) => {
   if (userRole === ROLES.PATIENT) {
     try {
       patient = await Patient.findOne({ where: { userId: currentUser.id } });
-      if (patient) foundByUser = true;
+      if (patient) {
+        foundByUser = true;
+        logger.debug('patient.update - found patient by userId', { patientId: patient.id, userId: currentUser.id });
+      }
     } catch (e) {
       logger.warn('patient.update - lookup by userId failed', e.message || e);
     }
-  }
 
-  // If we didn't find it by user, fall back to the route id
-  if (!patient) {
+    // If not found by userId, try to find by route id and auto-link if possible
+    if (!patient) {
+      try {
+        const candidatePatient = await Patient.findByPk(id);
+        if (candidatePatient) {
+          // Try to auto-link if patient record has no userId yet
+          if (!candidatePatient.userId) {
+            const userIdNumber = currentUser.idNumber || currentUser.id_number || null;
+            const userEmail = (currentUser.email || '').toLowerCase() || null;
+            const patientIdNumber = candidatePatient.idNumber || candidatePatient.id_number || null;
+            const patientEmail = (candidatePatient.email || '').toLowerCase() || null;
+            const userPhone = currentUser.phone || null;
+            const patientPhone = candidatePatient.phone || null;
+
+            let canLink = false;
+            if (userIdNumber && patientIdNumber && String(userIdNumber) === String(patientIdNumber)) {
+              canLink = true;
+            } else if (userEmail && patientEmail && userEmail === patientEmail) {
+              canLink = true;
+            } else if (userPhone && patientPhone && String(userPhone) === String(patientPhone)) {
+              canLink = true;
+            }
+
+            if (canLink) {
+              candidatePatient.userId = currentUser.id;
+              await candidatePatient.save();
+              patient = candidatePatient;
+              foundByUser = true;
+              logger.info('patient.update - auto-linked patient to user', { patientId: patient.id, userId: currentUser.id });
+            }
+          } else if (String(candidatePatient.userId) === String(currentUser.id)) {
+            // Patient already linked to this user
+            patient = candidatePatient;
+            foundByUser = true;
+          }
+        }
+      } catch (e) {
+        logger.warn('patient.update - auto-link attempt failed', e.message || e);
+      }
+    }
+
+    // If still not found, try to create a new patient record for this user
+    if (!patient) {
+      try {
+        logger.info('patient.update - creating new patient record for user', { userId: currentUser.id });
+        patient = await Patient.create({
+          userId: currentUser.id,
+          fullName: currentUser.fullName || currentUser.full_name || 'Bệnh nhân',
+          phone: currentUser.phone || null,
+          email: currentUser.email || null,
+          address: currentUser.address || null,
+          idNumber: currentUser.idNumber || currentUser.id_number || null,
+          dateOfBirth: currentUser.dateOfBirth || currentUser.date_of_birth || null,
+          gender: currentUser.gender || null,
+        });
+        foundByUser = true;
+        logger.info('patient.update - created new patient record', { patientId: patient.id, userId: currentUser.id });
+      } catch (e) {
+        logger.error('patient.update - failed to create patient record', e.message || e);
+        throw new NotFoundError('Không tìm thấy hồ sơ bệnh nhân để cập nhật');
+      }
+    }
+  } else {
+    // For non-patient roles, just fetch by id
     patient = await Patient.findByPk(id);
   }
 
