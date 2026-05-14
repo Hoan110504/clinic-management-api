@@ -249,6 +249,8 @@ const createUser = asyncHandler(async (req, res) => {
           address,
           idNumber,
           signature,
+          // Bệnh nhân được tạo bởi admin phải liên kết Telegram lần đầu đăng nhập
+          mustLinkTelegram: role === ROLES.PATIENT,
         }, { transaction: t });
     } catch (err) {
       // Handle DB unique constraint errors caused by soft-deleted rows (MSSQL UQ__...)
@@ -278,6 +280,8 @@ const createUser = asyncHandler(async (req, res) => {
             gender,
             address,
             idNumber,
+            // Bệnh nhân được tạo bởi admin phải liên kết Telegram lần đầu đăng nhập
+            mustLinkTelegram: role === ROLES.PATIENT,
             signature,
           }, { transaction: t });
         } else {

@@ -116,17 +116,22 @@ router.post(
 );
 
 router.post(
-  '/forgot-password/verify-phone',
-  passwordResetLimiter,
-  validate(authValidator.passwordResetVerifyPhone),
-  authController.verifyPasswordResetViaFirebase
-);
-
-router.post(
   '/forgot-password/reset-password',
   passwordResetLimiter,
   validate(authValidator.passwordResetConfirm),
   authController.resetPasswordWithOtp
+);
+
+router.get(
+  '/telegram-link-status',
+  validate(authValidator.telegramLinkStatus),
+  authController.telegramLinkStatus
+);
+
+router.post(
+  '/telegram-link-webhook',
+  validate(authValidator.telegramLinkWebhook),
+  authController.telegramLinkWebhook
 );
 
 /**
@@ -147,5 +152,21 @@ router.post(
  * @access Public
  */
 router.post('/complete-profile', authController.completeProfile);
+
+/**
+ * @route POST /api/auth/complete-telegram-link
+ * @desc Complete Telegram linking for patients created by admin
+ * @access Public
+ */
+router.post('/complete-telegram-link', authController.completeTelegramLink);
+
+/**
+ * @route DELETE /api/auth/dev/clear-reset-requests
+ * @desc Clear all password reset requests (DEVELOPMENT ONLY)
+ * @access Public (but only works in development)
+ */
+if (process.env.NODE_ENV === 'development') {
+  router.delete('/dev/clear-reset-requests', authController.clearPasswordResetRequests);
+}
 
 export default router;

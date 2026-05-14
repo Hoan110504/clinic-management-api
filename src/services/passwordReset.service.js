@@ -22,8 +22,13 @@ export const isPhoneIdentifier = (value) => /^[0-9+\-\s()]{3,15}$/.test(String(v
 export const resolveIdentifierChannel = (identifier) => {
   const text = normalizeIdentifier(identifier);
   if (isEmailIdentifier(text)) return 'email';
-  if (isPhoneIdentifier(text)) return 'sms';
+  if (isPhoneIdentifier(text)) return 'telegram';
   return null;
+};
+
+export const normalizeTelegramChatId = (value) => {
+  const text = String(value || '').trim();
+  return text ? text : null;
 };
 
 export const generateOtpCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -81,7 +86,26 @@ const maskPhone = (phone) => {
   return `${text.slice(0, 3)}***${text.slice(-2)}`;
 };
 
-export const maskDestination = (channel, destination) => (channel === 'email' ? maskEmail(destination) : maskPhone(destination));
+const maskTelegram = (chatId) => {
+  const text = String(chatId || '').trim();
+  if (!text) return 'Telegram';
+
+  if (text.startsWith('@')) {
+    const handle = text.slice(1);
+    if (handle.length <= 2) return `@${handle}`;
+    return `@${handle.slice(0, 2)}***${handle.slice(-1)}`;
+  }
+
+  const digits = text.replace(/\D/g, '');
+  if (digits.length <= 4) return 'Telegram';
+  return `Telegram ...${digits.slice(-4)}`;
+};
+
+export const maskDestination = (channel, destination) => {
+  if (channel === 'email') return maskEmail(destination);
+  if (channel === 'telegram') return maskTelegram(destination);
+  return maskPhone(destination);
+};
 
 const sendEmailOtp = async ({ to, otp, fullName }) => {
   const transport = getSmtpTransport();
@@ -105,24 +129,64 @@ const sendEmailOtp = async ({ to, otp, fullName }) => {
   return { provider: 'smtp', delivered: true };
 };
 
-// SMS delivery is handled by Firebase Phone Authentication on the client.
-// Server-side SMS sending via Twilio was removed; the flow is:
-// 1) Client triggers Firebase phone verification (reCAPTCHA + send SMS).
-// 2) Client obtains `idToken` after signInWithPhoneNumber confirmation.
-// 3) Client calls server endpoint `/forgot-password/verify-phone` with that token.
-// The server verifies the token via Firebase Admin and issues a password reset token.
-const sendSmsOtp = async () => {
-  throw new Error('SMS delivery no longer supported server-side. Use Firebase Phone Authentication on the client and call /forgot-password/verify-phone');
+const getTelegramBotToken = () => String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
+const getTelegramChatId = (destination) => normalizeTelegramChatId(destination);
+
+const sendTelegramOtp = async ({ to, otp, fullName }) => {
+  const chatId = getTelegramChatId(to);
+  const botToken = getTelegramBotToken();
+
+  if (!chatId || !botToken) {
+    if (config.isDevelopment) {
+      logger.info('Password reset OTP (telegram fallback)', {
+        chatId: chatId || 'not-configured',
+        otp,
+      });
+      return { provider: 'log', delivered: true };
+    }
+
+    throw new Error('Thiếu cấu hình Telegram để gửi OTP');
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: `Xin chào ${fullName || ''},\n\nMã OTP đặt lại mật khẩu của bạn là: ${otp}\nMã có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy bỏ qua tin nhắn này.`,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Telegram API lỗi ${response.status}: ${errorText.slice(0, 200)}`);
+  }
+
+  return { provider: 'telegram', delivered: true };
 };
 
 export const sendPasswordResetOtp = async ({ channel, destination, otp, fullName }) => {
   if (channel === 'email') {
     return sendEmailOtp({ to: destination, otp, fullName });
   }
-  if (channel === 'sms') {
-    return sendSmsOtp({ to: destination, otp, fullName });
+  if (channel === 'telegram') {
+    return sendTelegramOtp({ to: destination, otp, fullName });
   }
   throw new Error('Kênh gửi OTP không hợp lệ');
+};
+
+export const resolvePasswordResetDestination = ({ channel, user }) => {
+  if (channel === 'email') {
+    return user?.email ? String(user.email).trim() : null;
+  }
+  if (channel === 'telegram') {
+    return normalizeTelegramChatId(user?.telegramChatId);
+  }
+
+  return null;
 };
 
 export const buildPasswordResetToken = () => crypto.randomBytes(32).toString('hex');

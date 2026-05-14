@@ -11,6 +11,7 @@ import config from './config/index.js';
 import { sequelize } from './models/database.js';
 import logger from './utils/logger.js';
 import { setupSocketIO } from './socket/index.js';
+import { startTelegramPolling } from './services/telegram.service.js';
 
 // Graceful shutdown handlers
 const gracefulShutdown = async (signal) => {
@@ -81,6 +82,12 @@ const startServer = async () => {
       logger.info(`Máy chủ đang chạy trên cổng ${config.port} (chế độ ${config.env})`);
       logger.info(`API truy cập tại http://localhost:${config.port}/api`);
       logger.info(`Socket.IO đã khởi động trên ws://localhost:${config.port}/socket.io`);
+      
+      // Start Telegram bot polling (development mode)
+      if (process.env.TELEGRAM_BOT_TOKEN) {
+        startTelegramPolling();
+        logger.info('🤖 Telegram bot polling đã khởi động');
+      }
     });
 
     // Handle server errors

@@ -114,7 +114,7 @@ const getCurrentUserPatient = asyncHandler(async (req, res) => {
       {
         model: User,
         as: 'user',
-        attributes: ['id', 'username', 'email', 'lastLoginAt'],
+        attributes: ['id', 'fullName', 'staffCode', 'email', 'phone', 'lastLoginAt'],
         required: false,
       },
     ],
@@ -183,7 +183,7 @@ const getPatientById = asyncHandler(async (req, res) => {
         {
           model: User,
           as: 'user',
-          attributes: ['id', 'username', 'email', 'lastLoginAt'],
+          attributes: ['id', 'fullName', 'staffCode', 'email', 'phone', 'lastLoginAt'],
           required: false,
         },
       ],
@@ -242,13 +242,13 @@ const getPatientById = asyncHandler(async (req, res) => {
       {
         model: User,
         as: 'user',
-        attributes: ['id', 'username', 'email', 'lastLoginAt'],
+        attributes: ['id', 'fullName', 'staffCode', 'email', 'phone', 'lastLoginAt'],
         required: false,
       },
     ],
   });
 
-  if (!patient) {
+        attributes: ['id', 'fullName', 'staffCode', 'email', 'phone', 'lastLoginAt'],
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 

@@ -66,6 +66,11 @@ export default (sequelize) => {
           is: /^[0-9+\-\s()]*$/,
         },
       },
+      telegramChatId: {
+        type: DataTypes.STRING(64),
+        allowNull: true,
+        field: 'telegram_chat_id',
+      },
       dateOfBirth: {
         type: DataTypes.DATEONLY,
         allowNull: true,
@@ -119,6 +124,12 @@ export default (sequelize) => {
         allowNull: false,
         defaultValue: false,
         field: 'must_change_password',
+      },
+      mustLinkTelegram: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        field: 'must_link_telegram',
       },
     },
     {

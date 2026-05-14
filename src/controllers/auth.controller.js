@@ -5,7 +5,7 @@
 import jwt from 'jsonwebtoken';
 import { Op } from 'sequelize';
 import config from '../config/index.js';
-import { User, Patient, PasswordResetOtp } from '../models/index.js';
+import { User, Patient, PasswordResetOtp, TelegramLinkSession } from '../models/index.js';
 import { asyncHandler } from '../utils/helpers.js';
 import {
   successResponse,
@@ -25,10 +25,10 @@ import {
   hashResetValue,
   maskDestination,
   passwordResetConfig,
+  resolvePasswordResetDestination,
   resolveIdentifierChannel,
   sendPasswordResetOtp,
 } from '../services/passwordReset.service.js';
-import { verifyIdToken } from '../services/firebase.service.js';
 
 /**
  * Tạo cặp token (access + refresh)
@@ -146,6 +146,26 @@ const login = asyncHandler(async (req, res) => {
     }, 'Bạn cần đổi mật khẩu trước khi tiếp tục');
   }
 
+  // If user is required to link Telegram (for patients created by admin)
+  // Issue tokens but flag that linking is required
+  if (user.mustLinkTelegram) {
+    const { accessToken, refreshToken } = generateTokens(user);
+    
+    user.refreshToken = refreshToken;
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    return successResponse(res, {
+      user: {
+        ...user.toJSON(),
+        patientId: null,
+      },
+      accessToken,
+      refreshToken,
+      mustLinkTelegram: true,
+    }, 'Đăng nhập thành công. Vui lòng liên kết Telegram để tiếp tục.');
+  }
+
   // Check for missing required profile fields on first login (for patients)
 if (roleId === ROLES.PATIENT) {
   const missing = [];
@@ -222,6 +242,7 @@ const register = asyncHandler(async (req, res) => {
     password,
     fullName,
     phone,
+    telegramChatId,
     dateOfBirth,
     gender,
     address,
@@ -253,11 +274,26 @@ const register = asyncHandler(async (req, res) => {
   }
 
   // Tạo user với role mặc định là patient
+  const linkedSession = await TelegramLinkSession.findOne({
+    where: {
+      phone,
+      consumedAt: null,
+    },
+    order: [['CreatedAt', 'DESC']],
+  });
+
+  if (!linkedSession || !linkedSession.telegramChatId) {
+    throw new ValidationError('Dữ liệu không hợp lệ', [
+      { field: 'telegramChatId', message: 'Vui lòng liên kết Telegram trước khi đăng ký' },
+    ]);
+  }
+
   const user = await User.create({
     email: normalizedEmail,
     password,
     fullName,
     phone,
+    telegramChatId: linkedSession.telegramChatId,
     dateOfBirth,
     gender,
     address,
@@ -302,6 +338,9 @@ const register = asyncHandler(async (req, res) => {
   // Save refresh token
   user.refreshToken = refreshToken;
   await user.save();
+
+  linkedSession.consumedAt = new Date();
+  await linkedSession.save();
 
   return createdResponse(res, {
     user: {
@@ -472,6 +511,7 @@ const updateProfile = asyncHandler(async (req, res) => {
     fullName,
     phone,
     email,
+    telegramChatId,
     address,
     signature,
     dateOfBirth,
@@ -486,6 +526,9 @@ const updateProfile = asyncHandler(async (req, res) => {
   } = req.body;
   // Normalize email: convert empty string or whitespace-only to null
   const normalizedEmail = email && String(email).trim() !== '' ? String(email).trim() : null;
+  const normalizedTelegramChatId = telegramChatId && String(telegramChatId).trim() !== ''
+    ? String(telegramChatId).trim()
+    : null;
   const user = req.user;
 
   // Check email uniqueness if changed (only when a non-null email is provided)
@@ -502,6 +545,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   phone: phone || user.phone,
   // If normalizedEmail is null, keep existing email; if it's a string, set it (allows clearing to null only via explicit null)
   email: normalizedEmail ?? user.email,
+  telegramChatId: normalizedTelegramChatId ?? user.telegramChatId,
   address: address || user.address,
   signature: signature || user.signature,
   dateOfBirth: dateOfBirth || user.dateOfBirth,
@@ -589,7 +633,8 @@ const findUserByIdentifier = async (identifier) => {
 };
 
 const requestPasswordResetOtp = asyncHandler(async (req, res) => {
-  const { identifier } = req.body;
+  const { phone, email } = req.body;
+  const identifier = phone || email;
   const normalizedIdentifier = String(identifier || '').trim();
 
   if (!normalizedIdentifier) {
@@ -604,7 +649,9 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
   const user = await findUserByIdentifier(normalizedIdentifier);
   if (!user) {
     return successResponse(res, {
-      message: 'Nếu tài khoản tồn tại, OTP sẽ được gửi đến kênh đã đăng ký',
+      message: channel === 'email' 
+        ? 'Nếu tài khoản tồn tại, OTP sẽ được gửi qua email'
+        : 'Nếu tài khoản tồn tại, OTP sẽ được gửi qua Telegram',
       channel,
       destinationMasked: null,
     }, 'Nếu tài khoản tồn tại, OTP sẽ được gửi');
@@ -645,7 +692,14 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
   }
 
   const otp = generateOtpCode();
-  const destination = channel === 'email' ? user.email : user.phone;
+  const destination = resolvePasswordResetDestination({ channel, user });
+
+  if (!destination) {
+    const errorMsg = channel === 'email' 
+      ? 'Tài khoản này chưa có email để nhận OTP'
+      : 'Tài khoản này chưa được liên kết Telegram để nhận OTP';
+    throw new BadRequestError(errorMsg);
+  }
 
   if (latestActiveRequest) {
     latestActiveRequest.identifier = normalizedIdentifier;
@@ -668,7 +722,7 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
       identifier: normalizedIdentifier,
       channel,
       destination,
-      // Store a verifiable OTP for both channels so the client can fall back when Firebase Phone Auth is unavailable.
+      // Store a verifiable OTP so the reset flow can continue without external auth providers.
       otpHash: hashResetValue(otp),
       expiresAt: new Date(Date.now() + passwordResetConfig.otpTtlMs),
       verifiedAt: null,
@@ -681,10 +735,7 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
     });
   }
 
-  // For email, send OTP via SMTP. For SMS, instruct client to use Firebase Phone Authentication.
-  if (channel === 'email') {
-    await sendPasswordResetOtp({ channel, destination, otp, fullName: user.fullName });
-  }
+  await sendPasswordResetOtp({ channel, destination, otp, fullName: user.fullName });
 
   const responseData = {
     message: 'OTP đã được gửi',
@@ -700,16 +751,84 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
   return successResponse(res, responseData, 'Nếu tài khoản tồn tại, OTP sẽ được gửi');
 });
 
-const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
-  const { identifier, otp } = req.body;
-  const normalizedIdentifier = String(identifier || '').trim();
+const telegramLinkStatus = asyncHandler(async (req, res) => {
+  const { phone } = req.query;
+  const normalizedPhone = String(phone || '').trim();
 
-  if (!normalizedIdentifier || !otp) {
+  if (!normalizedPhone) {
+    throw new BadRequestError('Vui lòng nhập số điện thoại');
+  }
+
+  const user = await findUserByIdentifier(normalizedPhone);
+  const userTelegramChatId = user?.telegramChatId || null;
+
+  const pendingLink = await TelegramLinkSession.findOne({
+    where: {
+      phone: normalizedPhone,
+      consumedAt: null,
+    },
+    order: [['CreatedAt', 'DESC']],
+  });
+
+  const linked = Boolean(userTelegramChatId || pendingLink?.telegramChatId);
+
+  return successResponse(res, {
+    linked,
+    phone: normalizedPhone,
+    telegramChatId: userTelegramChatId || pendingLink?.telegramChatId || null,
+    hasPendingLink: Boolean(pendingLink),
+  }, linked ? 'Telegram đã được liên kết' : 'Telegram chưa được liên kết');
+});
+
+const telegramLinkWebhook = asyncHandler(async (req, res) => {
+  const secret = String(req.get('x-telegram-webhook-secret') || '').trim();
+  const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
+
+  if (!expectedSecret || secret !== expectedSecret) {
+    throw new UnauthorizedError('Webhook secret không hợp lệ');
+  }
+
+  const { phone, telegramChatId, startParam } = req.body;
+  const normalizedPhone = String(phone || '').trim();
+  const normalizedTelegramChatId = String(telegramChatId || '').trim();
+  const normalizedStartParam = String(startParam || '').trim() || null;
+
+  if (!normalizedPhone || !normalizedTelegramChatId) {
+    throw new BadRequestError('Thiếu thông tin liên kết Telegram');
+  }
+
+  const [linkSession] = await TelegramLinkSession.upsert({
+    phone: normalizedPhone,
+    telegramChatId: normalizedTelegramChatId,
+    startParam: normalizedStartParam,
+    linkedAt: new Date(),
+    consumedAt: null,
+  }, { returning: true });
+
+  const existingUser = await User.findOne({ where: { phone: normalizedPhone }, paranoid: false });
+  if (existingUser) {
+    existingUser.telegramChatId = normalizedTelegramChatId;
+    await existingUser.save();
+  }
+
+  return successResponse(res, {
+    linked: true,
+    phone: normalizedPhone,
+    telegramChatId: normalizedTelegramChatId,
+    startParam: normalizedStartParam,
+  }, 'Telegram đã được liên kết');
+});
+
+const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
+  const { phone, identifier, otp } = req.body;
+  const normalizedPhone = String(phone || identifier || '').trim();
+
+  if (!normalizedPhone || !otp) {
     throw new BadRequestError('Thiếu thông tin');
   }
 
-  const channel = resolveIdentifierChannel(normalizedIdentifier);
-  const user = await findUserByIdentifier(normalizedIdentifier);
+  const channel = resolveIdentifierChannel(normalizedPhone);
+  const user = await findUserByIdentifier(normalizedPhone);
   if (!user || !channel) {
     throw new BadRequestError('Mã OTP không hợp lệ hoặc đã hết hạn');
   }
@@ -717,7 +836,7 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
   const record = await PasswordResetOtp.findOne({
     where: {
       userId: user.id,
-      identifier: normalizedIdentifier,
+      identifier: normalizedPhone,
       channel,
       consumedAt: null,
     },
@@ -752,72 +871,11 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
   }, 'OTP hợp lệ');
 });
 
-const verifyPasswordResetViaFirebase = asyncHandler(async (req, res) => {
-  const { identifier, firebaseIdToken } = req.body;
-  const normalizedIdentifier = String(identifier || '').trim();
-
-  if (!normalizedIdentifier || !firebaseIdToken) {
-    throw new BadRequestError('Thiếu thông tin');
-  }
-
-  const channel = resolveIdentifierChannel(normalizedIdentifier);
-  if (!channel || channel !== 'sms') {
-    throw new BadRequestError('Kênh xác thực không hợp lệ');
-  }
-
-  const user = await findUserByIdentifier(normalizedIdentifier);
-  if (!user) throw new BadRequestError('Tài khoản không tồn tại');
-
-  // Verify token with Firebase Admin
-  let decoded;
-  try {
-    decoded = await verifyIdToken(firebaseIdToken);
-  } catch (e) {
-    throw new BadRequestError('Firebase token không hợp lệ');
-  }
-
-  const phoneFromToken = decoded?.phone_number;
-  if (!phoneFromToken) throw new BadRequestError('Firebase token không chứa số điện thoại');
-
-  const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
-  const tokenDigits = normalizeDigits(phoneFromToken);
-  const userDigits = normalizeDigits(user.phone);
-
-  if (!tokenDigits || !userDigits || (!tokenDigits.endsWith(userDigits) && !userDigits.endsWith(tokenDigits))) {
-    throw new BadRequestError('Số điện thoại trong Firebase token không khớp');
-  }
-
-  const record = await PasswordResetOtp.findOne({
-    where: {
-      userId: user.id,
-      identifier: normalizedIdentifier,
-      channel: 'sms',
-      consumedAt: null,
-    },
-    order: [['createdAt', 'DESC']],
-  });
-
-  if (!record) throw new BadRequestError('Yêu cầu đặt lại mật khẩu không hợp lệ hoặc đã hết hạn');
-
-  const resetToken = buildPasswordResetToken();
-  record.verifiedAt = new Date();
-  record.resetTokenHash = hashResetValue(resetToken);
-  record.resetTokenExpiresAt = new Date(Date.now() + passwordResetConfig.resetTokenTtlMs);
-  await record.save();
-
-  return successResponse(res, {
-    resetToken,
-    expiresInSeconds: Math.floor(passwordResetConfig.resetTokenTtlMs / 1000),
-    channel: 'sms',
-    destinationMasked: maskDestination('sms', record.destination),
-  }, 'Số điện thoại đã được xác thực');
-});
-
 const resetPasswordWithOtp = asyncHandler(async (req, res) => {
-  const { identifier, resetToken, newPassword, confirmPassword } = req.body;
-  const normalizedIdentifier = String(identifier || '').trim();
+  const { phone, identifier, resetToken, newPassword, confirmPassword } = req.body;
+  const normalizedPhone = String(phone || identifier || '').trim();
 
-  if (!normalizedIdentifier || !resetToken || !newPassword) {
+  if (!normalizedPhone || !resetToken || !newPassword) {
     throw new BadRequestError('Vui lòng cung cấp mã xác thực và mật khẩu mới');
   }
 
@@ -829,8 +887,8 @@ const resetPasswordWithOtp = asyncHandler(async (req, res) => {
     throw new BadRequestError('Mật khẩu xác nhận không khớp');
   }
 
-  const channel = resolveIdentifierChannel(normalizedIdentifier);
-  const user = await findUserByIdentifier(normalizedIdentifier);
+  const channel = resolveIdentifierChannel(normalizedPhone);
+  const user = await findUserByIdentifier(normalizedPhone);
   if (!user || !channel) {
     throw new BadRequestError('Mã xác thực không hợp lệ hoặc đã hết hạn');
   }
@@ -839,7 +897,7 @@ const resetPasswordWithOtp = asyncHandler(async (req, res) => {
   const record = await PasswordResetOtp.findOne({
     where: {
       userId: user.id,
-      identifier: normalizedIdentifier,
+      identifier: normalizedPhone,
       channel,
       resetTokenHash: tokenHash,
       consumedAt: null,
@@ -933,6 +991,78 @@ const completeProfile = asyncHandler(async (req, res) => {
   }, 'Hồ sơ đã được hoàn thiện');
 });
 
+/**
+ * Clear all password reset requests (DEVELOPMENT ONLY)
+ * DELETE /api/auth/dev/clear-reset-requests
+ */
+const clearPasswordResetRequests = asyncHandler(async (req, res) => {
+  if (config.env !== 'development') {
+    throw new UnauthorizedError('Endpoint này chỉ khả dụng trong môi trường development');
+  }
+
+  const count = await PasswordResetOtp.destroy({ where: {}, force: true });
+
+  return successResponse(res, { deletedCount: count }, `Đã xóa ${count} yêu cầu reset password`);
+});
+
+/**
+ * Complete Telegram linking (public)
+ * POST /api/auth/complete-telegram-link
+ */
+const completeTelegramLink = asyncHandler(async (req, res) => {
+  const { phone } = req.body;
+  const normalizedPhone = String(phone || '').trim();
+
+  if (!normalizedPhone) {
+    throw new BadRequestError('Số điện thoại không được cung cấp');
+  }
+
+  // Find user by phone
+  const user = await findUserByIdentifier(normalizedPhone);
+  if (!user) {
+    throw new NotFoundError('Không tìm thấy người dùng');
+  }
+
+  // Check if Telegram is linked
+  const linkedSession = await TelegramLinkSession.findOne({
+    where: {
+      phone: normalizedPhone,
+      consumedAt: null,
+    },
+    order: [['CreatedAt', 'DESC']],
+  });
+
+  if (!linkedSession || !linkedSession.telegramChatId) {
+    throw new BadRequestError('Chưa tìm thấy liên kết Telegram. Vui lòng liên kết Telegram trước.');
+  }
+
+  // Update user
+  user.telegramChatId = linkedSession.telegramChatId;
+  user.mustLinkTelegram = false;
+  await user.save();
+
+  // Mark session as consumed
+  linkedSession.consumedAt = new Date();
+  await linkedSession.save();
+
+  // Get patient info if patient
+  let patientInfo = null;
+  if (user.role === ROLES.PATIENT) {
+    try {
+      patientInfo = await Patient.findOne({ where: { userId: user.id } });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return successResponse(res, {
+    user: {
+      ...user.toJSON(),
+      patientId: patientInfo?.id,
+    },
+  }, 'Liên kết Telegram thành công');
+});
+
 export {
   login,
   register,
@@ -943,8 +1073,11 @@ export {
   updateProfile,
   requestPasswordResetOtp,
   verifyPasswordResetOtp,
-  verifyPasswordResetViaFirebase,
   resetPasswordWithOtp,
+  telegramLinkStatus,
+  telegramLinkWebhook,
   completeChangePassword,
   completeProfile,
+  clearPasswordResetRequests,
+  completeTelegramLink,
 };

@@ -2,7 +2,7 @@
  * Authentication Validators
  * Input validation for auth endpoints
  */
-import { body, param } from 'express-validator';
+import { body, query } from 'express-validator';
 import { ROLES } from '../config/constants.js';
 
 const loginValidator = [
@@ -59,33 +59,54 @@ const registerValidator = [
 ];
 
 const passwordResetRequestValidator = [
-  body('identifier')
-    .notEmpty()
-    .withMessage('Số điện thoại hoặc email không được để trống')
+  body()
     .custom((value) => {
-      const text = String(value || '').trim();
-      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
-      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
-      if (!isEmail && !isPhone) {
-        throw new Error('Số điện thoại hoặc email không hợp lệ');
+      // At least one of phone or email must be provided
+      if (!value.phone && !value.email) {
+        throw new Error('Vui lòng nhập số điện thoại hoặc email');
       }
       return true;
     }),
+  body('phone')
+    .optional({ checkFalsy: true })
+    .custom((value) => {
+      if (!value) return true; // Skip if empty
+      const text = String(value).trim();
+      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
+      if (!isPhone) {
+        throw new Error('Số điện thoại không hợp lệ');
+      }
+      return true;
+    }),
+  body('email')
+    .optional({ checkFalsy: true })
+    .isEmail()
+    .withMessage('Email không hợp lệ'),
 ];
 
 const passwordResetVerifyValidator = [
-  body('identifier')
-    .notEmpty()
-    .withMessage('Số điện thoại hoặc email không được để trống')
+  body()
     .custom((value) => {
-      const text = String(value || '').trim();
-      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
-      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
-      if (!isEmail && !isPhone) {
-        throw new Error('Số điện thoại hoặc email không hợp lệ');
+      if (!value.phone && !value.email) {
+        throw new Error('Vui lòng nhập số điện thoại hoặc email');
       }
       return true;
     }),
+  body('phone')
+    .optional({ checkFalsy: true })
+    .custom((value) => {
+      if (!value) return true;
+      const text = String(value).trim();
+      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
+      if (!isPhone) {
+        throw new Error('Số điện thoại không hợp lệ');
+      }
+      return true;
+    }),
+  body('email')
+    .optional({ checkFalsy: true })
+    .isEmail()
+    .withMessage('Email không hợp lệ'),
   body('otp')
     .notEmpty()
     .withMessage('Mã OTP không được để trống')
@@ -93,37 +114,29 @@ const passwordResetVerifyValidator = [
     .withMessage('Mã OTP phải gồm 6 chữ số'),
 ];
 
-const passwordResetVerifyPhoneValidator = [
-  body('identifier')
-    .notEmpty()
-    .withMessage('Số điện thoại hoặc email không được để trống')
-    .custom((value) => {
-      const text = String(value || '').trim();
-      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
-      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
-      if (!isEmail && !isPhone) {
-        throw new Error('Số điện thoại hoặc email không hợp lệ');
-      }
-      return true;
-    }),
-  body('firebaseIdToken')
-    .notEmpty()
-    .withMessage('Firebase id token không được để trống'),
-];
-
 const passwordResetConfirmValidator = [
-  body('identifier')
-    .notEmpty()
-    .withMessage('Số điện thoại hoặc email không được để trống')
+  body()
     .custom((value) => {
-      const text = String(value || '').trim();
-      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
-      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
-      if (!isEmail && !isPhone) {
-        throw new Error('Số điện thoại hoặc email không hợp lệ');
+      if (!value.phone && !value.email) {
+        throw new Error('Vui lòng nhập số điện thoại hoặc email');
       }
       return true;
     }),
+  body('phone')
+    .optional({ checkFalsy: true })
+    .custom((value) => {
+      if (!value) return true;
+      const text = String(value).trim();
+      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
+      if (!isPhone) {
+        throw new Error('Số điện thoại không hợp lệ');
+      }
+      return true;
+    }),
+  body('email')
+    .optional({ checkFalsy: true })
+    .isEmail()
+    .withMessage('Email không hợp lệ'),
   body('resetToken')
     .notEmpty()
     .withMessage('Mã xác thực không được để trống'),
@@ -209,8 +222,36 @@ const refreshToken = refreshTokenValidator;
 const completeChangePassword = completeChangePasswordValidator;
 const passwordResetRequest = passwordResetRequestValidator;
 const passwordResetVerify = passwordResetVerifyValidator;
-const passwordResetVerifyPhone = passwordResetVerifyPhoneValidator;
 const passwordResetConfirm = passwordResetConfirmValidator;
+const telegramLinkWebhook = [
+  body('phone')
+    .notEmpty()
+    .withMessage('Số điện thoại không được để trống')
+    .custom((value) => {
+      const text = String(value || '').trim();
+      if (!/^[0-9+\-\s()]{3,15}$/.test(text)) {
+        throw new Error('Số điện thoại không hợp lệ');
+      }
+      return true;
+    }),
+  body('telegramChatId')
+    .notEmpty()
+    .withMessage('Telegram Chat ID không được để trống')
+    .isString()
+    .withMessage('Telegram Chat ID không hợp lệ'),
+];
+const telegramLinkStatus = [
+  query('phone')
+    .notEmpty()
+    .withMessage('Số điện thoại không được để trống')
+    .custom((value) => {
+      const text = String(value || '').trim();
+      if (!/^[0-9+\-\s()]{3,15}$/.test(text)) {
+        throw new Error('Số điện thoại không hợp lệ');
+      }
+      return true;
+    }),
+];
 
 export {
   // Short names
@@ -222,6 +263,8 @@ export {
   passwordResetRequest,
   passwordResetVerify,
   passwordResetConfirm,
+  telegramLinkWebhook,
+  telegramLinkStatus,
   // Original names
   loginValidator,
   registerValidator,
