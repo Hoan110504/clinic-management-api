@@ -91,7 +91,6 @@ const toMedicalExaminationContract = (row) => {
     treatmentAdvice: row.TreatmentAdvice || '',
     notes: row.Notes || '',
     reExaminationDate: row.ReExaminationDate ? formatToVietnamISOString(row.ReExaminationDate) : null,
-    prescriptionStatus: row.PrescriptionStatus || null,
     status: row.Status || 0,
     createdAt: row.CreatedAt ? formatToVietnamISOString(row.CreatedAt) : null,
     updatedAt: row.UpdatedAt ? formatToVietnamISOString(row.UpdatedAt) : null,

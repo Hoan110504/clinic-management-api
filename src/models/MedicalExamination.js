@@ -31,7 +31,6 @@ export default (sequelize) => {
       Notes: { type: DataTypes.TEXT('long'), allowNull: true, field: 'Notes' },
       ReExaminationDate: { type: DataTypes.DATEONLY, allowNull: true, field: 'ReExaminationDate' },
       Status: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0, field: 'Status' },
-      PrescriptionStatus: { type: DataTypes.TINYINT, allowNull: true, field: 'PrescriptionStatus' },
       
       // AI Summary fields
       AiSummary: { type: DataTypes.TEXT, allowNull: true, field: 'AiSummary' },
@@ -80,7 +79,6 @@ export default (sequelize) => {
       treatmentAdvice: raw.TreatmentAdvice,
       notes: raw.Notes,
       reExaminationDate: raw.ReExaminationDate,
-      prescriptionStatus: raw.PrescriptionStatus,
       status: raw.Status,
       aiSummary: raw.AiSummary,
       aiSummaryGeneratedAt: raw.AiSummaryGeneratedAt,

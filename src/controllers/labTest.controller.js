@@ -2,7 +2,7 @@
  * Lab Test Controller - Canonical Implementation
  * Uses canonical SQL Server schema fields ONLY:
  * - LabOrders (LabOrderID, ExaminationID, DoctorID, Status, CreatedAt)
- * - LabOrderItems (LabOrderItemID, LabOrderID, ServiceID, RoomID, Status, Priority, Note, CreatedAt)
+ * - LabOrderItems (LabOrderItemID, LabOrderID, ServiceID, RoomID, Status, Note, CreatedAt)
  * - LabResults (LabResultID, ExaminationID, ServiceID, ResultText, ImageUrl, Conclusion, Note, DoctorID, ResultDate, CreatedAt, UpdatedAt, LabOrderItemID, RoomID)
  * - LabServices (ServiceID, ServiceName, RoomID, Price, ServiceType, IsActive, CreatedAt)
  * 
@@ -64,13 +64,6 @@ const toLabItemStatus = (value) => {
   const n = Number(value);
   if (!Number.isSafeInteger(n)) return null;
   return n >= 0 && n <= 3 ? n : null;
-};
-
-const toPriorityInt = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
-  if (!Number.isSafeInteger(n)) return null;
-  return n >= 0 && n <= 2 ? n : null;
 };
 
 // Check permission for mutations (only Admin or the DoctorID who created the order)
@@ -191,7 +184,6 @@ const toLabTestContract = async (item) => {
     serviceId: plain.serviceId ?? plain.ServiceID,
     roomId: plain.roomId ?? plain.RoomID ?? null,
     status: Number(plain.status ?? plain.Status ?? 0),
-    priority: Number(plain.priority ?? plain.Priority ?? 0) || 0,
     note: plain.note ?? plain.Note ?? null,
     createdAt: formatDbDateTime(plain.createdAt ?? plain.CreatedAt),
 
@@ -488,7 +480,7 @@ const getLabTestById = asyncHandler(async (req, res) => {
  */
 const createLabTest = asyncHandler(async (req, res) => {
   const { LabOrder, LabOrderItem } = getLabModels();
-  const { examinationId, serviceId, roomId, status, note, priority } = req.body || {};
+  const { examinationId, serviceId, roomId, status, note } = req.body || {};
 
   const doctorId = toPositiveInt(req.user?.id);
   if (!doctorId) {
@@ -544,14 +536,12 @@ const createLabTest = asyncHandler(async (req, res) => {
   });
 
   if (!item) {
-    const priorityNum = toPriorityInt(priority);
     const statusNum = toLabItemStatus(status);
     item = await LabOrderItem.create({
       labOrderId: labOrder.labOrderId,
       serviceId: resolvedServiceId,
       roomId: toPositiveInt(roomId),
       status: statusNum !== null ? statusNum : LAB_ITEM_STATUS.ASSIGNED,
-      priority: [0, 1, 2].includes(Number(priorityNum)) ? Number(priorityNum) : 0,
       note: note || null,
       createdAt: sequelize.literal('GETDATE()'),
     });

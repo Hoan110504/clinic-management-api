@@ -30,6 +30,13 @@ const STATUS_KEY_MAP = {
   COMPLETED: APPOINTMENT_STATUS.COMPLETED,
 };
 
+const normalizePriority = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  return [0, 1, 2].includes(n) ? n : null;
+};
+
 function resolveStatus(input) {
   if (input == null) return input;
   // already a valid localized status
@@ -434,6 +441,7 @@ const createAppointment = asyncHandler(async (req, res) => {
     patientNotes,
     internalNotes,
     specialRequests,
+    priority,
   } = req.body;
 
   // Kiểm tra trùng lịch: cùng bác sĩ, cùng ngày, cùng khung giờ
@@ -487,6 +495,7 @@ const createAppointment = asyncHandler(async (req, res) => {
     patientNotes,
     internalNotes,
     specialRequests,
+    priority: normalizePriority(priority) ?? 0,
   };
 
   // If the requester is a PATIENT, ensure the appointment is linked to their canonical Patient record
@@ -710,6 +719,14 @@ const updateAppointment = asyncHandler(async (req, res) => {
     // Convert label to numeric code for DB storage
     updateData.status = labelToCode(resolved) || labelToCode(APPOINTMENT_STATUS.SCHEDULED) || 1;
     console.debug('updateAppointment: resolved status ->', updateData.status);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updateData, 'priority')) {
+    const normalizedPriority = normalizePriority(updateData.priority);
+    if (normalizedPriority === null) {
+      throw new BadRequestError(`Giá trị mức độ ưu tiên không hợp lệ: ${updateData.priority}`);
+    }
+    updateData.priority = normalizedPriority;
   }
 
   await appointment.update(updateData);

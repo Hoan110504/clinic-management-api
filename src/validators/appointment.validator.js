@@ -60,6 +60,10 @@ const createAppointmentValidator = [
     .optional()
     .isString()
     .withMessage('Loại khám không hợp lệ'),
+  body('priority')
+    .optional()
+    .isInt({ min: 0, max: 2 })
+    .withMessage('Mức độ ưu tiên không hợp lệ'),
   body('symptoms')
     .optional()
     .isString()
@@ -68,6 +72,10 @@ const createAppointmentValidator = [
     .optional()
     .isUUID()
     .withMessage('ID bác sĩ không hợp lệ'),
+  body('priority')
+    .optional()
+    .isInt({ min: 0, max: 2 })
+    .withMessage('Mức độ ưu tiên không hợp lệ'),
 ];
 
 const updateAppointmentValidator = [

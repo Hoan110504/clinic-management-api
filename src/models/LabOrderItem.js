@@ -51,13 +51,6 @@ export default (sequelize) => {
       field: 'Status'
     },
 
-    priority: {
-      type: DataTypes.TINYINT,
-      allowNull: false,
-      defaultValue: 0,
-      field: 'Priority'
-    },
-
     note: {
       type: DataTypes.STRING(500),
       allowNull: true,
@@ -88,12 +81,6 @@ export default (sequelize) => {
     IN_PROGRESS: 1,    // Đang thực hiện
     COMPLETED: 2,      // Đã có kết quả / Đã hoàn thành
     CANCELLED: 3       // Đã hủy
-  };
-
-  LabOrderItem.PRIORITY = {
-    NORMAL: 0,
-    PRIORITY: 1,
-    URGENT: 2
   };
 
   LabOrderItem.associate = (models) => {

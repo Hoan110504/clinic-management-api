@@ -78,6 +78,12 @@ export default (sequelize) => {
         allowNull: false,
         field: 'appointment_date',
       },
+      priority: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+        field: 'priority',
+      },
       timeSlot: {
         type: DataTypes.STRING(20),
         allowNull: false,
