@@ -22,4 +22,15 @@ router.get(
   medicineController.getAllInventoryTransactions
 );
 
+/**
+ * @route GET /api/inventory/min-stock-report
+ * @desc Get min stock report by medicine
+ * @access Admin, Pharmacist
+ */
+router.get(
+  '/min-stock-report',
+  authorize(ROLES.ADMIN, ROLES.PHARMACIST),
+  medicineController.getMinStockReport
+);
+
 export default router;

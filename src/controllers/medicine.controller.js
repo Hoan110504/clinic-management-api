@@ -1121,6 +1121,65 @@ const getAllInventoryTransactions = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Get min stock report
+ * GET /api/inventory/min-stock-report
+ */
+const getMinStockReport = asyncHandler(async (req, res) => {
+  try {
+    const sql = `
+      WITH Usage30Days AS (
+        SELECT
+          pi.MedicineId,
+          SUM(CAST(pi.QuantityPrescribed AS DECIMAL(18, 2))) AS TotalPrescribedQty
+        FROM dbo.PrescriptionItems pi
+        INNER JOIN dbo.Prescriptions p
+          ON p.PrescriptionID = pi.PrescriptionID
+        WHERE p.PrescriptionDate >= DATEADD(DAY, -30, CAST(GETDATE() AS DATE))
+        GROUP BY pi.MedicineId
+      ),
+      ActiveStock AS (
+        SELECT
+          mb.MedicineId,
+          SUM(CAST(mb.QuantityInStock AS DECIMAL(18, 2))) AS CurrentStock
+        FROM dbo.MedicineBatch mb
+        WHERE mb.Status = 1
+          AND mb.ExpiryDate > CAST(GETDATE() AS DATE)
+        GROUP BY mb.MedicineId
+      )
+      SELECT
+        u.MedicineId AS medicineId,
+        COALESCE(m.Name, '') AS medicineName,
+        COALESCE(m.Unit, '') AS unit,
+        CAST(u.TotalPrescribedQty AS DECIMAL(18, 2)) AS totalPrescribedQty,
+        CAST(u.TotalPrescribedQty / 30.0 AS DECIMAL(18, 4)) AS avgDailyUsage,
+        CAST((u.TotalPrescribedQty / 30.0) * 5 AS DECIMAL(18, 4)) AS leadTimeDemand,
+        CAST((u.TotalPrescribedQty / 30.0) * 5 * 0.2 AS DECIMAL(18, 4)) AS safetyStock,
+        CAST((u.TotalPrescribedQty / 30.0) * 5 * 1.2 AS DECIMAL(18, 4)) AS minStock,
+        CAST(COALESCE(s.CurrentStock, 0) AS DECIMAL(18, 2)) AS currentStock,
+        CAST(COALESCE(s.CurrentStock, 0) - ((u.TotalPrescribedQty / 30.0) * 5 * 1.2) AS DECIMAL(18, 4)) AS stockGap,
+        CASE
+          WHEN COALESCE(s.CurrentStock, 0) < ((u.TotalPrescribedQty / 30.0) * 5 * 1.2)
+            THEN N'Cần bổ sung'
+          ELSE N'Đạt'
+        END AS stockStatus
+      FROM Usage30Days u
+      LEFT JOIN ActiveStock s
+        ON s.MedicineId = u.MedicineId
+      LEFT JOIN dbo.Medicines m
+        ON m.Id = u.MedicineId
+      ORDER BY minStock DESC, medicineName ASC;
+    `;
+
+    const rows = await sequelize.query(sql, { type: sequelize.QueryTypes.SELECT });
+
+    return successResponse(res, rows || []);
+  } catch (err) {
+    console.error('getMinStockReport: DB error', err.message || err);
+    return successResponse(res, []);
+  }
+});
+
+/**
  * Get batches for a specific medicine
  * GET /api/medicines/:id/batches
  */
@@ -1216,4 +1275,5 @@ export {
   getMedicineBatches,
   getMedicineCategories,
   getAllMedicinesUnpaginated,
+  getMinStockReport,
 };
