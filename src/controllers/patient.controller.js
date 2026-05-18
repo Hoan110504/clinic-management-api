@@ -149,11 +149,13 @@ const getCurrentUserPatient = asyncHandler(async (req, res) => {
     try {
       patient = await Patient.create({
         userId: user.id,
-        fullName:  user.full_name || 'Bệnh nhân',
+        fullName: user.fullName || user.full_name || null,
         phone: user.phone || null,
         email: user.email || null,
         address: user.address || null,
-        idNumber: user.id_number || null,
+        idNumber: user.idNumber || user.id_number || null,
+        gender: user.gender || null,
+        dateOfBirth: user.dateOfBirth || user.date_of_birth || null,
       });
     } catch (e) {
       logger.warn('patient.getCurrentUserPatient - auto-create failed', e.message || e);
@@ -164,7 +166,9 @@ const getCurrentUserPatient = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy hồ sơ bệnh nhân');
   }
 
-  return successResponse(res, patient);
+  // Return plain JSON with all patient fields (including idNumber, gender, dateOfBirth, fullName, etc.)
+  const plainPatient = patient.get ? patient.get({ plain: true }) : patient;
+  return successResponse(res, plainPatient);
 });
 
 const getPatientById = asyncHandler(async (req, res) => {
@@ -187,11 +191,13 @@ const getPatientById = asyncHandler(async (req, res) => {
           required: false,
         },
       ],
+      attributes: ['id', 'userId', 'fullName', 'dateOfBirth', 'gender', 'phone', 'email', 'address', 'idNumber', 'medicalHistory', 'allergies', 'status', 'createdAt', 'updatedAt'],
     });
 
     // 2. Check if patient is already linked to this user
     if (patient && patient.userId && String(patient.userId) === String(userId)) {
-      return successResponse(res, patient);
+      const plainPatient = patient.get ? patient.get({ plain: true }) : patient;
+      return successResponse(res, plainPatient);
     }
 
     // 3. If patient exists but not linked, try auto-linking by idNumber or email
@@ -213,7 +219,8 @@ const getPatientById = asyncHandler(async (req, res) => {
           patient.userId = userId;
           await patient.save();
           logger.info('getPatientById - auto-linked patient', { patientId: id, userId });
-          return successResponse(res, patient);
+          const plainPatient = patient.get ? patient.get({ plain: true }) : patient;
+          return successResponse(res, plainPatient);
         }
       } catch (e) {
         logger.warn('getPatientById - auto-link attempt failed', e.message || e);
@@ -246,13 +253,15 @@ const getPatientById = asyncHandler(async (req, res) => {
         required: false,
       },
     ],
+    attributes: ['id', 'userId', 'fullName', 'dateOfBirth', 'gender', 'phone', 'email', 'address', 'idNumber', 'medicalHistory', 'allergies', 'status', 'createdAt', 'updatedAt'],
   });
 
   if (!patient) {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
-  return successResponse(res, patient);
+  const plainPatient = patient.get ? patient.get({ plain: true }) : patient;
+  return successResponse(res, plainPatient);
 });
 
 /**

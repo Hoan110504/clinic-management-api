@@ -27,7 +27,7 @@ export default (sequelize) => {
       },
       fullName: {
         type: DataTypes.STRING(100),
-        allowNull: false,
+        allowNull: true,
         field: 'full_name',
       },
       dateOfBirth: {

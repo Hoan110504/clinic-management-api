@@ -84,6 +84,7 @@ const toMedicalExaminationContract = (row) => {
     doctorName,
     patientName: patient.full_name || patient.fullName || row.patientName || null,
     patientPhone: patient.phone || row.patientPhone || null,
+    patientIdNumber: patient.idNumber || patient.id_number || row.patientIdNumber || null,
     patientBirthDate: patient.dateOfBirth || row.patientBirthDate || null,
     patientGender: patient.gender || row.patientGender || null,
     patientAddress: patient.address || row.patientAddress || null,
@@ -135,8 +136,8 @@ const getTodayQueue = asyncHandler(async (req, res) => {
   const records = await MedicalExamination.findAll({
     where,
     include: [
-      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone'], required: false },
-      { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+      { model: Patient, as: 'patient', attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender', 'idNumber'], required: false },
+      { model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false },
     ],
     order: [['CreatedAt', 'ASC']],
   });
@@ -148,7 +149,7 @@ const getTodayQueue = asyncHandler(async (req, res) => {
       examinationCode: formatExaminationCode(plain.ExaminationID, plain.CreatedAt),
       appointmentId: plain.AppointmentID,
       patientId: plain.PatientId,
-      patientName: plain.patient?.full_name || null,
+      patientName: plain.patient?.fullName || null,
       symptoms: plain.Symptoms || '',
       createdAt: plain.CreatedAt ? formatToVietnamISOString(plain.CreatedAt) : null,
       status: plain.Status || 0,
@@ -181,8 +182,8 @@ const getAllRecords = asyncHandler(async (req, res) => {
   const { count, rows } = await MedicalExamination.findAndCountAll({
     where,
     include: [
-      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone', 'dateOfBirth', 'gender', 'address'], required: false },
-      { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+      { model: Patient, as: 'patient', attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender', 'address', 'idNumber'], required: false },
+      { model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false },
       { model: Appointment, as: 'appointment', attributes: ['Id', 'exam_type'], required: false },
     ],
     order,
@@ -203,8 +204,8 @@ const getRecordById = asyncHandler(async (req, res) => {
   const examination = await MedicalExamination.findOne({
     where: { ExaminationID: id },
     include: [
-      { model: Patient, as: 'patient', attributes: ['id', 'full_name', 'phone', 'dateOfBirth', 'gender', 'address'], required: false },
-      { model: User, as: 'doctor', attributes: ['id', 'full_name'], required: false },
+      { model: Patient, as: 'patient', attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender', 'address', 'idNumber'], required: false },
+      { model: User, as: 'doctor', attributes: ['id', 'fullName'], required: false },
       { model: Appointment, as: 'appointment', required: false },
     ],
   });
