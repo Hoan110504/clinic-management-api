@@ -76,10 +76,9 @@ const login = asyncHandler(async (req, res) => {
   const normalizedIdentifier = String(identifier).trim();
   const emailIdentifier = normalizedIdentifier.toLowerCase();
 
-  // Find user by phone or email
+  // Find user by phone or email (do not filter out inactive here so we can return a specific message)
   const user = await User.findOne({
     where: {
-      isActive: true,
       [Op.or]: [
         { phone: normalizedIdentifier },
         { email: emailIdentifier },
@@ -125,6 +124,11 @@ const login = asyncHandler(async (req, res) => {
 
   if (!isMatch) {
     throw new UnauthorizedError('Tài khoản hoặc mật khẩu không đúng');
+  }
+
+  // Nếu mật khẩu đúng nhưng tài khoản đã bị khoá (isActive false / '0'), trả thông báo rõ ràng
+  if (!user.isActive) {
+    throw new UnauthorizedError('Tài khoản đã bị khóa');
   }
 
   const roleId = Number(user.role);
