@@ -652,13 +652,7 @@ const requestPasswordResetOtp = asyncHandler(async (req, res) => {
 
   const user = await findUserByIdentifier(normalizedIdentifier);
   if (!user) {
-    return successResponse(res, {
-      message: channel === 'email' 
-        ? 'Nếu tài khoản tồn tại, OTP sẽ được gửi qua email'
-        : 'Nếu tài khoản tồn tại, OTP sẽ được gửi qua Telegram',
-      channel,
-      destinationMasked: null,
-    }, 'Nếu tài khoản tồn tại, OTP sẽ được gửi');
+    throw new NotFoundError('Không tìm thấy tài khoản');
   }
 
   const now = Date.now();
