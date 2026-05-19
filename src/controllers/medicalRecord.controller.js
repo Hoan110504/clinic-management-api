@@ -125,6 +125,18 @@ const syncAppointmentCompletedFromExam = async (examinationRow, nextExamStatus) 
   await appointment.update({ status: 3 });
 };
 
+const syncAppointmentCancelledFromExam = async (examinationRow, nextExamStatus) => {
+  const statusNum = Number(nextExamStatus);
+  // Only sync appointment when examination becomes CANCELLED (Status = 3)
+  if (statusNum !== 3) return;
+  const appointmentId = Number(examinationRow?.AppointmentID);
+  if (!Number.isFinite(appointmentId) || appointmentId <= 0) return;
+
+  const appointment = await Appointment.findByPk(appointmentId);
+  if (!appointment) return;
+  await appointment.update({ status: 4 });
+};
+
 const getTodayQueue = asyncHandler(async (req, res) => {
   const { start: today, end: tomorrow } = getVietnamTodayRange();
   const where = { CreatedAt: { [Op.gte]: today, [Op.lt]: tomorrow } };
@@ -433,6 +445,7 @@ const cancelExamination = asyncHandler(async (req, res) => {
 
   // Mark status as cancelled (Status: 3 = Đã hủy)
   await examination.update({ Status: 3, UpdatedAt: new Date() });
+  await syncAppointmentCancelledFromExam(examination.get({ plain: true }), 3);
 
   return successResponse(res, toMedicalExaminationContract(examination.get({ plain: true })), 'Hủy phiếu khám thành công');
 });
