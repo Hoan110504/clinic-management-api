@@ -189,6 +189,11 @@ const createUser = asyncHandler(async (req, res) => {
     address,
     idNumber,
     signature,
+    specialization,
+    qualifications,
+    experienceYears,
+    bio,
+    consultationNote,
   } = req.body;
 
   // Phone is required as account identifier
@@ -249,6 +254,11 @@ const createUser = asyncHandler(async (req, res) => {
           address,
           idNumber,
           signature,
+          specialization,
+          qualifications,
+          experienceYears,
+          bio,
+          consultationNote,
           // Bệnh nhân được tạo bởi admin phải liên kết Telegram lần đầu đăng nhập
           mustLinkTelegram: role === ROLES.PATIENT,
         }, { transaction: t });
@@ -280,9 +290,14 @@ const createUser = asyncHandler(async (req, res) => {
             gender,
             address,
             idNumber,
+            signature,
+            specialization,
+            qualifications,
+            experienceYears,
+            bio,
+            consultationNote,
             // Bệnh nhân được tạo bởi admin phải liên kết Telegram lần đầu đăng nhập
             mustLinkTelegram: role === ROLES.PATIENT,
-            signature,
           }, { transaction: t });
         } else {
           throw err;
@@ -417,6 +432,11 @@ const createUser = asyncHandler(async (req, res) => {
                   address,
                   idNumber,
                   signature,
+                  specialization,
+                  qualifications,
+                  experienceYears,
+                  bio,
+                  consultationNote,
                 }, { transaction: t2 });
 
                 // Recreate or relink patient
@@ -725,7 +745,18 @@ const getUsersByRole = asyncHandler(async (req, res) => {
 
   const users = await User.findAll({
     where: { role: roleId, isActive: true },
-    attributes: ['id', 'fullName', 'email', 'phone', 'signature'],
+    attributes: [
+      'id',
+      'fullName',
+      'email',
+      'phone',
+      'signature',
+      'specialization',
+      'qualifications',
+      'experienceYears',
+      'bio',
+      'consultationNote'
+    ],
     order: [['fullName', 'ASC']],
   });
 

@@ -76,10 +76,10 @@ const getAllMedicines = asyncHandler(async (req, res) => {
 
   // Build where clause
   const where = {};
-  if (isActive !== undefined) {
+  // Only filter by isActive if explicitly provided and not 'all'
+  // Default (undefined or 'all'): show both active and inactive medicines
+  if (isActive !== undefined && isActive !== 'all' && isActive !== '') {
     where.isActive = isActive === 'true';
-  } else {
-    where.isActive = true;
   }
 
   if (category) {
@@ -1221,8 +1221,9 @@ const getMedicineBatches = asyncHandler(async (req, res) => {
 const getAllMedicinesUnpaginated = asyncHandler(async (req, res) => {
   const { category, search, isActive, sort } = req.query;
   const where = {};
-  if (isActive !== undefined) where.IsActive = isActive === 'true';
-  else where.IsActive = true;
+  // Only filter by isActive if explicitly provided and not 'all'
+  // Default (undefined or 'all'): show both active and inactive medicines
+  if (isActive !== undefined && isActive !== 'all' && isActive !== '') where.IsActive = isActive === 'true';
   if (category) where.Category = category;
   if (search) {
     const isNumeric = /^\d+$/.test(search);

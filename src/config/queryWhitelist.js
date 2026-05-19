@@ -651,23 +651,34 @@ QUERY_WHITELIST.set('available_doctors', {
         'fullName',
         'email',
         'phone',
-        'signature', // Can contain specialization info
-        'staffCode'
+        'staffCode',
+        'specialization',
+        'qualifications',
+        'experienceYears',
+        'bio',
+        'consultationNote'
       ],
       order: [['fullName', 'ASC']],
       limit: 50
     });
     
-    // Format doctor information (hide sensitive data for patients)
+    // Format doctor information with role-based filtering for sensitive data
     return doctors.map(doctor => {
       const doctorData = {
         id: doctor.id,
         fullName: doctor.fullName,
         staffCode: doctor.staffCode,
-        specialization: doctor.signature || 'Bác sĩ nội khoa'
+        specialization: doctor.specialization || 'Nội khoa tổng quát',
+        qualifications: doctor.qualifications || null,
+        experienceYears: doctor.experienceYears || null,
+        // Bio is safe to show - it's public information
+        bio: doctor.bio || null,
+        // Consultation note is helpful for patients
+        consultationNote: doctor.consultationNote || null,
       };
       
-      // Only show contact info to staff roles
+      // Only show contact info to staff roles (not patients)
+      // This protects doctor privacy while allowing staff to contact them
       if (userRole !== ROLES.PATIENT) {
         doctorData.email = doctor.email;
         doctorData.phone = doctor.phone;
@@ -675,6 +686,82 @@ QUERY_WHITELIST.set('available_doctors', {
       
       return doctorData;
     });
+  }
+});
+
+/**
+ * Query: find_specialist_doctor
+ * Find doctors by specialization or medical condition
+ * Roles: All roles - helps patients find the right doctor
+ */
+QUERY_WHITELIST.set('find_specialist_doctor', {
+  id: 'find_specialist_doctor',
+  description: 'Find doctors by specialization or medical condition - use when user asks about specific medical conditions or which doctor to see for a problem',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT, 6],
+  handler: async (userId, userRole) => {
+    // Get all active doctors with specialization info
+    const doctors = await db.User.findAll({
+      where: {
+        role: ROLES.DOCTOR,
+        isActive: true,
+        [Op.or]: [
+          { specialization: { [Op.ne]: null } },
+          { bio: { [Op.ne]: null } },
+          { qualifications: { [Op.ne]: null } }
+        ]
+      },
+      attributes: [
+        'id',
+        'fullName',
+        'staffCode',
+        'specialization',
+        'qualifications',
+        'experienceYears',
+        'bio',
+        'consultationNote'
+      ],
+      order: [
+        ['specialization', 'ASC'],
+        ['experienceYears', 'DESC'],
+        ['fullName', 'ASC']
+      ],
+      limit: 50
+    });
+    
+    // Group doctors by specialization for easier AI processing
+    const doctorsBySpecialization = {};
+    const generalDoctors = [];
+    
+    doctors.forEach(doctor => {
+      const spec = doctor.specialization || 'Nội khoa tổng quát';
+      
+      const doctorInfo = {
+        id: doctor.id,
+        fullName: doctor.fullName,
+        staffCode: doctor.staffCode,
+        specialization: spec,
+        qualifications: doctor.qualifications,
+        experienceYears: doctor.experienceYears,
+        bio: doctor.bio,
+        consultationNote: doctor.consultationNote,
+      };
+      
+      if (spec === 'Nội khoa tổng quát' || !doctor.specialization) {
+        generalDoctors.push(doctorInfo);
+      } else {
+        if (!doctorsBySpecialization[spec]) {
+          doctorsBySpecialization[spec] = [];
+        }
+        doctorsBySpecialization[spec].push(doctorInfo);
+      }
+    });
+    
+    return {
+      specializations: doctorsBySpecialization,
+      generalDoctors,
+      totalDoctors: doctors.length,
+      availableSpecializations: Object.keys(doctorsBySpecialization)
+    };
   }
 });
 

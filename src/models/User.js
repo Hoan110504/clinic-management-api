@@ -104,6 +104,34 @@ export default (sequelize) => {
         type: DataTypes.STRING(255),
         allowNull: true,
       },
+      // Doctor-specific information fields for AI chatbot recommendations
+      specialization: {
+        type: DataTypes.STRING(100),
+        allowNull: true,
+        comment: 'Chuyên khoa của bác sĩ (e.g., Tim mạch, Tiêu hóa, Nội tổng quát)',
+      },
+      qualifications: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+        comment: 'Học vị và bằng cấp (e.g., Thạc sĩ Y khoa, Bác sĩ chuyên khoa II)',
+      },
+      experienceYears: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        field: 'experience_years',
+        comment: 'Số năm kinh nghiệm làm việc',
+      },
+      bio: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Giới thiệu chi tiết về bác sĩ, kinh nghiệm, thành tích',
+      },
+      consultationNote: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        field: 'consultation_note',
+        comment: 'Ghi chú về lịch khám, thời gian tư vấn, hoặc thông tin hữu ích cho bệnh nhân',
+      },
       isActive: {
         type: DataTypes.BOOLEAN,
         defaultValue: true,

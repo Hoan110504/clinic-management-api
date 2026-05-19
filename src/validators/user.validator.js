@@ -43,6 +43,26 @@ const createUserValidator = [
     .optional()
     .isISO8601()
     .withMessage('Ngày sinh không hợp lệ'),
+  body('specialization')
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage('Chuyên khoa không được vượt quá 100 ký tự'),
+  body('qualifications')
+    .optional()
+    .isLength({ max: 255 })
+    .withMessage('Học vị không được vượt quá 255 ký tự'),
+  body('experienceYears')
+    .optional()
+    .isInt({ min: 0, max: 70 })
+    .withMessage('Số năm kinh nghiệm phải từ 0-70'),
+  body('bio')
+    .optional()
+    .isLength({ max: 2000 })
+    .withMessage('Giới thiệu không được vượt quá 2000 ký tự'),
+  body('consultationNote')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('Ghi chú tư vấn không được vượt quá 1000 ký tự'),
 ];
 
 const updateUserValidator = [
@@ -78,6 +98,26 @@ const updateUserValidator = [
     .optional()
     .isBoolean()
     .withMessage('Trạng thái không hợp lệ'),
+  body('specialization')
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage('Chuyên khoa không được vượt quá 100 ký tự'),
+  body('qualifications')
+    .optional()
+    .isLength({ max: 255 })
+    .withMessage('Học vị không được vượt quá 255 ký tự'),
+  body('experienceYears')
+    .optional()
+    .isInt({ min: 0, max: 70 })
+    .withMessage('Số năm kinh nghiệm phải từ 0-70'),
+  body('bio')
+    .optional()
+    .isLength({ max: 2000 })
+    .withMessage('Giới thiệu không được vượt quá 2000 ký tự'),
+  body('consultationNote')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('Ghi chú tư vấn không được vượt quá 1000 ký tự'),
 ];
 
 const getUserValidator = [
