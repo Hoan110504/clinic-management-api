@@ -631,6 +631,294 @@ QUERY_WHITELIST.set('appointment_schedule', {
 });
 
 /**
+ * Query: available_doctors
+ * Returns list of active doctors with their specializations
+ * Roles: All roles - patients can see doctor info for booking
+ */
+QUERY_WHITELIST.set('available_doctors', {
+  id: 'available_doctors',
+  description: 'Get list of available doctors with their information - use when user asks about doctors, specialists, or who to book with',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT, 6],
+  handler: async (userId, userRole) => {
+    // Get all active doctors (role = 2)
+    const doctors = await db.User.findAll({
+      where: {
+        role: ROLES.DOCTOR,
+        isActive: true
+      },
+      attributes: [
+        'id',
+        'fullName',
+        'email',
+        'phone',
+        'signature', // Can contain specialization info
+        'staffCode'
+      ],
+      order: [['fullName', 'ASC']],
+      limit: 50
+    });
+    
+    // Format doctor information (hide sensitive data for patients)
+    return doctors.map(doctor => {
+      const doctorData = {
+        id: doctor.id,
+        fullName: doctor.fullName,
+        staffCode: doctor.staffCode,
+        specialization: doctor.signature || 'Bác sĩ nội khoa'
+      };
+      
+      // Only show contact info to staff roles
+      if (userRole !== ROLES.PATIENT) {
+        doctorData.email = doctor.email;
+        doctorData.phone = doctor.phone;
+      }
+      
+      return doctorData;
+    });
+  }
+});
+
+/**
+ * Query: doctor_schedule
+ * Returns doctor availability and schedule information
+ * Roles: Admin (1), Doctor (2), Receptionist (3), Patient (5)
+ */
+QUERY_WHITELIST.set('doctor_schedule', {
+  id: 'doctor_schedule',
+  description: 'Get doctor schedules and availability for appointment booking - use when user asks about doctor availability or booking times',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get next 7 days of appointments to determine availability
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    
+    const appointments = await db.Appointment.findAll({
+      where: {
+        appointmentDate: {
+          [Op.between]: [today, nextWeek]
+        },
+        status: {
+          [Op.in]: [1, 2] // Scheduled or Waiting
+        }
+      },
+      include: [
+        {
+          model: db.User,
+          as: 'assignedDoctor',
+          attributes: ['id', 'fullName', 'staffCode']
+        }
+      ],
+      attributes: ['id', 'appointmentDate', 'timeSlot', 'assignedDoctorId', 'assignedDoctorName'],
+      order: [['appointmentDate', 'ASC'], ['timeSlot', 'ASC']]
+    });
+    
+    // Group by doctor and date
+    const scheduleByDoctor = {};
+    appointments.forEach(apt => {
+      const doctorId = apt.assignedDoctorId;
+      const doctorName = apt.assignedDoctorName || apt.assignedDoctor?.fullName || 'Chưa phân công';
+      
+      if (!scheduleByDoctor[doctorId]) {
+        scheduleByDoctor[doctorId] = {
+          doctorId,
+          doctorName,
+          appointments: []
+        };
+      }
+      
+      scheduleByDoctor[doctorId].appointments.push({
+        date: apt.appointmentDate,
+        timeSlot: apt.timeSlot
+      });
+    });
+    
+    return Object.values(scheduleByDoctor);
+  }
+});
+
+/**
+ * Query: appointment_slots_available
+ * Returns available time slots for booking appointments
+ * Roles: Receptionist (3), Patient (5)
+ */
+QUERY_WHITELIST.set('appointment_slots_available', {
+  id: 'appointment_slots_available',
+  description: 'Get available time slots for booking new appointments - use when user asks about available times or wants to book an appointment',
+  requiredRoles: [ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get next 14 days
+    const twoWeeksLater = new Date(today);
+    twoWeeksLater.setDate(twoWeeksLater.getDate() + 14);
+    
+    // Get all booked appointments in the next 2 weeks
+    const bookedAppointments = await db.Appointment.findAll({
+      where: {
+        appointmentDate: {
+          [Op.between]: [today, twoWeeksLater]
+        },
+        status: {
+          [Op.in]: [1, 2] // Scheduled or Waiting
+        }
+      },
+      attributes: ['appointmentDate', 'timeSlot', 'assignedDoctorId'],
+      raw: true
+    });
+    
+    // Define available time slots (clinic hours: 7:30 - 17:30)
+    const timeSlots = [
+      '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+      '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00'
+    ];
+    
+    // Get active doctors
+    const doctors = await db.User.findAll({
+      where: {
+        role: ROLES.DOCTOR,
+        isActive: true
+      },
+      attributes: ['id', 'fullName'],
+      raw: true
+    });
+    
+    // Calculate availability for next 7 days
+    const availability = [];
+    for (let i = 0; i < 7; i++) {
+      const checkDate = new Date(today);
+      checkDate.setDate(checkDate.getDate() + i);
+      const dateStr = checkDate.toISOString().split('T')[0];
+      
+      const dayAvailability = {
+        date: dateStr,
+        dayOfWeek: ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'][checkDate.getDay()],
+        availableSlots: []
+      };
+      
+      // Check each time slot
+      timeSlots.forEach(slot => {
+        const bookedCount = bookedAppointments.filter(apt => {
+          const aptDate = new Date(apt.appointmentDate).toISOString().split('T')[0];
+          return aptDate === dateStr && apt.timeSlot === slot;
+        }).length;
+        
+        // If fewer appointments than doctors, slot is available
+        if (bookedCount < doctors.length) {
+          dayAvailability.availableSlots.push({
+            time: slot,
+            availableDoctors: doctors.length - bookedCount
+          });
+        }
+      });
+      
+      availability.push(dayAvailability);
+    }
+    
+    return availability;
+  }
+});
+
+/**
+ * Query: my_upcoming_appointments
+ * Returns upcoming appointments for the authenticated patient
+ * Roles: Patient (5)
+ */
+QUERY_WHITELIST.set('my_upcoming_appointments', {
+  id: 'my_upcoming_appointments',
+  description: 'Get my upcoming appointments - use when patient asks about their scheduled appointments or next visit',
+  requiredRoles: [ROLES.PATIENT],
+  handler: async (userId, userRole) => {
+    // Find patient record linked to this user
+    const patient = await db.Patient.findOne({
+      where: { userId }
+    });
+    
+    if (!patient) {
+      return [];
+    }
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get upcoming appointments only
+    const appointments = await db.Appointment.findAll({
+      where: {
+        patientId: patient.id,
+        appointmentDate: {
+          [Op.gte]: today
+        },
+        status: {
+          [Op.in]: [1, 2] // Scheduled or Waiting
+        }
+      },
+      include: [
+        {
+          model: db.User,
+          as: 'assignedDoctor',
+          attributes: ['id', 'fullName', 'signature']
+        }
+      ],
+      order: [['appointmentDate', 'ASC'], ['timeSlot', 'ASC']],
+      limit: 20
+    });
+    
+    return appointments.map(apt => ({
+      id: apt.id,
+      date: apt.appointmentDate,
+      timeSlot: apt.timeSlot,
+      doctorName: apt.assignedDoctorName || apt.assignedDoctor?.fullName,
+      doctorSpecialization: apt.assignedDoctor?.signature || 'Bác sĩ nội khoa',
+      examType: apt.examType,
+      symptoms: apt.symptoms,
+      status: apt.status === 1 ? 'Đã đặt lịch' : 'Chờ khám',
+      patientNotes: apt.patientNotes
+    }));
+  }
+});
+
+/**
+ * Query: appointment_booking_info
+ * Returns information about how to book appointments
+ * Roles: All roles
+ */
+QUERY_WHITELIST.set('appointment_booking_info', {
+  id: 'appointment_booking_info',
+  description: 'Get information about appointment booking process, requirements, and policies - use when user asks how to book or appointment procedures',
+  requiredRoles: [ROLES.ADMIN, ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST, ROLES.PATIENT, 6],
+  handler: async (userId, userRole) => {
+    return [{
+      bookingMethods: [
+        'Đặt lịch trực tuyến qua hệ thống (cho bệnh nhân đã đăng ký)',
+        'Gọi điện thoại đến lễ tân',
+        'Đến trực tiếp phòng khám trong giờ làm việc'
+      ],
+      workingHours: {
+        schedule: 'Thứ 2 - Chủ nhật: 7:30 - 17:30',
+        note: 'Mở cửa cả tuần, không nghỉ'
+      },
+      timeSlots: {
+        morning: '7:30 - 11:30 (các khung 30 phút)',
+        afternoon: '13:30 - 17:00 (các khung 30 phút)',
+        duration: 'Mỗi lượt khám khoảng 30 phút'
+      },
+      requirements: [
+        'Cung cấp thông tin cá nhân: Họ tên, số điện thoại, ngày sinh',
+        'Mô tả triệu chứng hoặc lý do khám',
+        'Có thể chọn bác sĩ ưu tiên (nếu có)',
+        'Đến trước giờ hẹn 10-15 phút'
+      ],
+      cancellationPolicy: 'Vui lòng hủy lịch trước ít nhất 2 giờ nếu không thể đến khám',
+      advanceBooking: 'Có thể đặt lịch trước tối đa 14 ngày',
+      walkInPolicy: 'Chấp nhận khám không hẹn trước trong giờ làm việc, tuy nhiên có thể phải chờ đợi lâu hơn'
+    }];
+  }
+});
+
+/**
  * Get available queries for a specific user role
  * @param {number} userRole - The user's role ID
  * @returns {Array<Object>} Array of available query configurations
