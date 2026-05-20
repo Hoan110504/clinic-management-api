@@ -3,7 +3,7 @@
  * Handles patient management operations
  */
 import { Op } from 'sequelize';
-import { Patient, User, MedicalRecord, Appointment, LabTest, Payment } from '../models/index.js';
+import { Patient, User, MedicalExamination, Appointment, LabTest, Payment } from '../models/index.js';
 import { asyncHandler, parsePagination, parseSort } from '../utils/helpers.js';
 import logger from '../utils/logger.js';
 import { GENDER, ROLES } from '../config/constants.js';
@@ -738,9 +738,9 @@ const getPatientMedicalRecords = asyncHandler(async (req, res) => {
     throw new NotFoundError('Không tìm thấy bệnh nhân');
   }
 
-  const { count, rows } = await MedicalRecord.findAndCountAll({
-    where: { patientId: id },
-    order: [['created_at', 'DESC']],
+  const { count, rows } = await MedicalExamination.findAndCountAll({
+    where: { PatientId: id },
+    order: [['CreatedAt', 'DESC']],
     limit,
     offset,
   });
