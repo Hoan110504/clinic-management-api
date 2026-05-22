@@ -52,7 +52,7 @@ const createUserValidator = [
     .isLength({ max: 255 })
     .withMessage('Học vị không được vượt quá 255 ký tự'),
   body('experienceYears')
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isInt({ min: 0, max: 70 })
     .withMessage('Số năm kinh nghiệm phải từ 0-70'),
   body('bio')
@@ -107,7 +107,7 @@ const updateUserValidator = [
     .isLength({ max: 255 })
     .withMessage('Học vị không được vượt quá 255 ký tự'),
   body('experienceYears')
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isInt({ min: 0, max: 70 })
     .withMessage('Số năm kinh nghiệm phải từ 0-70'),
   body('bio')
