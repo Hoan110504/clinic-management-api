@@ -290,9 +290,9 @@ const buildPaymentPreviewFromBreakdown = (breakdown) => serializePayment({
 
 const paymentAmountFromRequest = (body = {}) => {
   const consultationFee = Math.max(0, toFiniteNumber(body.consultationFee, 0));
-  const labTestFee = Math.max(0, toFiniteNumber(body.labTestFee, 0));
-  const medicineFee = Math.max(0, toFiniteNumber(body.medicineFee, 0));
-  const subtotal = consultationFee + labTestFee + medicineFee;
+  const labFee = Math.max(0, toFiniteNumber(body.LabFee ?? body.labFee ?? body.labTestFee, 0));
+  const medicineFee = Math.max(0, toFiniteNumber(body.MedicineFee ?? body.medicineFee, 0));
+  const subtotal = consultationFee + labFee + medicineFee;
 
   let discountAmount = 0;
   if (body.discountType === 'percent') {
@@ -309,7 +309,7 @@ const paymentAmountFromRequest = (body = {}) => {
     finalAmount,
     totalAmount: Math.max(0, toFiniteNumber(body.totalAmount ?? body.total, derivedTotal)),
     consultationFee,
-    labTestFee,
+    labFee,
     medicineFee,
   };
 };
@@ -355,8 +355,9 @@ const serializePayment = (payment, overrides = {}) => {
     collectedBy: cashierId !== null && cashierId !== undefined ? String(cashierId) : null,
     doctorName: doctor.fullName ?? doctor.full_name ?? raw.doctorName ?? overrides.doctorName ?? '',
     consultationFee: toFiniteNumber(overrides.consultationFee ?? raw.consultationFee ?? 0, 0),
-    labTestFee: toFiniteNumber(overrides.labTestFee ?? raw.labTestFee ?? 0, 0),
-    medicineFee: toFiniteNumber(overrides.medicineFee ?? raw.medicineFee ?? 0, 0),
+    labFee: toFiniteNumber(overrides.labFee ?? raw.labFee ?? raw.LabFee ?? raw.labTestFee ?? 0, 0),
+    labTestFee: toFiniteNumber(overrides.labFee ?? raw.labFee ?? raw.LabFee ?? raw.labTestFee ?? 0, 0),
+    medicineFee: toFiniteNumber(overrides.medicineFee ?? raw.medicineFee ?? raw.MedicineFee ?? 0, 0),
     subtotal: toFiniteNumber(overrides.subtotal ?? raw.subtotal ?? totalAmount, totalAmount),
     discountType: raw.discountType ?? null,
     discountValue: toFiniteNumber(raw.discountValue ?? 0, 0),
@@ -711,8 +712,14 @@ const updatePayment = asyncHandler(async (req, res) => {
   if (req.body.invoiceDate !== undefined) updateData.invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : null;
 
   const amountData = paymentAmountFromRequest(req.body);
-  if (req.body.totalAmount !== undefined || req.body.total !== undefined || req.body.consultationFee !== undefined || req.body.labTestFee !== undefined || req.body.medicineFee !== undefined) {
+  if (req.body.totalAmount !== undefined || req.body.total !== undefined || req.body.consultationFee !== undefined || req.body.labTestFee !== undefined || req.body.labFee !== undefined || req.body.LabFee !== undefined || req.body.medicineFee !== undefined || req.body.MedicineFee !== undefined) {
     updateData.totalAmount = amountData.totalAmount;
+  }
+  if (req.body.labTestFee !== undefined || req.body.labFee !== undefined || req.body.LabFee !== undefined) {
+    updateData.labFee = Math.max(0, toFiniteNumber(req.body.LabFee ?? req.body.labFee ?? req.body.labTestFee, 0));
+  }
+  if (req.body.medicineFee !== undefined || req.body.MedicineFee !== undefined) {
+    updateData.medicineFee = Math.max(0, toFiniteNumber(req.body.MedicineFee ?? req.body.medicineFee, 0));
   }
   if (req.body.paidAmount !== undefined || req.body.amountPaid !== undefined) {
     updateData.paidAmount = Math.max(0, toFiniteNumber(req.body.paidAmount ?? req.body.amountPaid, 0));

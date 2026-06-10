@@ -76,10 +76,18 @@ const createPaymentValidator = [
     .optional()
     .isFloat({ min: 0 })
     .withMessage('Phí xét nghiệm phải lớn hơn hoặc bằng 0'),
+  body('LabFee')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('LabFee phải lớn hơn hoặc bằng 0'),
   body('medicineFee')
     .optional()
     .isFloat({ min: 0 })
     .withMessage('Phí thuốc phải lớn hơn hoặc bằng 0'),
+  body('MedicineFee')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('MedicineFee phải lớn hơn hoặc bằng 0'),
   body('discountType')
     .optional()
     .isIn(['percent', 'amount'])

@@ -81,6 +81,18 @@ export default (sequelize) => {
         defaultValue: 0,
         field: 'TotalAmount',
       },
+      labFee: {
+        type: DataTypes.DECIMAL(18, 2),
+        allowNull: false,
+        defaultValue: 0,
+        field: 'LabFee',
+      },
+      medicineFee: {
+        type: DataTypes.DECIMAL(18, 2),
+        allowNull: false,
+        defaultValue: 0,
+        field: 'MedicineFee',
+      },
       discountAmount: {
         type: DataTypes.DECIMAL(18, 2),
         allowNull: false,
