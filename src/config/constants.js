@@ -98,7 +98,6 @@ const APPOINTMENT_SOURCE = {
 const EXAM_TYPES = {
   NEW: 'Khám mới',
   FOLLOWUP: 'Tái khám',
-  GENERAL: 'Khám nội tổng quát',
 };
 
 // Time Slots
