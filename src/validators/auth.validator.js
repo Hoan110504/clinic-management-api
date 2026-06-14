@@ -87,7 +87,7 @@ const passwordResetRequestValidator = [
 const passwordResetVerifyValidator = [
   body()
     .custom((value) => {
-      if (!value.phone && !value.email) {
+      if (!value.phone && !value.email && !value.identifier) {
         throw new Error('Vui lòng nhập số điện thoại hoặc email');
       }
       return true;
@@ -97,9 +97,11 @@ const passwordResetVerifyValidator = [
     .custom((value) => {
       if (!value) return true;
       const text = String(value).trim();
+      // Allow both phone and email in the phone field for flexibility
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
       const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
-      if (!isPhone) {
-        throw new Error('Số điện thoại không hợp lệ');
+      if (!isEmail && !isPhone) {
+        throw new Error('Số điện thoại hoặc email không hợp lệ');
       }
       return true;
     }),
@@ -107,6 +109,18 @@ const passwordResetVerifyValidator = [
     .optional({ checkFalsy: true })
     .isEmail()
     .withMessage('Email không hợp lệ'),
+  body('identifier')
+    .optional({ checkFalsy: true })
+    .custom((value) => {
+      if (!value) return true;
+      const text = String(value || '').trim();
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
+      if (!isEmail && !isPhone) {
+        throw new Error('Số điện thoại hoặc email không hợp lệ');
+      }
+      return true;
+    }),
   body('otp')
     .notEmpty()
     .withMessage('Mã OTP không được để trống')
@@ -117,7 +131,7 @@ const passwordResetVerifyValidator = [
 const passwordResetConfirmValidator = [
   body()
     .custom((value) => {
-      if (!value.phone && !value.email) {
+      if (!value.phone && !value.email && !value.identifier) {
         throw new Error('Vui lòng nhập số điện thoại hoặc email');
       }
       return true;
@@ -127,9 +141,11 @@ const passwordResetConfirmValidator = [
     .custom((value) => {
       if (!value) return true;
       const text = String(value).trim();
+      // Allow both phone and email in the phone field for flexibility
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
       const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
-      if (!isPhone) {
-        throw new Error('Số điện thoại không hợp lệ');
+      if (!isEmail && !isPhone) {
+        throw new Error('Số điện thoại hoặc email không hợp lệ');
       }
       return true;
     }),
@@ -137,6 +153,18 @@ const passwordResetConfirmValidator = [
     .optional({ checkFalsy: true })
     .isEmail()
     .withMessage('Email không hợp lệ'),
+  body('identifier')
+    .optional({ checkFalsy: true })
+    .custom((value) => {
+      if (!value) return true;
+      const text = String(value || '').trim();
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+      const isPhone = /^[0-9+\-\s()]{3,15}$/.test(text);
+      if (!isEmail && !isPhone) {
+        throw new Error('Số điện thoại hoặc email không hợp lệ');
+      }
+      return true;
+    }),
   body('resetToken')
     .notEmpty()
     .withMessage('Mã xác thực không được để trống'),

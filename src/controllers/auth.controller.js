@@ -818,15 +818,15 @@ const telegramLinkWebhook = asyncHandler(async (req, res) => {
 });
 
 const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
-  const { phone, identifier, otp } = req.body;
-  const normalizedPhone = String(phone || identifier || '').trim();
+  const { phone, email, identifier, otp } = req.body;
+  const normalizedIdentifier = String(phone || email || identifier || '').trim();
 
-  if (!normalizedPhone || !otp) {
+  if (!normalizedIdentifier || !otp) {
     throw new BadRequestError('Thiếu thông tin');
   }
 
-  const channel = resolveIdentifierChannel(normalizedPhone);
-  const user = await findUserByIdentifier(normalizedPhone);
+  const channel = resolveIdentifierChannel(normalizedIdentifier);
+  const user = await findUserByIdentifier(normalizedIdentifier);
   if (!user || !channel) {
     throw new BadRequestError('Mã OTP không hợp lệ hoặc đã hết hạn');
   }
@@ -834,7 +834,7 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
   const record = await PasswordResetOtp.findOne({
     where: {
       userId: user.id,
-      identifier: normalizedPhone,
+      identifier: normalizedIdentifier,
       channel,
       consumedAt: null,
     },
@@ -870,10 +870,10 @@ const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
 });
 
 const resetPasswordWithOtp = asyncHandler(async (req, res) => {
-  const { phone, identifier, resetToken, newPassword, confirmPassword } = req.body;
-  const normalizedPhone = String(phone || identifier || '').trim();
+  const { phone, email, identifier, resetToken, newPassword, confirmPassword } = req.body;
+  const normalizedIdentifier = String(phone || email || identifier || '').trim();
 
-  if (!normalizedPhone || !resetToken || !newPassword) {
+  if (!normalizedIdentifier || !resetToken || !newPassword) {
     throw new BadRequestError('Vui lòng cung cấp mã xác thực và mật khẩu mới');
   }
 
@@ -885,8 +885,8 @@ const resetPasswordWithOtp = asyncHandler(async (req, res) => {
     throw new BadRequestError('Mật khẩu xác nhận không khớp');
   }
 
-  const channel = resolveIdentifierChannel(normalizedPhone);
-  const user = await findUserByIdentifier(normalizedPhone);
+  const channel = resolveIdentifierChannel(normalizedIdentifier);
+  const user = await findUserByIdentifier(normalizedIdentifier);
   if (!user || !channel) {
     throw new BadRequestError('Mã xác thực không hợp lệ hoặc đã hết hạn');
   }
@@ -895,7 +895,7 @@ const resetPasswordWithOtp = asyncHandler(async (req, res) => {
   const record = await PasswordResetOtp.findOne({
     where: {
       userId: user.id,
-      identifier: normalizedPhone,
+      identifier: normalizedIdentifier,
       channel,
       resetTokenHash: tokenHash,
       consumedAt: null,
