@@ -295,16 +295,20 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
 
   const doctorId = req.user.id;
 
-  // Today's appointments
+  // Today's appointments (full list for display)
+  // Include appointments assigned to this doctor (via assignedDoctorId or preferredDoctorId)
   const todayAppointments = await Appointment.findAll({
     where: {
-      assignedDoctorId: doctorId,
+      [Op.or]: [
+        { assignedDoctorId: doctorId },
+        { preferredDoctorId: doctorId },
+      ],
       appointmentDate: {
         [Op.gte]: today,
         [Op.lt]: tomorrow,
       },
       status: {
-        [Op.notIn]: [labelToCode(APPOINTMENT_STATUS.CANCELLED) || APPOINTMENT_STATUS.CANCELLED],
+        [Op.notIn]: [labelToCode(APPOINTMENT_STATUS.CANCELLED) || 4],
       },
     },
     order: [['timeSlot', 'ASC']],
@@ -318,36 +322,98 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
     ],
   });
 
-  // Medical examination statuses for today filtered by doctor
-  let waitingPatients = 0;
+  // Count today's appointments for summary display
+  const todayAppointmentsCount = todayAppointments.length;
+
+  // Count waiting patients: appointments with status "Chờ khám" (status = 2) today
+  const waitingCode = labelToCode(APPOINTMENT_STATUS.WAITING) || 2;
+  const waitingPatients = await Appointment.count({
+    where: {
+      [Op.or]: [
+        { assignedDoctorId: doctorId },
+        { preferredDoctorId: doctorId },
+      ],
+      appointmentDate: {
+        [Op.gte]: today,
+        [Op.lt]: tomorrow,
+      },
+      status: waitingCode,
+    },
+  });
+
+  // Count scheduled patients: appointments with status "Đã đặt lịch" (status = 1) today
+  const scheduledCode = labelToCode(APPOINTMENT_STATUS.SCHEDULED) || 1;
+  const scheduledPatients = await Appointment.count({
+    where: {
+      [Op.or]: [
+        { assignedDoctorId: doctorId },
+        { preferredDoctorId: doctorId },
+      ],
+      appointmentDate: {
+        [Op.gte]: today,
+        [Op.lt]: tomorrow,
+      },
+      status: scheduledCode,
+    },
+  });
+
+  // Count completed patients: appointments with status "Đã hoàn thành" (status = 3) today
+  const completedCode = labelToCode(APPOINTMENT_STATUS.COMPLETED) || 3;
+  const completedToday = await Appointment.count({
+    where: {
+      [Op.or]: [
+        { assignedDoctorId: doctorId },
+        { preferredDoctorId: doctorId },
+      ],
+      appointmentDate: {
+        [Op.gte]: today,
+        [Op.lt]: tomorrow,
+      },
+      status: completedCode,
+    },
+  });
+
+  // Count cancelled patients: appointments with status "Đã hủy" (status = 4) today
+  const cancelledCode = labelToCode(APPOINTMENT_STATUS.CANCELLED) || 4;
+  const cancelledToday = await Appointment.count({
+    where: {
+      [Op.or]: [
+        { assignedDoctorId: doctorId },
+        { preferredDoctorId: doctorId },
+      ],
+      appointmentDate: {
+        [Op.gte]: today,
+        [Op.lt]: tomorrow,
+      },
+      status: cancelledCode,
+    },
+  });
+
+  // Count in-progress examinations (for reference, not displayed in main stats)
   let inProgressCount = 0;
-  let completedToday = 0;
 
   try {
-    // Get MedicalExamination records for today
-    const medicalExams = await sequelize.query(`
-      SELECT Status, COUNT(*) as count 
+    // Count in-progress examinations (Status = 1) for this doctor today
+    // Use ExaminationDate or UpdatedAt to check if it's today
+    inProgressCount = await sequelize.query(`
+      SELECT COUNT(*) as count
       FROM [dbo].[MedicalExaminations]
       WHERE DoctorID = ? 
-        AND CAST([CreatedAt] AS DATE) = CAST(GETDATE() AS DATE)
-      GROUP BY Status
+        AND Status = 1
+        AND (
+          CAST([ExaminationDate] AS DATE) = CAST(GETDATE() AS DATE)
+          OR (
+            [ExaminationDate] IS NULL 
+            AND CAST([UpdatedAt] AS DATE) = CAST(GETDATE() AS DATE)
+          )
+        )
     `, {
       replacements: [doctorId],
       type: sequelize.QueryTypes.SELECT,
     });
-
-    // Map status codes to counts
-    medicalExams.forEach(exam => {
-      if (exam.Status === 0 || exam.Status === '0') {
-        waitingPatients = parseInt(exam.count) || 0;
-      } else if (exam.Status === 1 || exam.Status === '1') {
-        inProgressCount = parseInt(exam.count) || 0;
-      } else if (exam.Status === 2 || exam.Status === '2') {
-        completedToday = parseInt(exam.count) || 0;
-      }
-    });
+    inProgressCount = (inProgressCount && inProgressCount[0]) ? parseInt(inProgressCount[0].count) || 0 : 0;
   } catch (err) {
-    console.warn('Could not fetch medical examination statuses:', err.message);
+    console.warn('Could not fetch in-progress examination count:', err.message);
   }
 
   // Pending lab results (guard in case model isn't loaded)
@@ -386,7 +452,10 @@ const getDoctorDashboard = asyncHandler(async (req, res) => {
 
   return successResponse(res, {
     todayAppointments,
+    todayAppointmentsCount,
+    scheduledPatients,
     waitingPatients,
+    cancelledToday,
     inProgressCount,
     completedToday,
     pendingLabResults,
@@ -466,9 +535,23 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
     ],
   });
 
-  // New patients today - simplified to avoid timestamp issues
-  // TODO: Add created_at column to Patients table if needed
-  const newPatientsToday = 0;
+  // New patients this month - count patients created in current month
+  let newPatientsThisMonth = 0;
+  try {
+    const result = await sequelize.query(`
+      SELECT COUNT(*) as count
+      FROM [dbo].[Patients]
+      WHERE YEAR([created_at]) = YEAR(GETDATE())
+        AND MONTH([created_at]) = MONTH(GETDATE())
+        AND [deleted_at] IS NULL
+    `, {
+      type: sequelize.QueryTypes.SELECT,
+    });
+    newPatientsThisMonth = (result && result[0]) ? parseInt(result[0].count) || 0 : 0;
+  } catch (err) {
+    console.warn('Could not count new patients this month:', err.message);
+    newPatientsThisMonth = 0;
+  }
 
   // Chart 1: Số lịch hẹn theo tháng (Line Chart)
   let appointmentsByMonth = [];
@@ -526,7 +609,7 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
 
     const statusMap = {
       0: { label: 'Chưa thanh toán', count: 0 },
-      1: { label: 'Đã thanh toán', count: 0 },
+      2: { label: 'Đã thanh toán', count: 0 },
     };
 
     allPayments.forEach(p => {
@@ -585,7 +668,7 @@ const getReceptionistDashboard = asyncHandler(async (req, res) => {
     appointmentsByStatus,
     upcomingAppointments,
     unpaidPayments,
-    newPatientsToday,
+    newPatientsThisMonth,
     appointmentsByMonth,
     paymentStatusDistribution,
     appointmentStatusDistribution,

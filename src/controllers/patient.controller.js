@@ -191,7 +191,6 @@ const getPatientById = asyncHandler(async (req, res) => {
           required: false,
         },
       ],
-      attributes: ['id', 'userId', 'fullName', 'dateOfBirth', 'gender', 'phone', 'email', 'address', 'idNumber', 'medicalHistory', 'allergies', 'status', 'createdAt', 'updatedAt'],
     });
 
     // 2. Check if patient is already linked to this user
@@ -253,7 +252,6 @@ const getPatientById = asyncHandler(async (req, res) => {
         required: false,
       },
     ],
-    attributes: ['id', 'userId', 'fullName', 'dateOfBirth', 'gender', 'phone', 'email', 'address', 'idNumber', 'medicalHistory', 'allergies', 'status', 'createdAt', 'updatedAt'],
   });
 
   if (!patient) {
@@ -852,7 +850,6 @@ const searchPatients = asyncHandler(async (req, res) => {
         { id: { [Op.like]: `%${q}%` } },
       ],
     },
-    attributes: ['id', 'fullName', 'phone', 'dateOfBirth', 'gender', 'status'],
     limit: parseInt(limit, 10),
     order: [['fullName', 'ASC']],
   });
