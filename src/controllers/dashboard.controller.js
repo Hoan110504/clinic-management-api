@@ -715,45 +715,56 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
     ],
   });
 
-  // Low stock medicines - simplified without column comparison
+  // Low stock medicines - query from MedicineBatches and group by medicine
   let lowStockMedicines = [];
   try {
-    lowStockMedicines = await Medicine.findAll({
-      where: {
-        isActive: true,
-      },
-      order: [['quantity', 'ASC']],
-      limit: 10,
-      raw: true,
+    // Get medicines with low total stock across all batches
+    lowStockMedicines = await sequelize.query(`
+      SELECT TOP 10
+        m.Id as id,
+        m.Name as name,
+        m.Unit as unit,
+        SUM(mb.QuantityInStock) as total_quantity,
+        COUNT(mb.Id) as batch_count
+      FROM [dbo].[Medicines] m
+      INNER JOIN [dbo].[MedicineBatches] mb ON m.Id = mb.MedicineId
+      WHERE m.IsActive = 1
+        AND mb.Status = 1
+      GROUP BY m.Id, m.Name, m.Unit
+      HAVING SUM(mb.QuantityInStock) <= 50
+      ORDER BY SUM(mb.QuantityInStock) ASC, m.Name ASC
+    `, {
+      type: sequelize.QueryTypes.SELECT,
     });
-    // Filter in memory: quantity <= min_quantity
-    lowStockMedicines = lowStockMedicines.filter(
-      m => m.quantity <= (m.min_quantity || 10)
-    );
   } catch (err) {
     console.warn('Could not fetch low stock medicines:', err.message);
     lowStockMedicines = [];
   }
 
-  // Expiring medicines (30 days) - simplified with error handling
-  const thirtyDaysFromNow = new Date();
-  thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-
+  // Expiring medicines (30 days) - query batches expiring soon
   let expiringMedicines = [];
   try {
-    expiringMedicines = await Medicine.findAll({
-      where: {
-        isActive: true,
-      },
-      order: [['expiryDate', 'ASC']],
-      limit: 10,
-      raw: true,
+    // Medicine batches expiring in next 30 days
+    expiringMedicines = await sequelize.query(`
+      SELECT TOP 10
+        m.Id as id,
+        m.Name as name,
+        m.Unit as unit,
+        mb.BatchNumber as batch_number,
+        mb.QuantityInStock as quantity,
+        mb.ExpiryDate as expiry_date,
+        DATEDIFF(DAY, GETDATE(), mb.ExpiryDate) as days_until_expiry
+      FROM [dbo].[MedicineBatches] mb
+      INNER JOIN [dbo].[Medicines] m ON mb.MedicineId = m.Id
+      WHERE m.IsActive = 1
+        AND mb.Status = 1
+        AND mb.ExpiryDate IS NOT NULL
+        AND mb.ExpiryDate >= CAST(GETDATE() AS DATE)
+        AND mb.ExpiryDate <= DATEADD(DAY, 30, GETDATE())
+      ORDER BY mb.ExpiryDate ASC, m.Name ASC
+    `, {
+      type: sequelize.QueryTypes.SELECT,
     });
-    // Filter in memory: expiryDate between now and 30 days from now
-    const now = new Date();
-    expiringMedicines = expiringMedicines.filter(
-      m => m.expiryDate && new Date(m.expiryDate) <= thirtyDaysFromNow && new Date(m.expiryDate) >= now
-    );
   } catch (err) {
     console.warn('Could not fetch expiring medicines:', err.message);
     expiringMedicines = [];

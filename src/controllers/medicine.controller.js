@@ -331,40 +331,18 @@ const adjustInventory = asyncHandler(async (req, res) => {
     throw new BadRequestError('Số lô (batchNumber) là bắt buộc khi nhập kho');
   }
 
-  // Try to find latest transaction for this medicine (new InventoryTransaction schema).
-  // If none found, fall back to medicine.quantity.
-  let latestTransaction = null;
+  // Calculate total stock from all batches (source of truth)
+  let previousQuantity = 0;
   try {
-    latestTransaction = await InventoryTransaction.findOne({
-      where: { MedicineId: medicine.Id },
-      include: [
-        { model: sequelize.models.MedicineBatch, as: 'batch', required: false },
-        { model: sequelize.models.User, as: 'performedBy', required: false },
-      ],
-      order: [['CreatedAt', 'DESC']],
+    const batchTotal = await sequelize.models.MedicineBatch.sum('QuantityInStock', { 
+      where: { MedicineId: medicine.Id } 
     });
-  } catch (err) {
-    console.warn('latestTransaction lookup failed, falling back to medicine.quantity', err?.message || err);
-    latestTransaction = null;
+    previousQuantity = Number.isFinite(Number(batchTotal)) ? Number(batchTotal) : 0;
+  } catch (sumErr) {
+    console.warn('Failed to compute batch total for previousQuantity', sumErr?.message || sumErr);
+    previousQuantity = 0;
   }
 
-  let previousQuantity;
-  if (Number.isFinite(Number(latestTransaction?.QuantityAfter))) {
-    previousQuantity = Number(latestTransaction.QuantityAfter);
-  } else {
-    // If Medicine model has a `quantity` field use it, otherwise derive from batches
-    if (Object.prototype.hasOwnProperty.call(Medicine.rawAttributes, 'quantity')) {
-      previousQuantity = Number(medicine.quantity || 0);
-    } else {
-      try {
-        const batchTotal = await sequelize.models.MedicineBatch.sum('QuantityInStock', { where: { MedicineId: medicine.Id } });
-        previousQuantity = Number.isFinite(Number(batchTotal)) ? Number(batchTotal) : 0;
-      } catch (sumErr) {
-        console.warn('Failed to compute batch total for previousQuantity fallback', sumErr?.message || sumErr);
-        previousQuantity = 0;
-      }
-    }
-  }
   let newQuantity;
 
   switch (type) {
@@ -372,7 +350,9 @@ const adjustInventory = asyncHandler(async (req, res) => {
       newQuantity = previousQuantity + parsedQuantity;
       break;
     case INVENTORY_TRANSACTION_TYPES.EXPORT:
-      if (previousQuantity < parsedQuantity) {
+      // Skip general stock check if a specific batch is provided
+      // The batch-specific check below will validate availability
+      if (!trimmedBatchCode && previousQuantity < parsedQuantity) {
         throw new BadRequestError('Số lượng xuất vượt quá tồn kho');
       }
       newQuantity = previousQuantity - parsedQuantity;
@@ -1241,7 +1221,23 @@ const getAllMedicinesUnpaginated = asyncHandler(async (req, res) => {
     const rows = await Medicine.findAll({
       where,
       order: parseSort(sort || 'Id:desc', ['Id', 'Name', 'Category', 'Unit', 'Price']),
-      attributes: ['Id', 'Name', 'Unit', 'Category', 'Price', 'IsActive'],
+      attributes: [
+        'Id', 
+        'Name', 
+        'Unit', 
+        'Category', 
+        'Price', 
+        'IsActive',
+        // Sum total stock from all batches
+        [
+          sequelize.literal(`(
+            SELECT ISNULL(SUM(QuantityInStock), 0) 
+            FROM MedicineBatches 
+            WHERE MedicineBatches.MedicineId = Medicine.Id
+          )`),
+          'totalStock'
+        ]
+      ],
       raw: true,
     });
 
@@ -1252,6 +1248,7 @@ const getAllMedicinesUnpaginated = asyncHandler(async (req, res) => {
       unit: r.Unit,
       price: r.Price,
       isActive: r.IsActive,
+      quantity: Number(r.totalStock || 0), // Add total stock from all batches
     }));
 
     return successResponse(res, data);
