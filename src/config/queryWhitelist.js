@@ -10,7 +10,6 @@
  * 
  * Role IDs: 1=Admin, 2=Doctor, 3=Receptionist, 4=Pharmacist, 5=Patient, 6=LabTech
  * 
- * Implements Requirements 2.1, 2.4, 2.6, 2.7, 23.2
  */
 
 import { ROLES } from './constants.js';

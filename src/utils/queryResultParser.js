@@ -3,7 +3,6 @@
  * 
  * Parses Sequelize query results into plain JavaScript objects and serializes
  * them with metadata for AI consumption.
- * Implements Requirements 21.1-21.9 for parser and serializer functionality.
  */
 
 /**

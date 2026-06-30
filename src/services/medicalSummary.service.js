@@ -4,7 +4,6 @@
  * Orchestrates the medical record summarization process using Google Gemini AI.
  * Implements a secure, read-only architecture with pre-defined queries.
  * 
- * Requirements: 5.1-5.7, 6.1-6.6, 11.1-11.4, 12.1-12.6, 13.1-13.6
  */
 
 import geminiService from './gemini.service.js';
@@ -20,7 +19,6 @@ const { MedicalExamination } = models;
  * System prompt for medical record summarization
  * Instructs AI to act as an experienced internal medicine doctor
  * 
- * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6
  */
 const MEDICAL_SUMMARY_SYSTEM_PROMPT = `Bạn là một bác sĩ nội khoa giàu kinh nghiệm và là chuyên gia tư vấn y khoa chuyên nghiệp.
 
@@ -50,7 +48,6 @@ Hãy tóm tắt dựa trên dữ liệu bệnh án được cung cấp.`;
 
 /**
  * Retry configuration for Gemini API calls
- * Requirements: 12.1, 12.4
  */
 const RETRY_CONFIG = {
   MAX_ATTEMPTS: 3,
@@ -59,13 +56,11 @@ const RETRY_CONFIG = {
 
 /**
  * Timeout for AI processing
- * Requirements: 5.7, 12.4
  */
 const AI_TIMEOUT_MS = config.ai.summary.timeout || 30000; // 30 seconds
 
 /**
  * Cache TTL for summaries
- * Requirements: 13.4
  */
 const CACHE_TTL_MS = config.ai.summary.cacheTTL || 3600000; // 1 hour
 
@@ -80,14 +75,12 @@ class MedicalSummaryService {
    * @returns {Promise<Object>} Summary data with metadata
    * @throws {AppError} If generation fails
    * 
-   * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 11.1, 11.3, 8.1, 8.2
    */
   async generateSummary(medicalRecordId, patientId, userId, userRole) {
     const startTime = Date.now();
     
     try {
       // Step 1: Check for cached summary
-      // Requirements: 13.4
       const cachedSummary = await this.getCachedSummary(medicalRecordId);
       if (cachedSummary) {
         return {
@@ -99,19 +92,15 @@ class MedicalSummaryService {
       }
 
       // Step 2: Execute all pre-defined queries in parallel
-      // Requirements: 3.2, 3.3, 5.1, 13.3
       const queryResults = await this.executeAllQueries(patientId, userId, userRole);
 
       // Step 3: Format query results for AI consumption
-      // Requirements: 5.2
       const formattedData = this.formatQueryResultsForAI(queryResults);
 
       // Step 4: Call Gemini API with retry logic
-      // Requirements: 5.3, 5.4, 5.5, 5.6, 12.1, 12.4
       const summary = await this.callGeminiWithRetry(formattedData);
 
       // Step 5: Save summary to database
-      // Requirements: 11.1, 11.3
       const generatedAt = new Date();
       await MedicalExamination.update(
         {
@@ -124,7 +113,6 @@ class MedicalSummaryService {
       );
 
       // Step 6: Log interaction to audit trail
-      // Requirements: 8.1, 8.2
       const responseTimeMs = Date.now() - startTime;
       await chatLogger.logInteraction({
         userId,
@@ -136,7 +124,6 @@ class MedicalSummaryService {
       });
 
       // Step 7: Return summary with metadata
-      // Requirements: 5.7
       return {
         summary,
         queryIds: getAllQueryIds(),
@@ -165,7 +152,6 @@ class MedicalSummaryService {
    * @param {number} medicalRecordId - Medical examination ID
    * @returns {Promise<Object|null>} Cached summary or null
    * 
-   * Requirements: 13.4
    */
   async getCachedSummary(medicalRecordId) {
     try {
@@ -208,13 +194,11 @@ class MedicalSummaryService {
    * @param {number} userRole - Doctor's role
    * @returns {Promise<Array>} Array of query results with query IDs
    * 
-   * Requirements: 3.2, 3.3, 12.2, 13.3
    */
   async executeAllQueries(patientId, userId, userRole) {
     const queryIds = getAllQueryIds();
     
     // Execute all queries in parallel for performance
-    // Requirements: 13.3
     const queryPromises = queryIds.map(async (queryId) => {
       try {
         const data = await executeQuery(queryId, userId, userRole, patientId);
@@ -225,7 +209,6 @@ class MedicalSummaryService {
         };
       } catch (error) {
         // Handle partial query failures gracefully
-        // Requirements: 12.2
         console.error(`Query ${queryId} failed:`, error.message);
         return {
           queryId,
@@ -239,7 +222,6 @@ class MedicalSummaryService {
     const results = await Promise.all(queryPromises);
 
     // Check if all queries failed
-    // Requirements: 12.3
     const successfulQueries = results.filter((r) => r.success);
     if (successfulQueries.length === 0) {
       throw new AppError(
@@ -258,7 +240,6 @@ class MedicalSummaryService {
    * @param {Array} queryResults - Raw query results
    * @returns {string} Formatted text for Gemini
    * 
-   * Requirements: 5.2
    */
   formatQueryResultsForAI(queryResults) {
     const sections = queryResults.map((result) => {
@@ -295,7 +276,6 @@ class MedicalSummaryService {
    * @returns {Promise<string>} AI-generated summary
    * @throws {AppError} If all retries fail or timeout
    * 
-   * Requirements: 12.1, 12.4, 12.5
    */
   async callGeminiWithRetry(formattedData) {
     let lastError;
@@ -358,7 +338,6 @@ class MedicalSummaryService {
    * @returns {Promise<string>} AI-generated summary
    * @throws {Error} If API call fails
    * 
-   * Requirements: 5.3, 5.4, 5.5, 5.6
    */
   async callGemini(formattedData) {
     // Create a model instance with the medical summary system prompt
@@ -390,7 +369,6 @@ class MedicalSummaryService {
    * @param {Error} error - Original error
    * @returns {AppError} Mapped error
    * 
-   * Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6
    */
   handleError(error) {
     // If already an AppError, return as-is

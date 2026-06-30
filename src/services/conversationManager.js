@@ -4,7 +4,6 @@
  * Manages in-memory conversation history for AI chatbot sessions.
  * Maintains the last 10 messages per user session with automatic cleanup.
  * 
- * Requirements: 9.1, 9.2, 9.3, 9.5, 9.6, 9.7, 9.8, 9.9
  */
 
 /**
@@ -95,8 +94,6 @@ class ConversationManager {
 
   /**
    * Append a message to the conversation history
-   * Requirements 9.1, 9.2: Maintain 10 messages, remove oldest when exceeding
-   * Requirements 9.8, 9.9: Append user question and AI response
    * 
    * @param {number} userId - The user ID
    * @param {'user' | 'model'} role - The message role

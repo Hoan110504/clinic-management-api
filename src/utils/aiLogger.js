@@ -2,7 +2,6 @@
  * AI Logger Module
  * 
  * Extends the base winston logger with structured logging specifically for AI interactions.
- * Implements Requirements 24.1, 24.2, 24.3, 24.8
  * 
  * Logs all AI requests, errors, and security events in JSON format for easy parsing
  * by log aggregation tools.

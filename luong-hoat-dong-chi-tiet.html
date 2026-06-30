@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luồng Hoạt Động Chi Tiết - Hệ Thống Phòng Khám</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        nav {
+            background: #2c3e50;
+            padding: 15px 40px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            margin: 0 5px;
+            border-radius: 5px;
+            transition: background 0.3s;
+            display: inline-block;
+        }
+        
+        nav a:hover {
+            background: #34495e;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .feature-section {
+            margin-bottom: 60px;
+            border-left: 5px solid #667eea;
+            padding-left: 30px;
+        }
+        
+        .feature-section h2 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .feature-section h3 {
+            color: #764ba2;
+            font-size: 1.5em;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+        
+        .flow-diagram {
+            background: #f8f9fa;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 30px;
+            margin: 30px 0;
+            position: relative;
+        }
+        
+        .flow-step {
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            position: relative;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .flow-step::after {
+            content: '↓';
+            display: block;
+            text-align: center;
+            font-size: 2em;
+            color: #667eea;
+            margin-top: 15px;
+        }
+        
+        .flow-step:last-child::after {
+            content: '';
+        }
+        
+        .flow-step .step-number {
+            background: #667eea;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 15px;
+            font-size: 1.2em;
+        }
+        
+        .flow-step .step-title {
+            font-weight: bold;
+            font-size: 1.2em;
+            color: #2c3e50;
+            display: inline-block;
+        }
+        
+        .flow-step .step-description {
+            margin-top: 15px;
+            padding-left: 55px;
+            color: #555;
+        }
+        
+        .file-list {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .file-list h4 {
+            color: #856404;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        
+        .file-list ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .file-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid #ffe69c;
+            font-family: 'Courier New', monospace;
+            color: #333;
+        }
+        
+        .file-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .file-list li::before {
+            content: '📄 ';
+            margin-right: 8px;
+        }
+        
+        .highlight-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196f3;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        
+        .highlight-box strong {
+            color: #0d47a1;
+        }
+        
+        .security-features {
+            background: #fff;
+            border: 2px solid #4caf50;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .security-features h4 {
+            color: #2e7d32;
+            margin-bottom: 15px;
+        }
+        
+        .security-features ul {
+            padding-left: 25px;
+        }
+        
+        .security-features li {
+            margin: 10px 0;
+            color: #1b5e20;
+        }
+        
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #e83e8c;
+        }
+        
+        .api-endpoint {
+            background: #263238;
+            color: #aed581;
+            padding: 15px 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            margin: 15px 0;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+        }
+        
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin: 30px 0;
+        }
+        
+        .info-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .info-card h5 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        footer {
+            background: #2c3e50;
+            color: white;
+            text-align: center;
+            padding: 30px;
+            margin-top: 40px;
+        }
+        
+        @media (max-width: 768px) {
+            .two-column {
+                grid-template-columns: 1fr;
+            }
+            
+            header h1 {
+                font-size: 1.8em;
+            }
+            
+            nav a {
+                display: block;
+                margin: 5px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏥 Luồng Hoạt Động Chi Tiết</h1>
+            <p>Hệ Thống Quản Lý Phòng Khám Nội Khoa</p>
+        </header>
+        
+        <nav>
+            <a href="#ai-chatbot">AI Chatbot</a>
+            <a href="#drug-reaction">Phân Tích Thuốc</a>
+            <a href="#medical-summary">Tóm Tắt Hồ Sơ</a>
+            <a href="#telegram-reset">Quên MK (Telegram)</a>
+            <a href="#email-reset">Quên MK (Email)</a>
+        </nav>
+        
+        <div class="content">
+            <!-- ==================== AI CHATBOT ==================== -->
+            <section id="ai-chatbot" class="feature-section">
+                <h2>🤖 1. AI CHATBOT - Trợ Lý Y Tế Thông Minh</h2>
+                
+                <div class="api-endpoint">POST /api/ai/chat</div>
+                
+                <p>AI Chatbot là trợ lý y tế thông minh sử dụng Google Gemini 2.0 Flash, giúp người dùng tra cứu thông tin về thuốc, dịch vụ, lịch hẹn và hồ sơ bệnh án một cách nhanh chóng và chính xác.</p>
+                
+                <h3>📋 Luồng Hoạt Động Chi Tiết</h3>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">Client Gửi Request</span>
+                        <div class="step-description">
+                            <strong>File Frontend:</strong> (Không có trong backend code)<br>
+                            Client gửi POST request đến <code>/api/ai/chat</code> với body: <code>{ "message": "Thuốc trị sốt giá bao nhiêu?" }</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">Routing - Định Tuyến Request</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/routes/ai.routes.js</code><br>
+                            Router nhận request và chuyển qua chuỗi middleware trước khi đến controller.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">Middleware Chain - Xác Thực & Bảo Mật</span>
+                        <div class="step-description">
+                            <strong>3.1 Authentication:</strong> <code>src/middleware/auth.js</code> - Kiểm tra JWT token, xác thực người dùng<br>
+                            <strong>3.2 Rate Limiter:</strong> <code>src/middleware/aiRateLimiter.js</code> - Giới hạn 20 request/user/10 phút, 50 request/IP/10 phút<br>
+                            <strong>3.3 Input Sanitizer:</strong> <code>src/middleware/aiSanitizer.js</code> - Xóa HTML tags, phát hiện prompt injection, giới hạn 500 ký tự
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Controller - Xử Lý Logic</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/ai.controller.js</code> (function: <code>chat</code>)<br>
+                            Controller orchestrates toàn bộ luồng two-pass AI và timeout 30 giây.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">Conversation Manager - Quản Lý Lịch Sử</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/conversationManager.js</code><br>
+                            Lấy 10 tin nhắn gần nhất từ session, thêm tin nhắn mới của user vào lịch sử.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">6</span>
+                        <span class="step-title">PASS 1 - AI Chọn Queries</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/gemini.service.js</code> (function: <code>selectQueries</code>)<br>
+                            AI phân tích câu hỏi của user và chọn các query_ids phù hợp từ whitelist:<br>
+                            <strong>Whitelist:</strong> <code>src/config/queryWhitelist.js</code><br>
+                            Ví dụ: User hỏi về giá thuốc → AI chọn query "medicines_and_services"<br>
+                            AI trả về: <code>["medicines_and_services"]</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">7</span>
+                        <span class="step-title">Query Handler - Thực Thi Queries</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/queryHandler.service.js</code><br>
+                            Thực thi các queries được AI chọn với role-based filtering:<br>
+                            - Kiểm tra quyền truy cập theo role (Admin, Doctor, Patient...)<br>
+                            - Thực thi query handler tương ứng từ queryWhitelist.js<br>
+                            - Truy vấn database qua Sequelize ORM<br>
+                            <strong>Models sử dụng:</strong> <code>src/models/Medicine.js</code>, <code>src/models/LabService.js</code>, v.v.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">8</span>
+                        <span class="step-title">PASS 2 - AI Tổng Hợp Câu Trả Lời</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/gemini.service.js</code> (function: <code>synthesizeAnswer</code>)<br>
+                            AI nhận kết quả queries + lịch sử hội thoại, tạo câu trả lời tự nhiên bằng tiếng Việt:<br>
+                            Input: Query results + Conversation history<br>
+                            Output: "Phòng khám có Paracetamol 500mg giá 2.000đ/viên, Ibuprofen 400mg giá 3.500đ/viên..."
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">9</span>
+                        <span class="step-title">Conversation Manager - Lưu Response</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/conversationManager.js</code><br>
+                            Lưu câu trả lời của AI vào lịch sử hội thoại trong session memory (giới hạn 10 tin nhắn).
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">10</span>
+                        <span class="step-title">Chat Logger - Ghi Log Audit</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/chatLogger.service.js</code><br>
+                            Ghi lại toàn bộ tương tác vào database:<br>
+                            <strong>Model:</strong> <code>src/models/AiChatLog.js</code><br>
+                            Lưu: user_id, user_role, user_message, ai_response, selected_query_ids, timestamp, ip_address, response_time_ms
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">11</span>
+                        <span class="step-title">Response Trả Về Client</span>
+                        <div class="step-description">
+                            Controller trả về JSON response:<br>
+                            <code>{ "success": true, "data": { "response": "...", "queryIds": [...], "remainingRequests": 15 } }</code>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="file-list">
+                    <h4>📁 Danh Sách Files Liên Quan</h4>
+                    <ul>
+                        <li><strong>Routes:</strong> src/routes/ai.routes.js</li>
+                        <li><strong>Controller:</strong> src/controllers/ai.controller.js</li>
+                        <li><strong>Services:</strong> src/services/gemini.service.js</li>
+                        <li><strong>Services:</strong> src/services/queryHandler.service.js</li>
+                        <li><strong>Services:</strong> src/services/conversationManager.js</li>
+                        <li><strong>Services:</strong> src/services/chatLogger.service.js</li>
+                        <li><strong>Middleware:</strong> src/middleware/auth.js</li>
+                        <li><strong>Middleware:</strong> src/middleware/aiRateLimiter.js</li>
+                        <li><strong>Middleware:</strong> src/middleware/aiSanitizer.js</li>
+                        <li><strong>Config:</strong> src/config/queryWhitelist.js</li>
+                        <li><strong>Config:</strong> src/config/geminiModels.js</li>
+                        <li><strong>Models:</strong> src/models/AiChatLog.js</li>
+                        <li><strong>Models:</strong> src/models/Medicine.js</li>
+                        <li><strong>Models:</strong> src/models/LabService.js</li>
+                        <li><strong>Models:</strong> src/models/Patient.js</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>🔒 Tính Năng Bảo Mật</h4>
+                    <ul>
+                        <li><strong>JWT Authentication:</strong> Yêu cầu đăng nhập cho mọi request</li>
+                        <li><strong>Rate Limiting:</strong> 20 request/user/10 phút, 50 request/IP/10 phút</li>
+                        <li><strong>Input Sanitization:</strong> Xóa HTML tags, script injection patterns</li>
+                        <li><strong>Prompt Injection Detection:</strong> 40+ patterns phát hiện jailbreak attempts</li>
+                        <li><strong>Role-Based Access Control:</strong> Queries được filter theo quyền user</li>
+                        <li><strong>Audit Logging:</strong> Ghi lại mọi tương tác vào database</li>
+                        <li><strong>Timeout Protection:</strong> Request timeout sau 30 giây</li>
+                        <li><strong>Hardcoded System Prompt:</strong> AI behavior không bị user thay đổi</li>
+                    </ul>
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>💡 Two-Pass AI Flow:</strong> Kiến trúc độc đáo giúp AI chọn đúng dữ liệu cần thiết (Pass 1) trước khi tổng hợp câu trả lời (Pass 2), đảm bảo câu trả lời chính xác và có căn cứ từ database.
+                </div>
+            </section>
+            
+            <!-- ==================== AI DRUG REACTION ANALYSIS ==================== -->
+            <section id="drug-reaction" class="feature-section">
+                <h2>💊 2. AI PHÂN TÍCH PHẢN ỨNG THUỐC</h2>
+                
+                <div class="api-endpoint">POST /api/ai/check-prescription</div>
+                
+                <p>Hệ thống AI phân tích tương tác thuốc, phát hiện chống chỉ định và đưa ra cảnh báo an toàn cho bác sĩ trước khi kê đơn.</p>
+                
+                <h3>📋 Luồng Hoạt Động Chi Tiết</h3>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">Bác Sĩ Gửi Request Kiểm Tra</span>
+                        <div class="step-description">
+                            Client gửi POST request với thông tin:<br>
+                            <code>{ "patientId": 123, "medicines": [{medicineName, dosage, instructions}], "currentDiagnosis": "..." }</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">Routing & Authentication</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/routes/ai.routes.js</code> - Route: <code>router.post('/check-prescription', authorize(ROLES.DOCTOR), ...)</code><br>
+                            Chỉ bác sĩ (role = 2) mới có quyền truy cập endpoint này.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">Controller - Validate Input</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/ai.controller.js</code> (function: <code>checkPrescriptionSafety</code>, lines 610-667)<br>
+                            - Kiểm tra role = 2 (Doctor)<br>
+                            - Validate danh sách thuốc không rỗng<br>
+                            - Validate patientId hợp lệ
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Lấy Thông Tin Bệnh Nhân</span>
+                        <div class="step-description">
+                            <strong>Model:</strong> <code>src/models/Patient.js</code><br>
+                            Query database lấy:<br>
+                            - Tiền sử bệnh (medicalHistory)<br>
+                            - Dị ứng (allergies)<br>
+                            - Tuổi (tính từ dateOfBirth)<br>
+                            - Giới tính (gender)
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">Lấy Thuốc Đang Dùng (30 Ngày Gần Nhất)</span>
+                        <div class="step-description">
+                            <strong>Models:</strong> <code>src/models/Prescription.js</code>, <code>src/models/PrescriptionItem.js</code>, <code>src/models/Medicine.js</code><br>
+                            Query các đơn thuốc có status = 0 hoặc 1 (đang chờ/đã cấp) trong 30 ngày gần nhất của bệnh nhân này.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">6</span>
+                        <span class="step-title">Patient Safety Service - Phân Tích</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/patientSafetyService.js</code> (function: <code>checkPrescriptionSafety</code>)<br>
+                            Service tạo prompt chi tiết gửi đến Gemini AI với:<br>
+                            - Thông tin bệnh nhân (tiền sử, dị ứng, tuổi, giới tính, chẩn đoán)<br>
+                            - Danh sách thuốc đang dùng<br>
+                            - Danh sách thuốc mới kê
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">7</span>
+                        <span class="step-title">Gemini AI - Phân Tích An Toàn</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/gemini.service.js</code><br>
+                            AI phân tích 4 khía cạnh:<br>
+                            1. Tương tác trong đơn thuốc mới<br>
+                            2. Tương tác với thuốc đang dùng<br>
+                            3. Chống chỉ định (Tiền sử & Dị ứng)<br>
+                            4. Phù hợp chẩn đoán<br>
+                            <strong>Retry:</strong> 3 lần với exponential backoff (2s, 4s, 8s)
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">8</span>
+                        <span class="step-title">Parse JSON Response</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/patientSafetyService.js</code><br>
+                            Parse response AI thành JSON format:<br>
+                            <code>{ "safe": true/false, "warnings": [{level, issue, recommendation}], "message": "..." }</code><br>
+                            Nếu parse lỗi → Fallback response: safe=false với thông báo lỗi.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">9</span>
+                        <span class="step-title">Response Trả Về Bác Sĩ</span>
+                        <div class="step-description">
+                            Controller trả về kết quả phân tích cho bác sĩ:<br>
+                            <code>{ "success": true, "data": { "safe": false, "warnings": [...], "message": "..." } }</code>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="file-list">
+                    <h4>📁 Danh Sách Files Liên Quan</h4>
+                    <ul>
+                        <li><strong>Routes:</strong> src/routes/ai.routes.js</li>
+                        <li><strong>Controller:</strong> src/controllers/ai.controller.js (checkPrescriptionSafety, lines 610-667)</li>
+                        <li><strong>Services:</strong> src/services/patientSafetyService.js</li>
+                        <li><strong>Services:</strong> src/services/gemini.service.js</li>
+                        <li><strong>Middleware:</strong> src/middleware/auth.js</li>
+                        <li><strong>Models:</strong> src/models/Patient.js</li>
+                        <li><strong>Models:</strong> src/models/Prescription.js</li>
+                        <li><strong>Models:</strong> src/models/PrescriptionItem.js</li>
+                        <li><strong>Models:</strong> src/models/Medicine.js</li>
+                        <li><strong>Models:</strong> src/models/MedicalExamination.js</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>🔒 Tính Năng Bảo Mật</h4>
+                    <ul>
+                        <li><strong>Doctor-Only Access:</strong> Chỉ bác sĩ (role=2) có quyền sử dụng</li>
+                        <li><strong>Patient Data Protection:</strong> Chỉ truy cập dữ liệu bệnh nhân được chỉ định</li>
+                        <li><strong>No External API Calls:</strong> Không gửi dữ liệu ra ngoài ngoại trừ Gemini AI</li>
+                        <li><strong>Retry Mechanism:</strong> Xử lý lỗi API với exponential backoff</li>
+                        <li><strong>Fallback Response:</strong> Không để hệ thống crash khi AI lỗi</li>
+                    </ul>
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>💡 AI Clinical Pharmacist:</strong> Hệ thống đóng vai trò dược sĩ lâm sàng AI, kiểm tra đơn thuốc 24/7, phát hiện ngay các vấn đề về tương tác thuốc và chống chỉ định trước khi bác sĩ kê đơn.
+                </div>
+            </section>
+            
+            <!-- ==================== AI MEDICAL SUMMARY ==================== -->
+            <section id="medical-summary" class="feature-section">
+                <h2>📋 3. AI TÓM TẮT HỒ SƠ BỆNH ÁN</h2>
+                
+                <div class="api-endpoint">POST /api/ai/summarize-medical-record</div>
+                
+                <p>AI tự động tóm tắt toàn bộ hồ sơ bệnh án thành 3-5 dòng ngắn gọn, giúp bác sĩ nắm bắt nhanh tiền sử bệnh, tình trạng hiện tại và các điểm cần lưu ý trước khi khám.</p>
+                
+                <h3>📋 Luồng Hoạt Động Chi Tiết</h3>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">Bác Sĩ Yêu Cầu Tóm Tắt</span>
+                        <div class="step-description">
+                            Client gửi POST request:<br>
+                            <code>{ "medicalRecordId": 123, "patientId": 456 }</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">Routing & Middleware</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/routes/ai.routes.js</code><br>
+                            Middleware chain:<br>
+                            - Authentication (JWT)<br>
+                            - <strong>AI Summary Rate Limiter:</strong> <code>src/middleware/aiSummaryRateLimiter.js</code><br>
+                            &nbsp;&nbsp;→ 10 lần/giờ/bệnh nhân, 30 lần/phút/toàn bộ<br>
+                            - Request Validator
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">Controller - Orchestrate Flow</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/ai.controller.js</code> (function: <code>summarizeMedicalRecord</code>, lines 533-609)<br>
+                            Chuyển request đến Medical Summary Service.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Medical Summary Service - Check Cache</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/medicalSummary.service.js</code><br>
+                            Kiểm tra xem bệnh án này đã có summary trong vòng 1 giờ chưa:<br>
+                            <strong>Model:</strong> <code>src/models/MedicalExamination.js</code> (fields: AiSummary, AiSummaryGeneratedAt)<br>
+                            Nếu có cache → Trả về ngay, không gọi AI.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">Execute 8 Pre-Defined Queries</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/config/medicalSummaryQueries.js</code><br>
+                            Thực thi song song 8 queries chỉ đọc (read-only):<br>
+                            1. <code>getPatientBasicInfo</code> - Thông tin cơ bản<br>
+                            2. <code>getMedicalHistory</code> - 10 lần khám gần nhất<br>
+                            3. <code>getChronicDiseases</code> - Bệnh mãn tính<br>
+                            4. <code>getAllergies</code> - Dị ứng<br>
+                            5. <code>getRecentLabTests</code> - Xét nghiệm 6 tháng<br>
+                            6. <code>getCurrentMedications</code> - Thuốc đang dùng<br>
+                            7. <code>getPreviousDiagnoses</code> - Chẩn đoán cũ<br>
+                            8. <code>getVitalSignsHistory</code> - Sinh hiệu 5 lần gần nhất
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">6</span>
+                        <span class="step-title">Format Data cho AI</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/medicalSummary.service.js</code><br>
+                            Chuyển đổi query results thành văn bản có cấu trúc dễ đọc cho AI.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">7</span>
+                        <span class="step-title">Gemini AI - Tóm Tắt</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/gemini.service.js</code><br>
+                            <strong>System Prompt:</strong> Đóng vai bác sĩ nội khoa giàu kinh nghiệm<br>
+                            Yêu cầu: Tóm tắt 3-5 dòng theo cấu trúc:<br>
+                            - Tiền sử bệnh (Medical History)<br>
+                            - Bệnh lý hiện tại (Current Conditions)<br>
+                            - Điểm cần lưu ý (Important Notes)<br>
+                            <strong>Retry:</strong> 3 lần với delays [2s, 4s, 8s]<br>
+                            <strong>Timeout:</strong> 30 giây
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">8</span>
+                        <span class="step-title">Lưu Summary vào Database</span>
+                        <div class="step-description">
+                            <strong>Model:</strong> <code>src/models/MedicalExamination.js</code><br>
+                            Update fields:<br>
+                            - <code>AiSummary</code>: Nội dung tóm tắt<br>
+                            - <code>AiSummaryGeneratedAt</code>: Timestamp<br>
+                            Cache này có hiệu lực 1 giờ.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">9</span>
+                        <span class="step-title">Response Trả Về</span>
+                        <div class="step-description">
+                            Controller trả về:<br>
+                            <code>{ "success": true, "data": { "summary": "...", "queryIds": [...], "generatedAt": "...", "remainingRequests": 8, "cached": false } }</code>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="file-list">
+                    <h4>📁 Danh Sách Files Liên Quan</h4>
+                    <ul>
+                        <li><strong>Routes:</strong> src/routes/ai.routes.js</li>
+                        <li><strong>Controller:</strong> src/controllers/ai.controller.js (summarizeMedicalRecord, lines 533-609)</li>
+                        <li><strong>Services:</strong> src/services/medicalSummary.service.js</li>
+                        <li><strong>Services:</strong> src/services/gemini.service.js</li>
+                        <li><strong>Middleware:</strong> src/middleware/aiSummaryRateLimiter.js</li>
+                        <li><strong>Config:</strong> src/config/medicalSummaryQueries.js (8 queries)</li>
+                        <li><strong>Models:</strong> src/models/MedicalExamination.js (AiSummary, AiSummaryGeneratedAt)</li>
+                        <li><strong>Models:</strong> src/models/Patient.js</li>
+                        <li><strong>Models:</strong> src/models/Prescription.js</li>
+                        <li><strong>Models:</strong> src/models/LabResult.js</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>🔒 Tính Năng Bảo Mật</h4>
+                    <ul>
+                        <li><strong>Doctor-Only Access:</strong> Chỉ bác sĩ (role=2) có quyền sử dụng</li>
+                        <li><strong>Two-Level Rate Limiting:</strong> Per-patient (10/giờ) + Global (30/phút)</li>
+                        <li><strong>Read-Only Queries:</strong> 8 queries pre-defined, không cho phép custom query</li>
+                        <li><strong>Cache Layer:</strong> Giảm tải API, cache 1 giờ</li>
+                        <li><strong>Timeout Protection:</strong> 30 giây timeout</li>
+                        <li><strong>Retry Mechanism:</strong> 3 attempts với exponential backoff</li>
+                    </ul>
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>💡 Pre-Defined Queries Architecture:</strong> Thay vì cho AI tự viết SQL query (nguy hiểm), hệ thống sử dụng 8 queries được định nghĩa sẵn, AI chỉ đọc và tóm tắt dữ liệu, đảm bảo an toàn 100%.
+                </div>
+            </section>
+            
+            <!-- ==================== TELEGRAM PASSWORD RESET ==================== -->
+            <section id="telegram-reset" class="feature-section">
+                <h2>📱 4. QUÊN MẬT KHẨU BẰNG TELEGRAM</h2>
+                
+                <div class="api-endpoint">POST /api/auth/forgot-password (channel: telegram)</div>
+                
+                <p>Hệ thống cho phép người dùng đặt lại mật khẩu qua Telegram bot, nhận OTP 6 số trực tiếp trong cuộc trò chuyện Telegram.</p>
+                
+                <h3>📋 Luồng Hoạt Động Chi Tiết</h3>
+                
+                <h4>🔗 Giai Đoạn 1: Liên Kết Telegram (One-Time Setup)</h4>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">User Nhấn "Liên Kết Telegram"</span>
+                        <div class="step-description">
+                            Frontend tạo deep link: <code>https://t.me/YourBot?start=PHONE_0866816201</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">User Bấm /start Trên Telegram</span>
+                        <div class="step-description">
+                            Telegram bot nhận webhook hoặc polling message với text: <code>/start PHONE_0866816201</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">Telegram Service - Xử Lý /start</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/telegram.service.js</code> (function: <code>handleStartCommand</code>)<br>
+                            Parse phone từ start parameter, lấy chat_id của user.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Lưu Link Session</span>
+                        <div class="step-description">
+                            <strong>Model:</strong> <code>src/models/TelegramLinkSession.js</code><br>
+                            Lưu mapping: <code>phone → telegramChatId</code><br>
+                            Bot gửi tin nhắn xác nhận liên kết thành công.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">Frontend Polling Status</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/routes/auth.routes.js</code> (GET /api/auth/telegram-link-status?phone=xxx)<br>
+                            <strong>Controller:</strong> <code>src/controllers/auth.controller.js</code> (telegramLinkStatus)<br>
+                            Frontend gọi API này để kiểm tra xem user đã bấm /start chưa.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">6</span>
+                        <span class="step-title">Hoàn Tất Đăng Ký</span>
+                        <div class="step-description">
+                            Khi đăng ký tài khoản, backend lấy telegramChatId từ TelegramLinkSession và lưu vào <code>User.telegramChatId</code>.<br>
+                            Từ giờ user có thể nhận OTP qua Telegram.
+                        </div>
+                    </div>
+                </div>
+                
+                <h4>🔑 Giai Đoạn 2: Quên Mật Khẩu - Nhận OTP</h4>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">User Nhập Số Điện Thoại</span>
+                        <div class="step-description">
+                            Frontend gửi POST request: <code>{ "phone": "0866816201" }</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">Routing & Rate Limiter</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/routes/auth.routes.js</code> (POST /api/auth/forgot-password)<br>
+                            Rate limit: 5 requests/giờ/user.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">Controller - Tìm User</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/auth.controller.js</code> (function: <code>requestPasswordResetOtp</code>, lines 531-607)<br>
+                            - Normalize phone (0866816201 → +84866816201)<br>
+                            - Tìm user trong database bằng phone hoặc email<br>
+                            - Check rate limit (5 lần/giờ)<br>
+                            - Check cooldown (60 giây giữa các lần gửi)
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Generate OTP</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/passwordReset.service.js</code> (function: <code>generateOtpCode</code>)<br>
+                            Tạo OTP 6 số random: <code>123456</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">Hash & Save OTP</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/passwordReset.service.js</code> (function: <code>hashResetValue</code>)<br>
+                            Hash OTP với SHA256 + pepper, lưu vào database:<br>
+                            <strong>Model:</strong> <code>src/models/PasswordResetOtp.js</code><br>
+                            Fields: userId, identifier, channel='telegram', destination=chatId, otpHash, expiresAt (10 phút)
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">6</span>
+                        <span class="step-title">Gửi OTP Qua Telegram</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/passwordReset.service.js</code> (function: <code>sendTelegramOtp</code>)<br>
+                            Gửi POST request đến Telegram Bot API:<br>
+                            <code>https://api.telegram.org/bot{token}/sendMessage</code><br>
+                            Tin nhắn: "Mã OTP đặt lại mật khẩu của bạn là: 123456"
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">7</span>
+                        <span class="step-title">Response Trả Về</span>
+                        <div class="step-description">
+                            Controller trả về:<br>
+                            <code>{ "success": true, "data": { "message": "OTP đã được gửi", "channel": "telegram", "destinationMasked": "Telegram ...8201", "expiresInSeconds": 600 } }</code>
+                        </div>
+                    </div>
+                </div>
+                
+                <h4>✅ Giai Đoạn 3: Xác Thực OTP & Đặt Lại Mật Khẩu</h4>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">User Nhập OTP</span>
+                        <div class="step-description">
+                            Frontend gửi: <code>{ "phone": "0866816201", "otp": "123456" }</code><br>
+                            Route: POST /api/auth/forgot-password/verify-otp
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">Controller - Verify OTP</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/auth.controller.js</code> (function: <code>verifyPasswordResetOtp</code>, lines 659-709)<br>
+                            - Hash OTP user nhập<br>
+                            - So sánh với otpHash trong database (timing-safe comparison)<br>
+                            - Kiểm tra hết hạn (10 phút)<br>
+                            - Check attemptCount (max 5 lần thử sai)<br>
+                            - Nếu đúng: tạo resetToken, lưu verifiedAt
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">User Nhập Mật Khẩu Mới</span>
+                        <div class="step-description">
+                            Frontend gửi: <code>{ "phone": "0866816201", "resetToken": "xxx", "newPassword": "NewPass123!" }</code><br>
+                            Route: POST /api/auth/forgot-password/reset-password
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Controller - Reset Password</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/auth.controller.js</code> (function: <code>resetPasswordWithOtp</code>, lines 711-767)</span><br>
+                            - Verify resetToken hash<br>
+                            - Check expiresAt (10 phút)<br>
+                            - Hash mật khẩu mới bằng bcrypt<br>
+                            - Update User.password<br>
+                            - Set consumedAt (đánh dấu đã sử dụng)
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">Response Success</span>
+                        <div class="step-description">
+                            Trả về: <code>{ "success": true, "data": { "message": "Đặt lại mật khẩu thành công" } }</code><br>
+                            User có thể đăng nhập ngay với mật khẩu mới.
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="file-list">
+                    <h4>📁 Danh Sách Files Liên Quan</h4>
+                    <ul>
+                        <li><strong>Routes:</strong> src/routes/auth.routes.js</li>
+                        <li><strong>Controller:</strong> src/controllers/auth.controller.js (requestPasswordResetOtp, verifyPasswordResetOtp, resetPasswordWithOtp)</li>
+                        <li><strong>Services:</strong> src/services/passwordReset.service.js</li>
+                        <li><strong>Services:</strong> src/services/telegram.service.js</li>
+                        <li><strong>Models:</strong> src/models/PasswordResetOtp.js</li>
+                        <li><strong>Models:</strong> src/models/TelegramLinkSession.js</li>
+                        <li><strong>Models:</strong> src/models/User.js</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>🔒 Tính Năng Bảo Mật</h4>
+                    <ul>
+                        <li><strong>OTP Hashing:</strong> SHA256 + pepper, không lưu plaintext OTP</li>
+                        <li><strong>Rate Limiting:</strong> 5 lần gửi OTP/giờ</li>
+                        <li><strong>Resend Cooldown:</strong> 60 giây giữa các lần gửi</li>
+                        <li><strong>OTP Expiration:</strong> 10 phút</li>
+                        <li><strong>Max Attempts:</strong> 5 lần thử sai OTP</li>
+                        <li><strong>One-Time Use:</strong> consumedAt đánh dấu OTP đã dùng</li>
+                        <li><strong>Timing-Safe Comparison:</strong> Chống timing attack khi so sánh hash</li>
+                        <li><strong>Session Linking:</strong> Telegram chat_id phải được liên kết trước</li>
+                    </ul>
+                </div>
+            </section>
+            
+            <!-- ==================== EMAIL PASSWORD RESET ==================== -->
+            <section id="email-reset" class="feature-section">
+                <h2>📧 5. QUÊN MẬT KHẨU BẰNG EMAIL</h2>
+                
+                <div class="api-endpoint">POST /api/auth/forgot-password (channel: email)</div>
+                
+                <p>Hệ thống hỗ trợ đặt lại mật khẩu qua email SMTP, gửi OTP 6 số đến địa chỉ email đã đăng ký của người dùng.</p>
+                
+                <h3>📋 Luồng Hoạt Động Chi Tiết</h3>
+                
+                <div class="flow-diagram">
+                    <div class="flow-step">
+                        <span class="step-number">1</span>
+                        <span class="step-title">User Nhập Email</span>
+                        <div class="step-description">
+                            Frontend gửi POST request: <code>{ "email": "user@example.com" }</code>
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">2</span>
+                        <span class="step-title">Routing & Rate Limiter</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/routes/auth.routes.js</code> (POST /api/auth/forgot-password)<br>
+                            Cùng endpoint với Telegram, rate limit: 5 requests/giờ.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">3</span>
+                        <span class="step-title">Controller - Auto Detect Channel</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/controllers/auth.controller.js</code> (requestPasswordResetOtp)<br>
+                            <strong>Service:</strong> <code>src/services/passwordReset.service.js</code> (resolveIdentifierChannel)<br>
+                            Tự động phát hiện:<br>
+                            - Email regex: <code>/^[^\s@]+@[^\s@]+\.[^\s@]+$/</code> → channel='email'<br>
+                            - Phone regex: <code>/^[0-9+\-\s()]{3,15}$/</code> → channel='telegram'
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">4</span>
+                        <span class="step-title">Tìm User & Generate OTP</span>
+                        <div class="step-description">
+                            Tương tự Telegram flow:<br>
+                            - Normalize email (lowercase)<br>
+                            - Tìm user trong database<br>
+                            - Generate OTP 6 số<br>
+                            - Hash với SHA256 + pepper<br>
+                            - Lưu vào PasswordResetOtp với channel='email'
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">5</span>
+                        <span class="step-title">SMTP Service - Gửi Email</span>
+                        <div class="step-description">
+                            <strong>File:</strong> <code>src/services/passwordReset.service.js</code> (sendEmailOtp)<br>
+                            Sử dụng <code>nodemailer</code> với config từ .env:<br>
+                            - SMTP_HOST (ví dụ: smtp.gmail.com)<br>
+                            - SMTP_PORT (587 hoặc 465)<br>
+                            - SMTP_USER<br>
+                            - SMTP_PASS<br>
+                            - SMTP_FROM<br>
+                            <br>
+                            Email content (HTML + Text):<br>
+                            Subject: "Mã xác thực đặt lại mật khẩu"<br>
+                            Body: "Mã OTP của bạn là: <strong>123456</strong>. Có hiệu lực 10 phút."
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">6</span>
+                        <span class="step-title">User Nhận Email & Nhập OTP</span>
+                        <div class="step-description">
+                            User kiểm tra email, copy OTP 6 số, nhập vào form.
+                        </div>
+                    </div>
+                    
+                    <div class="flow-step">
+                        <span class="step-number">7</span>
+                        <span class="step-title">Verify OTP & Reset Password</span>
+                        <div class="step-description">
+                            <strong>Flow giống y hệt Telegram:</strong><br>
+                            - POST /api/auth/forgot-password/verify-otp<br>
+                            - POST /api/auth/forgot-password/reset-password<br>
+                            Controller, service, model đều dùng chung với Telegram flow.
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="file-list">
+                    <h4>📁 Danh Sách Files Liên Quan</h4>
+                    <ul>
+                        <li><strong>Routes:</strong> src/routes/auth.routes.js</li>
+                        <li><strong>Controller:</strong> src/controllers/auth.controller.js (requestPasswordResetOtp, verifyPasswordResetOtp, resetPasswordWithOtp)</li>
+                        <li><strong>Services:</strong> src/services/passwordReset.service.js (sendEmailOtp, getSmtpTransport)</li>
+                        <li><strong>Models:</strong> src/models/PasswordResetOtp.js (channel='email')</li>
+                        <li><strong>Models:</strong> src/models/User.js</li>
+                        <li><strong>NPM Package:</strong> nodemailer</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>🔒 Tính Năng Bảo Mật</h4>
+                    <ul>
+                        <li><strong>Unified Flow:</strong> Email và Telegram dùng chung code, chỉ khác channel</li>
+                        <li><strong>SMTP Security:</strong> TLS/SSL encryption cho kết nối SMTP</li>
+                        <li><strong>OTP Hashing:</strong> SHA256 + pepper như Telegram</li>
+                        <li><strong>Rate Limiting:</strong> 5 lần gửi OTP/giờ (chung với Telegram)</li>
+                        <li><strong>Email Masking:</strong> Response chỉ hiện "u***@example.com"</li>
+                        <li><strong>Fallback:</strong> Development mode log OTP nếu không config SMTP</li>
+                    </ul>
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>💡 Multi-Channel Architecture:</strong> Hệ thống được thiết kế để hỗ trợ nhiều kênh gửi OTP (Telegram, Email, SMS trong tương lai) với cùng một codebase, chỉ khác nhau ở service gửi tin nhắn.
+                </div>
+            </section>
+            
+            <!-- ==================== COMPARISON TABLE ==================== -->
+            <section class="feature-section">
+                <h2>📊 Bảng So Sánh Các Chức Năng</h2>
+                
+                <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
+                    <thead>
+                        <tr style="background: #667eea; color: white;">
+                            <th style="padding: 15px; text-align: left; border: 1px solid #ddd;">Chức Năng</th>
+                            <th style="padding: 15px; text-align: left; border: 1px solid #ddd;">API Endpoint</th>
+                            <th style="padding: 15px; text-align: left; border: 1px solid #ddd;">Quyền Truy Cập</th>
+                            <th style="padding: 15px; text-align: left; border: 1px solid #ddd;">Rate Limit</th>
+                            <th style="padding: 15px; text-align: left; border: 1px solid #ddd;">AI Model</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><strong>AI Chatbot</strong></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><code>POST /api/ai/chat</code></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">All authenticated</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">20/user/10min<br>50/IP/10min</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Gemini 2.0 Flash</td>
+                        </tr>
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 15px; border: 1px solid #ddd;"><strong>Phân Tích Thuốc</strong></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><code>POST /api/ai/check-prescription</code></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Doctor only (role=2)</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">No specific limit</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Gemini 2.0 Flash</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><strong>Tóm Tắt Hồ Sơ</strong></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><code>POST /api/ai/summarize-medical-record</code></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Doctor only (role=2)</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">10/patient/hour<br>30/doctor/minute</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Gemini 2.0 Flash</td>
+                        </tr>
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 15px; border: 1px solid #ddd;"><strong>Quên MK (Telegram)</strong></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><code>POST /api/auth/forgot-password</code></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Public</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">5 requests/hour</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">N/A</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><strong>Quên MK (Email)</strong></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;"><code>POST /api/auth/forgot-password</code></td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">Public</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">5 requests/hour</td>
+                            <td style="padding: 15px; border: 1px solid #ddd;">N/A</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+            
+            <!-- ==================== TECHNOLOGY STACK ==================== -->
+            <section class="feature-section">
+                <h2>🛠️ Technology Stack</h2>
+                
+                <div class="two-column">
+                    <div class="info-card">
+                        <h5>Backend Framework</h5>
+                        <ul>
+                            <li>Node.js + Express.js</li>
+                            <li>ES6 Modules (import/export)</li>
+                            <li>Async/Await patterns</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>Database & ORM</h5>
+                        <ul>
+                            <li>MySQL Database</li>
+                            <li>Sequelize ORM</li>
+                            <li>Database Migrations</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>AI & Machine Learning</h5>
+                        <ul>
+                            <li>Google Gemini 2.0 Flash</li>
+                            <li>@google/generative-ai SDK</li>
+                            <li>Two-Pass AI Architecture</li>
+                            <li>Prompt Engineering</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>Security & Auth</h5>
+                        <ul>
+                            <li>JWT (jsonwebtoken)</li>
+                            <li>bcrypt (password hashing)</li>
+                            <li>SHA256 + pepper (OTP hashing)</li>
+                            <li>Rate Limiting (in-memory)</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>External Services</h5>
+                        <ul>
+                            <li>Telegram Bot API</li>
+                            <li>SMTP (nodemailer)</li>
+                            <li>Google Gemini API</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>Development Tools</h5>
+                        <ul>
+                            <li>Winston (logging)</li>
+                            <li>dotenv (config)</li>
+                            <li>Jest (testing)</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- ==================== SECURITY FEATURES ==================== -->
+            <section class="feature-section">
+                <h2>🔐 Tổng Quan Bảo Mật</h2>
+                
+                <div class="security-features">
+                    <h4>Authentication & Authorization</h4>
+                    <ul>
+                        <li>JWT-based authentication cho mọi protected endpoints</li>
+                        <li>Role-based access control (Admin, Doctor, Receptionist, Pharmacist, Patient, LabTech)</li>
+                        <li>Token expiration và refresh mechanism</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>Rate Limiting & Throttling</h4>
+                    <ul>
+                        <li>AI Chatbot: 20 requests/user/10min, 50 requests/IP/10min</li>
+                        <li>AI Summary: 10 requests/patient/hour, 30 requests/doctor/minute</li>
+                        <li>Password Reset: 5 requests/hour, 60s cooldown between sends</li>
+                        <li>In-memory storage với automatic cleanup</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>Input Validation & Sanitization</h4>
+                    <ul>
+                        <li>HTML tag stripping (40+ patterns)</li>
+                        <li>Script injection detection</li>
+                        <li>Prompt injection detection (40+ patterns)</li>
+                        <li>Max length enforcement (500 chars for chat)</li>
+                        <li>Email và phone number validation</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>Data Protection</h4>
+                    <ul>
+                        <li>Password hashing với bcrypt (salt rounds: 10)</li>
+                        <li>OTP hashing với SHA256 + pepper</li>
+                        <li>Timing-safe comparison để chống timing attacks</li>
+                        <li>Database query parameterization (SQL injection prevention)</li>
+                        <li>Sensitive data masking trong responses</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>AI Security</h4>
+                    <ul>
+                        <li>Hardcoded system prompts (không thể bị user override)</li>
+                        <li>Query whitelist architecture (chỉ cho phép pre-defined queries)</li>
+                        <li>Role-based query filtering</li>
+                        <li>AI response validation và sanitization</li>
+                        <li>Timeout protection (30 seconds)</li>
+                    </ul>
+                </div>
+                
+                <div class="security-features">
+                    <h4>Audit & Logging</h4>
+                    <ul>
+                        <li>AiChatLog: Ghi lại mọi tương tác với AI chatbot</li>
+                        <li>PasswordResetOtp: Audit trail cho password reset attempts</li>
+                        <li>Winston logger: System-level logging</li>
+                        <li>Security event logging (rate limit violations, injection attempts)</li>
+                        <li>IP address tracking</li>
+                    </ul>
+                </div>
+            </section>
+            
+            <!-- ==================== ERROR HANDLING ==================== -->
+            <section class="feature-section">
+                <h2>⚠️ Error Handling & Retry Mechanisms</h2>
+                
+                <div class="info-card">
+                    <h5>AI Service Error Handling</h5>
+                    <ul>
+                        <li><strong>Gemini API 429 (Rate Limit):</strong> Retry 3 lần với delays [2s, 4s, 8s]</li>
+                        <li><strong>Gemini API 500 (Internal Error):</strong> Model fallback (Gemini 2.0 → 1.5 Pro → 1.5 Flash)</li>
+                        <li><strong>JSON Parse Error:</strong> Fallback response thay vì crash</li>
+                        <li><strong>Timeout:</strong> 30 giây cho mỗi AI request</li>
+                        <li><strong>Network Error:</strong> User-friendly error messages</li>
+                    </ul>
+                </div>
+                
+                <div class="info-card">
+                    <h5>Password Reset Error Handling</h5>
+                    <ul>
+                        <li><strong>User Not Found:</strong> Generic response (không tiết lộ user tồn tại hay không)</li>
+                        <li><strong>OTP Expired:</strong> Clear error message với hướng dẫn request OTP mới</li>
+                        <li><strong>Max Attempts:</strong> Block OTP verification sau 5 lần thử sai</li>
+                        <li><strong>SMTP Error:</strong> Fallback to console log trong development mode</li>
+                        <li><strong>Telegram API Error:</strong> Retry logic với exponential backoff</li>
+                    </ul>
+                </div>
+                
+                <div class="info-card">
+                    <h5>Database Error Handling</h5>
+                    <ul>
+                        <li><strong>Connection Error:</strong> Automatic reconnection với retry</li>
+                        <li><strong>Query Timeout:</strong> 30 giây timeout cho mỗi query</li>
+                        <li><strong>Constraint Violation:</strong> User-friendly error messages</li>
+                        <li><strong>Transaction Rollback:</strong> Đảm bảo data consistency</li>
+                    </ul>
+                </div>
+            </section>
+            
+            <!-- ==================== PERFORMANCE OPTIMIZATIONS ==================== -->
+            <section class="feature-section">
+                <h2>⚡ Performance Optimizations</h2>
+                
+                <div class="two-column">
+                    <div class="info-card">
+                        <h5>Caching Strategies</h5>
+                        <ul>
+                            <li><strong>AI Summary Cache:</strong> 1 giờ TTL trong database</li>
+                            <li><strong>Conversation History:</strong> In-memory cache (10 tin nhắn gần nhất)</li>
+                            <li><strong>Query Results:</strong> Session-based caching</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>Database Optimizations</h5>
+                        <ul>
+                            <li><strong>Indexes:</strong> Phone, Email, TelegramChatId, UserId</li>
+                            <li><strong>Query Limiting:</strong> Giới hạn số lượng records (10-100 rows)</li>
+                            <li><strong>Selective Fields:</strong> Chỉ lấy fields cần thiết</li>
+                            <li><strong>Parallel Queries:</strong> Execute multiple queries đồng thời</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>AI Request Optimization</h5>
+                        <ul>
+                            <li><strong>Two-Pass Flow:</strong> Giảm token usage, tăng accuracy</li>
+                            <li><strong>Context Limiting:</strong> Chỉ gửi 10 tin nhắn gần nhất</li>
+                            <li><strong>Temperature Control:</strong> 0.1 cho JSON, 0.7 cho chat</li>
+                            <li><strong>Request Queue:</strong> Tránh overwhelm Gemini API</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h5>Memory Management</h5>
+                        <ul>
+                            <li><strong>Rate Limit Store Cleanup:</strong> Mỗi 5 phút</li>
+                            <li><strong>Session Cleanup:</strong> Expired entries tự động xóa</li>
+                            <li><strong>Streaming Responses:</strong> Không load toàn bộ vào memory</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- ==================== FUTURE ENHANCEMENTS ==================== -->
+            <section class="feature-section">
+                <h2>🚀 Khả Năng Mở Rộng</h2>
+                
+                <div class="highlight-box">
+                    <strong>📱 SMS Integration:</strong> Dễ dàng thêm kênh SMS bằng cách implement sendSmsOtp() function, channel='sms', reuse toàn bộ flow hiện tại.
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>🤖 Voice Bot:</strong> Tích hợp Text-to-Speech cho AI chatbot, giúp người già và người khuyết tật sử dụng dễ dàng hơn.
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>📊 Analytics Dashboard:</strong> Sử dụng AiChatLog để phân tích xu hướng câu hỏi, cải thiện AI responses và phát hiện vấn đề sức khỏe phổ biến.
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>🔄 Real-time Notifications:</strong> WebSocket integration cho notification realtime khi OTP được gửi, appointment được đặt, v.v.
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>🌍 Multi-language Support:</strong> Mở rộng AI chatbot hỗ trợ tiếng Anh, tiếng Trung cho bệnh nhân nước ngoài.
+                </div>
+                
+                <div class="highlight-box">
+                    <strong>🔐 2FA (Two-Factor Authentication):</strong> Kết hợp Telegram/Email OTP với password login để tăng cường bảo mật.
+                </div>
+            </section>
+            
+            <!-- ==================== ENVIRONMENT VARIABLES ==================== -->
+            <section class="feature-section">
+                <h2>🔧 Environment Variables Required</h2>
+                
+                <div style="background: #263238; color: #aed581; padding: 20px; border-radius: 8px; font-family: 'Courier New', monospace;">
+<pre style="margin: 0; color: #aed581;">
+# Database
+DATABASE_HOST=localhost
+DATABASE_PORT=3306
+DATABASE_NAME=clinic_db
+DATABASE_USER=root
+DATABASE_PASSWORD=your_password
+
+# JWT
+JWT_SECRET=your_jwt_secret_key
+JWT_EXPIRES_IN=24h
+
+# AI - Google Gemini
+GEMINI_API_KEY=your_gemini_api_key
+
+# Telegram Bot
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+
+# SMTP Email
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_email@gmail.com
+SMTP_PASS=your_app_password
+SMTP_FROM=Phòng Khám Nội Khoa &lt;your_email@gmail.com&gt;
+
+# Password Reset
+PASSWORD_RESET_OTP_PEPPER=your_pepper_secret
+</pre>
+                </div>
+            </section>
+        </div>
+        
+        <footer>
+            <h3>📚 Tài Liệu Kỹ Thuật Hệ Thống Phòng Khám</h3>
+            <p>Version 1.0 - Cập nhật: June 2026</p>
+            <p style="margin-top: 15px; opacity: 0.8;">
+                © 2026 Phòng Khám Nội Khoa. All Rights Reserved.<br>
+                Tài liệu này mô tả chi tiết luồng hoạt động của 5 chức năng chính sử dụng AI và bảo mật cao.
+            </p>
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.2);">
+                <p><strong>📞 Liên Hệ Hỗ Trợ Kỹ Thuật:</strong></p>
+                <p>Email: support@clinic.com | Telegram: @clinic_support</p>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>

@@ -2,7 +2,6 @@
  * Data Filter Utility
  * 
  * Filters sensitive data from query results before sending to AI.
- * Implements Requirements 18.1-18.8 for sensitive data filtering and truncation.
  */
 
 /**

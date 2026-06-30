@@ -7,7 +7,6 @@
  * - Rate limiting (20/user, 50/IP per 10 minutes)
  * - Input sanitization (HTML stripping, prompt injection detection)
  * 
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 11.9
  */
 
 import express from 'express';
@@ -45,7 +44,6 @@ router.use(authenticate);
  *   }
  * }
  * 
- * Requirements: 11.1, 11.2, 11.3
  */
 router.post(
   '/chat',
@@ -71,7 +69,6 @@ router.post(
  *   }
  * }
  * 
- * Requirements: 11.4, 11.5
  */
 router.get(
   '/history',
@@ -96,7 +93,6 @@ router.get(
  *   }
  * }
  * 
- * Requirements: 11.6, 11.7
  */
 router.get(
   '/rate-status',
@@ -116,8 +112,6 @@ router.get(
  *     "cleared": true
  *   }
  * }
- * 
- * Requirements: 11.8
  */
 router.delete(
   '/history',
@@ -147,7 +141,6 @@ router.delete(
  *   }
  * }
  * 
- * Requirements: 24.4, 24.5
  */
 router.get(
   '/metrics',
@@ -179,7 +172,6 @@ router.get(
  *   }
  * }
  * 
- * Requirements: 7.1, 1.1, 1.2, 1.3, 1.4, 2.1, 2.2
  */
 router.post(
   '/summarize-medical-record',

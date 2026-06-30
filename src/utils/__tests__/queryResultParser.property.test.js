@@ -2,7 +2,6 @@
  * Property-Based Tests for Query Result Parser
  * 
  * Tests universal properties of the query result parser and serializer using fast-check.
- * Validates Requirements 21.1-21.9 for parser and serializer functionality.
  */
 
 import fc from 'fast-check';
@@ -53,12 +52,10 @@ class MockSequelizeInstance {
 describe('Query Result Parser - Property-Based Tests', () => {
   
   /**
-   * Property 14: Parser Round-Trip Preservation
+   *Parser Round-Trip Preservation
    * 
    * For any valid query result object, parsing then serializing then parsing
    * SHALL produce an equivalent object (round-trip identity property).
-   * 
-   * Validates: Requirements 21.8
    */
   test('Feature: ai-medical-chatbot, Property 14: Parser round-trip preservation', async () => {
     await fc.assert(
@@ -116,7 +113,6 @@ describe('Query Result Parser - Property-Based Tests', () => {
    * For any query result containing Date objects, the parser SHALL convert
    * all Date objects to ISO 8601 strings.
    * 
-   * Validates: Requirements 21.3
    */
   test('Feature: ai-medical-chatbot, Property: Date conversion to ISO 8601', async () => {
     await fc.assert(
@@ -150,8 +146,7 @@ describe('Query Result Parser - Property-Based Tests', () => {
    * 
    * For any query result containing null or undefined values, the parser
    * SHALL handle them gracefully (convert undefined to null).
-   * 
-   * Validates: Requirements 21.4
+
    */
   test('Feature: ai-medical-chatbot, Property: Null and undefined handling', async () => {
     await fc.assert(
@@ -187,8 +182,6 @@ describe('Query Result Parser - Property-Based Tests', () => {
    * 
    * For any empty query result array, the parser SHALL return an empty array,
    * not null or undefined.
-   * 
-   * Validates: Requirements 21.9
    */
   test('Feature: ai-medical-chatbot, Property: Empty array handling', async () => {
     const emptyArray = [];
@@ -204,8 +197,6 @@ describe('Query Result Parser - Property-Based Tests', () => {
    * 
    * For any parsed query result, the serializer SHALL include metadata:
    * query_id, row_count, execution_time_ms, timestamp.
-   * 
-   * Validates: Requirements 21.5, 21.6
    */
   test('Feature: ai-medical-chatbot, Property: Serializer metadata inclusion', async () => {
     await fc.assert(
@@ -264,8 +255,6 @@ describe('Query Result Parser - Property-Based Tests', () => {
    * 
    * For any query result with nested associations, the parser SHALL
    * recursively parse all nested objects.
-   * 
-   * Validates: Requirements 21.2
    */
   test('Feature: ai-medical-chatbot, Property: Nested association handling', async () => {
     await fc.assert(
@@ -319,8 +308,6 @@ describe('Query Result Parser - Property-Based Tests', () => {
    * 
    * For any Sequelize model instance, the parser SHALL convert it to a plain
    * JavaScript object using toJSON().
-   * 
-   * Validates: Requirements 21.1
    */
   test('Feature: ai-medical-chatbot, Property: Sequelize instance parsing', async () => {
     await fc.assert(

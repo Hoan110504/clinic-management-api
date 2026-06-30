@@ -2,7 +2,6 @@
  * Unit Tests for Conversation Manager
  * 
  * Tests specific examples, edge cases, and error conditions.
- * Validates: Requirements 22.8
  */
 
 import conversationManager from '../conversationManager.js';

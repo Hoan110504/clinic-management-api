@@ -4,7 +4,6 @@
  * Implements in-memory caching for frequently accessed query results.
  * Cache entries expire after 60 seconds (TTL).
  * 
- * Requirements: 20.2
  * 
  * Cache Key Format:
  * - Patient-scoped queries: `${queryId}_${userId}_${userRole}`

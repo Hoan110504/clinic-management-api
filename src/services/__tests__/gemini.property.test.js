@@ -12,8 +12,6 @@ import fc from 'fast-check';
 /**
  * Property 9: JSON Response Parsing
  * 
- * **Validates: Requirements 7.4**
- * 
  * For any valid JSON response from Pass 1 containing a query_ids array,
  * the parser SHALL correctly extract the array without data loss or corruption.
  * 

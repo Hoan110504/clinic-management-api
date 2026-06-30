@@ -89,18 +89,25 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     pendingPayments = 0;
   }
 
-  // Thuốc sắp hết: số lượng hiện tại ≤ số lượng tối thiểu (min_quantity)
+  // Thuốc sắp hết: đếm số thuốc có tổng tồn kho <= 50 viên
   let lowStockCount = 0;
   try {
-    const allMedicines = await Medicine.findAll({
-      where: { isActive: true },
-      attributes: ['id', 'quantity', 'min_quantity'],
-      raw: true,
+    // Count medicines with low total stock across all batches
+    const result = await sequelize.query(`
+      SELECT COUNT(*) as count
+      FROM (
+        SELECT m.Id
+        FROM [dbo].[Medicines] m
+        INNER JOIN [dbo].[MedicineBatches] mb ON m.Id = mb.MedicineId
+        WHERE m.IsActive = 1
+          AND mb.Status = 1
+        GROUP BY m.Id
+        HAVING SUM(mb.QuantityInStock) <= 50
+      ) AS low_stock_medicines
+    `, {
+      type: sequelize.QueryTypes.SELECT,
     });
-    // Count in memory: quantity <= min_quantity
-    lowStockCount = allMedicines.filter(
-      m => m.quantity <= (m.min_quantity || 10)
-    ).length;
+    lowStockCount = result && result[0] ? parseInt(result[0].count) || 0 : 0;
   } catch (err) {
     console.warn('Could not count low stock medicines:', err.message);
     lowStockCount = 0;

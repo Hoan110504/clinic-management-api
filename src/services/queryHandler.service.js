@@ -2,7 +2,6 @@
  * Query Handler Service
  * 
  * Executes whitelisted queries with role-based access control and security measures.
- * Implements Requirements 2.2, 2.3, 2.5, 2.8, 2.9, 3.8, 17.1, 17.2, 17.6, 17.8
  */
 
 import { getQuery, isQueryWhitelisted, hasQueryPermission } from '../config/queryWhitelist.js';

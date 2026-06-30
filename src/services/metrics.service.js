@@ -2,7 +2,6 @@
  * Metrics Service
  * 
  * Collects and aggregates metrics for AI chatbot monitoring.
- * Implements Requirements 24.4, 24.5, 24.6, 24.7
  * 
  * Tracks:
  * - Total requests and average response time
@@ -157,9 +156,6 @@ export function getCurrentMetrics() {
 
 /**
  * Get metrics from database (historical data)
- * 
- * Requirements: 24.4, 24.5, 24.6, 24.7
- * 
  * @param {Object} options - Query options
  * @param {Date} options.startDate - Start date for metrics (default: 24 hours ago)
  * @param {Date} options.endDate - End date for metrics (default: now)
@@ -278,9 +274,6 @@ export async function getMetricsFromDatabase(options = {}) {
 
 /**
  * Get combined metrics (in-memory + database)
- * 
- * Requirements: 24.4, 24.5
- * 
  * @returns {Promise<Object>} Combined metrics
  */
 export async function getCombinedMetrics() {

@@ -8,7 +8,6 @@
  * 2. Query Execution - Execute selected queries with role-based filtering
  * 3. Pass 2: Answer Synthesis - AI generates natural language response
  * 
- * Requirements: 7.1, 7.5, 7.6, 9.8, 9.9, 11.1, 11.2, 11.3, 20.7
  */
 
 import geminiService from '../services/gemini.service.js';
@@ -62,7 +61,6 @@ function createRequestTimeout(ms) {
  * 6. Log interaction to AiChatLog
  * 7. Return response with remaining rate limit info
  * 
- * Requirements: 7.1, 7.5, 7.6, 9.8, 9.9, 11.1, 11.2, 11.3, 20.7
  */
 export const chat = async (req, res, next) => {
   const startTime = Date.now();
@@ -326,7 +324,6 @@ async function chatHandler(req, res, next, startTime) {
  * Retrieve conversation history for the authenticated user.
  * Returns the last 10 messages from the current session.
  * 
- * Requirements: 11.4, 11.5
  */
 export const getHistory = async (req, res, next) => {
   try {
@@ -358,8 +355,7 @@ export const getHistory = async (req, res, next) => {
  * 
  * Check current rate limit status for the authenticated user.
  * Returns user and IP rate limit information.
- * 
- * Requirements: 11.6, 11.7
+
  */
 export const getRateStatus = async (req, res, next) => {
   try {
@@ -391,7 +387,6 @@ export const getRateStatus = async (req, res, next) => {
  * Clear conversation history for the authenticated user.
  * Removes all messages from the current session.
  * 
- * Requirements: 11.8
  */
 export const clearHistory = async (req, res, next) => {
   try {
@@ -424,7 +419,6 @@ export const clearHistory = async (req, res, next) => {
  * Get AI chatbot usage metrics (Admin only).
  * Returns aggregated statistics about chatbot usage.
  * 
- * Requirements: 24.4, 24.5, 24.6, 24.7
  */
 export const getMetrics = async (req, res, next) => {
   try {
@@ -464,7 +458,6 @@ export const getMetrics = async (req, res, next) => {
  * Generate AI summary for a medical record.
  * Only accessible by doctors (role = 2).
  * 
- * Requirements: 1.1, 1.2, 1.3, 1.4, 7.1, 7.2, 7.5, 7.6, 7.7, 16.1-16.6
  */
 export const summarizeMedicalRecord = async (req, res, next) => {
   try {
@@ -473,7 +466,6 @@ export const summarizeMedicalRecord = async (req, res, next) => {
     const userRole = req.user.role;
     
     // Verify user role is doctor (role === 2)
-    // Requirements: 1.2, 1.4
     if (userRole !== 2) {
       throw new AppError(
         'Chỉ bác sĩ mới có quyền sử dụng tính năng này',
@@ -482,8 +474,6 @@ export const summarizeMedicalRecord = async (req, res, next) => {
       );
     }
     
-    // Verify medical record exists and belongs to specified patient
-    // Requirements: 7.5, 7.6
     const examination = await MedicalExamination.findOne({
       where: { ExaminationID: medicalRecordId },
     });
@@ -505,7 +495,6 @@ export const summarizeMedicalRecord = async (req, res, next) => {
     }
     
     // Generate summary using medical summary service
-    // Requirements: 5.1, 5.7
     const result = await medicalSummaryService.generateSummary(
       medicalRecordId,
       patientId,
@@ -517,7 +506,6 @@ export const summarizeMedicalRecord = async (req, res, next) => {
     const remainingRequests = req.rateLimitInfo?.perPatientRemaining ?? 0;
     
     // Return success response
-    // Requirements: 7.7, 16.1, 16.2, 16.3, 16.4
     res.status(200).json({
       success: true,
       data: {
@@ -531,7 +519,6 @@ export const summarizeMedicalRecord = async (req, res, next) => {
     
   } catch (error) {
     // Map service errors to HTTP status codes
-    // Requirements: 12.1-12.6, 16.2, 16.4, 16.5, 16.6
     if (error instanceof AppError) {
       next(error);
     } else {

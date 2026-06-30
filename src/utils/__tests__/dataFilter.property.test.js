@@ -2,7 +2,6 @@
  * Property-Based Tests for Data Filter
  * 
  * Tests universal properties of the data filtering utility using fast-check.
- * Validates Requirements 18.1-18.8 for sensitive data filtering and truncation.
  */
 
 import fc from 'fast-check';
@@ -15,8 +14,6 @@ describe('Data Filter - Property-Based Tests', () => {
    * 
    * For any query result containing sensitive fields (passwords, JWT tokens, SSNs, credit cards),
    * the data filter SHALL strip those fields before sending data to the AI.
-   * 
-   * Validates: Requirements 18.1, 18.2, 18.3, 18.4, 18.5
    */
   test('Feature: ai-medical-chatbot, Property 12: Sensitive data filtering', async () => {
     await fc.assert(
@@ -112,7 +109,6 @@ describe('Data Filter - Property-Based Tests', () => {
    * For any query result containing PII fields (phone, email) where the current user
    * is not the owner, the data filter SHALL redact those fields.
    * 
-   * Validates: Requirements 18.6
    */
   test('Feature: ai-medical-chatbot, Property 12c: PII redaction for non-owners', async () => {
     await fc.assert(
@@ -228,8 +224,6 @@ describe('Data Filter - Property-Based Tests', () => {
    * 
    * For any query result exceeding 10,000 characters, the system SHALL truncate
    * the result to 10,000 characters and inform the AI that data was truncated.
-   * 
-   * Validates: Requirements 18.7, 18.8
    */
   test('Feature: ai-medical-chatbot, Property 13: Data truncation', async () => {
     await fc.assert(

@@ -4,7 +4,6 @@
  * Tests universal properties using fast-check library:
  * - Property 1: JWT Token Extraction
  * 
- * Requirements: 1.3
  */
 
 import fc from 'fast-check';
@@ -40,7 +39,6 @@ describe('Authentication Middleware - Property-Based Tests', () => {
    * For any valid JWT token containing user data, the authentication middleware
    * SHALL correctly extract the user ID and role from the token payload.
    * 
-   * Validates: Requirements 1.3
    */
   test('Feature: ai-medical-chatbot, Property 1: JWT token extraction', async () => {
     await fc.assert(

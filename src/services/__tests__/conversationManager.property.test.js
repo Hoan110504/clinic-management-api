@@ -26,8 +26,6 @@ describe('Conversation Manager - Property-Based Tests', () => {
    * For any user session, after adding N messages where N > 10,
    * the conversation history SHALL contain exactly the 10 most recent messages,
    * with the oldest messages automatically removed.
-   * 
-   * Validates: Requirements 9.1, 9.2
    */
   test('Feature: ai-medical-chatbot, Property 10: Conversation history bounded queue', async () => {
     await fc.assert(

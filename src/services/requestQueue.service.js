@@ -3,8 +3,6 @@
  * 
  * Manages concurrent Gemini API calls with queuing to prevent rate limit exhaustion.
  * Limits concurrent calls to 5 per server instance with a max queue size of 20.
- * 
- * Requirements: 20.4, 20.5, 20.6
  */
 
 import { AppError } from '../utils/errors.js';

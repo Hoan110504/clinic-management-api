@@ -2,7 +2,6 @@
  * Unit tests for AI Logger
  * 
  * Tests structured logging functionality for AI interactions.
- * Requirements: 24.1, 24.2, 24.3, 24.6, 24.7, 24.8
  */
 
 import { jest } from '@jest/globals';

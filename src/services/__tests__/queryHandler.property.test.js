@@ -2,7 +2,7 @@
  * Property-Based Tests for Query Handler Service
  * 
  * Tests universal properties of the query handler using fast-check.
- * Validates Requirements 2.2, 2.3, 3.1, 3.7, 3.8, 3.10, 17.8
+
  */
 
 import fc from 'fast-check';
@@ -19,8 +19,7 @@ describe('Query Handler - Property-Based Tests', () => {
    * 
    * For any query_id that is NOT in the whitelist, the isQueryWhitelisted function
    * SHALL return false.
-   * 
-   * Validates: Requirements 2.2, 2.3
+
    */
   test('Feature: ai-medical-chatbot, Property 2: Query whitelist verification', async () => {
     await fc.assert(
@@ -75,8 +74,6 @@ describe('Query Handler - Property-Based Tests', () => {
    * 
    * For any user role and query combination where the user's role is not in the
    * query's requiredRoles array, the hasQueryPermission function SHALL return false.
-   * 
-   * Validates: Requirements 3.7, 3.8
    */
   test('Feature: ai-medical-chatbot, Property 4: Role permission enforcement', async () => {
     // Define query-role mismatches (queries that specific roles should NOT access)

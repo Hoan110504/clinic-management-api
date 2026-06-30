@@ -4,7 +4,6 @@
  * These tests verify specific examples, edge cases, and error conditions
  * for the Gemini AI service logic.
  * 
- * Requirements: 22.6, 22.10
  * 
  * Note: These tests focus on the internal logic and error handling.
  * Integration tests with actual API calls should be done separately.

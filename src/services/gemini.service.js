@@ -12,7 +12,6 @@
  * - Internal rate limiting (10 requests/minute) to stay within API limits
  * - Graceful error handling with user-friendly messages
  * 
- * Requirements: 6.1, 6.2, 6.10, 6.11, 8.1, 8.2, 8.4, 8.5, 8.6, 8.7, 8.9
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -26,8 +25,6 @@ import requestQueue from './requestQueue.service.js';
 /**
  * System prompt that defines Dr. AI's behavior and constraints.
  * This prompt is hardcoded and never exposed to clients.
- * 
- * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11
  */
 const SYSTEM_PROMPT = `You are Dr. AI, a professional medical assistant for our internal medicine clinic management system.
 
@@ -148,7 +145,6 @@ class GeminiService {
    * Check internal rate limit and enforce 10 requests/minute limit
    * 
    * @throws {AppError} 429 error if rate limit exceeded
-   * Requirements: 8.8, 8.9
    */
   checkRateLimit() {
     const now = Date.now();
@@ -185,11 +181,9 @@ class GeminiService {
    * @param {boolean} hasTriedFallback - Whether we've already tried fallback models
    * @returns {Promise<any>} API response
    * @throws {AppError} If all retries and fallbacks are exhausted
-   * Requirements: 8.5, 8.6, 8.7, 8.10, 20.4, 20.5, 20.6, 24.6
    */
   async executeWithRetry(apiCall, operation, attempt = 1, hasTriedFallback = false) {
     // Wrap the API call with request queue to limit concurrent calls
-    // Requirements: 20.4, 20.5, 20.6
     return requestQueue.execute(async () => {
       const startTime = Date.now();
       
@@ -338,7 +332,6 @@ class GeminiService {
    * @param {Array<{id: string, description: string}>} availableQueries - Queries available for user's role
    * @param {Array<{role: string, content: string}>} conversationHistory - Last 10 messages
    * @returns {Promise<string[]>} Array of selected query_ids
-   * Requirements: 7.1, 7.2, 7.3, 7.4, 7.10
    */
   async selectQueries(userMessage, availableQueries, conversationHistory = []) {
     // Check internal rate limit
@@ -445,7 +438,6 @@ Response:`;
    * @param {Array<{queryId: string, data: any, metadata: object}>} queryResults - Results from executed queries
    * @param {Array<{role: string, content: string}>} conversationHistory - Last 10 messages
    * @returns {Promise<string>} Natural language response
-   * Requirements: 7.6, 7.7, 7.8, 7.9
    */
   async synthesizeAnswer(userMessage, queryResults, conversationHistory = []) {
     // Check internal rate limit

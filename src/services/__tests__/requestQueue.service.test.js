@@ -2,7 +2,6 @@
  * Request Queue Service Tests
  * 
  * Tests for request queuing with concurrent limit of 5 and max queue size of 20
- * Requirements: 20.4, 20.5, 20.6
  * 
  * Feature: ai-medical-chatbot
  */

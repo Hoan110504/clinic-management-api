@@ -2,7 +2,6 @@
  * Chat Logger Service
  * 
  * Logs all AI chatbot interactions to the AiChatLog table for audit trail.
- * Implements Requirements 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.9, 10.10
  */
 
 import models from '../models/index.js';

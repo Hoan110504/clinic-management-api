@@ -2,7 +2,6 @@
  * Query Cache Service Tests
  * 
  * Tests for query result caching with 60-second TTL
- * Requirements: 20.2
  * 
  * Feature: ai-medical-chatbot
  */

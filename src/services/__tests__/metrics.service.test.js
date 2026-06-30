@@ -2,7 +2,6 @@
  * Unit tests for Metrics Service
  * 
  * Tests metrics collection and calculation functionality.
- * Requirements: 24.4, 24.5, 24.6, 24.7
  */
 
 import { jest } from '@jest/globals';

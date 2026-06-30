@@ -5,7 +5,6 @@
  * - User-based: 20 requests per 10 minutes
  * - IP-based: 50 requests per 10 minutes
  * 
- * Requirements: 4.1, 4.2, 4.3, 4.4, 4.9
  */
 
 import { AppError } from '../utils/errors.js';

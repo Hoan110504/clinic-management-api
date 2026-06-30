@@ -2,7 +2,6 @@
  * Unit Tests for Query Handler Service
  * 
  * Tests specific examples, edge cases, and error conditions for the query handler.
- * Validates Requirements 22.4 for role-based filtering, error handling, and result parsing.
  * 
  * Note: These tests focus on validation and formatting functions.
  * Integration tests with actual database will be added separately.
