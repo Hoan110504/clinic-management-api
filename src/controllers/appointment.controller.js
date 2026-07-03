@@ -16,6 +16,7 @@ import { sequelize } from '../models/database.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
 import { APPOINTMENT_STATUS, ROLES, TIME_SLOTS } from '../config/constants.js';
+import config from '../config/index.js';
 import * as socketService from '../socket/index.js';
 
 
@@ -1029,7 +1030,34 @@ const getAvailableSlots = asyncHandler(async (req, res) => {
     });
 
     const bookedSlots = bookedAppointments.map((a) => a.time_slot);
-    const availableSlots = TIME_SLOTS.filter((slot) => !bookedSlots.includes(slot));
+    const requestedDate = new Date(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    requestedDate.setHours(0, 0, 0, 0);
+
+    const isToday = requestedDate.getTime() === today.getTime();
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const parseSlotEndMinutes = (slot) => {
+      if (!slot || typeof slot !== 'string') return null;
+      const match = slot.match(/^(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})$/);
+      if (!match) return null;
+      const endHour = Number.parseInt(match[3], 10);
+      const endMinute = Number.parseInt(match[4], 10);
+      if (!Number.isFinite(endHour) || !Number.isFinite(endMinute)) return null;
+      return endHour * 60 + endMinute;
+    };
+
+    const availableSlots = TIME_SLOTS.filter((slot) => {
+      if (bookedSlots.includes(slot)) return false;
+      if (config.isDevelopment || !isToday) return true;
+
+      const slotEndMinutes = parseSlotEndMinutes(slot);
+      if (slotEndMinutes === null) return true;
+
+      return slotEndMinutes > nowMinutes;
+    });
 
   return successResponse(res, {
     date,

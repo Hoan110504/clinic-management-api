@@ -51,9 +51,6 @@ const startServer = async () => {
     await sequelize.authenticate();
     logger.info('✅ Kết nối tới cơ sở dữ liệu thành công');
 
-    // NOTE: Tắt sync tự động - sử dụng SQL script hoặc migrations để tạo bảng
-    // Các bảng đã được tạo sẵn trong database bằng file database/schema.sql
-    // Nếu muốn tạo bảng mới từ models, chạy: npm run seed:vn
     
     // Create HTTP server for Socket.IO
     const server = http.createServer(app);

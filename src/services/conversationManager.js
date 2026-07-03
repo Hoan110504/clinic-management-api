@@ -112,7 +112,6 @@ class ConversationManager {
     // Add message to history
     session.messages.push(message);
 
-    // Requirement 9.2: Remove oldest message if exceeding 10
     if (session.messages.length > this.MAX_MESSAGES) {
       session.messages.shift(); // Remove first (oldest) message
     }
@@ -122,8 +121,6 @@ class ConversationManager {
 
   /**
    * Get conversation history for a user
-   * Requirement 9.3: Store messages with role and content
-   * Requirement 9.4: Include history in Pass 2 for context
    * 
    * @param {number} userId - The user ID
    * @returns {Message[]} Array of messages (max 10)
@@ -136,7 +133,6 @@ class ConversationManager {
 
   /**
    * Clear conversation history for a user
-   * Requirement 9.7: Clear history when session expires
    * 
    * @param {number} userId - The user ID
    * @returns {boolean} True if history was cleared
@@ -259,7 +255,7 @@ class ConversationManager {
 }
 
 // Export singleton instance
-// Requirement 9.6: Store history in memory per session (not persisted)
+
 const conversationManager = new ConversationManager();
 
 export default conversationManager;

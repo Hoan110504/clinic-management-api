@@ -28,7 +28,6 @@ const { MedicalExamination } = models;
 
 /**
  * Request timeout in milliseconds (30 seconds)
- * Requirement 20.7
  */
 const REQUEST_TIMEOUT_MS = 30000;
 
@@ -49,36 +48,23 @@ function createRequestTimeout(ms) {
   });
 }
 
-/**
- * POST /api/ai/chat
- * 
- * Main chat endpoint that orchestrates the two-pass AI flow:
- * 1. Append user message to conversation history
- * 2. Pass 1: AI selects relevant query_ids
- * 3. Execute selected queries with role-based filtering
- * 4. Pass 2: AI synthesizes answer using query results
- * 5. Append AI response to conversation history
- * 6. Log interaction to AiChatLog
- * 7. Return response with remaining rate limit info
- * 
- */
 export const chat = async (req, res, next) => {
   const startTime = Date.now();
   
   try {
-    // Wrap the entire chat logic with timeout (Requirement 20.7)
+    // Bọc toàn bộ logic xử lý với timeout
     await Promise.race([
       chatHandler(req, res, next, startTime),
       createRequestTimeout(REQUEST_TIMEOUT_MS)
     ]);
   } catch (error) {
-    // Handle timeout and other errors
+    // Xử lý lỗi
     const responseTimeMs = Date.now() - startTime;
     const errorType = error.code || 'UNKNOWN_ERROR';
     const errorMessage = error.message || 'Unknown error occurred';
     const stackTrace = error.stack || '';
     
-    // Structured error logging (Requirement 24.2)
+    // ghi log lỗi có cấu trúc
     logAiError({
       error_type: errorType,
       error_message: errorMessage,
@@ -88,7 +74,7 @@ export const chat = async (req, res, next) => {
       user_message: req.body?.message || '',
     });
     
-    // Record error metrics
+    // Ghi nhận các chỉ số thống kê về lỗi
     metricsService.recordRequest({
       response_time_ms: responseTimeMs,
       is_error: true,
@@ -127,18 +113,18 @@ async function chatHandler(req, res, next, startTime) {
   const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
   const sessionId = `session_${userId}`;
   
-  // Validate message field
+  //Kiểm tra tính hợp lệ của message
   if (!message || typeof message !== 'string') {
     throw new AppError('Message field is required and must be a string', 400, 'INVALID_INPUT');
   }
   
-  // Get conversation history before adding new message
+  // Lấy lịch sử hội thoại hiện tại của người dùng
   const conversationHistory = conversationManager.getHistory(userId);
   
-  // Append user message to conversation history (Requirement 9.8)
+  // Thêm tin nhắn của người dùng vào lịch sử hội thoại
   conversationManager.appendMessage(userId, 'user', message);
   
-  // Get available queries for user's role
+  // Lấy danh sách các truy vấn có sẵn dựa trên vai trò
   const availableQueries = getAvailableQueries(userRole);
   
   logger.info('AI chat request started', {
@@ -149,8 +135,7 @@ async function chatHandler(req, res, next, startTime) {
   });
   
   // ========================================================================
-  // PASS 1: Query Selection
-  // AI selects relevant query_ids from the whitelist
+  // Xác định các truy vấn liên quan
   // ========================================================================
   
   let selectedQueryIds = [];
@@ -178,8 +163,7 @@ async function chatHandler(req, res, next, startTime) {
   }
   
   // ========================================================================
-  // Query Execution
-  // Execute selected queries with role-based filtering
+  // Thực thi các truy vấn đã chọn
   // ========================================================================
   
   let queryResults = [];
@@ -208,8 +192,7 @@ async function chatHandler(req, res, next, startTime) {
   }
   
   // ========================================================================
-  // PASS 2: Answer Synthesis
-  // AI generates natural language response using query results
+  // PASS 2: AI tổng hợp câu trả lời
   // ========================================================================
   
   let aiResponse;
@@ -240,7 +223,6 @@ async function chatHandler(req, res, next, startTime) {
       error: error.message,
     });
     
-    // If Pass 2 fails, return error to user
     throw new AppError(
       'AI service error. Please try again.',
       500,
@@ -248,15 +230,14 @@ async function chatHandler(req, res, next, startTime) {
     );
   }
   
-  // Append AI response to conversation history (Requirement 9.9)
+  // Lưu lịch sử hội thoại
   conversationManager.appendMessage(userId, 'model', aiResponse);
   
-  // Calculate response time
+  // Tính thời gian phản hồi
   const responseTimeMs = Date.now() - startTime;
   
   // ========================================================================
-  // Structured Logging (Requirement 24.1)
-  // Log request with structured data
+  // Ghi log và ghi nhận các chỉ số thống kê
   // ========================================================================
   
   logRequest({
@@ -268,7 +249,6 @@ async function chatHandler(req, res, next, startTime) {
     query_ids: selectedQueryIds,
   });
   
-  // Record metrics (Requirement 24.4, 24.5)
   metricsService.recordRequest({
     response_time_ms: responseTimeMs,
     is_error: false,
@@ -277,8 +257,7 @@ async function chatHandler(req, res, next, startTime) {
   });
   
   // ========================================================================
-  // Audit Logging
-  // Log interaction to AiChatLog table
+  // Ghi lại trò chuyện chatbot
   // ========================================================================
   
   try {
@@ -301,11 +280,9 @@ async function chatHandler(req, res, next, startTime) {
   }
   
   // ========================================================================
-  // Response
-  // Return success response with rate limit info
+  // Trả phản hồi thành công và giới hạn còn lại
   // ========================================================================
   
-  // Get remaining rate limit count from request (set by middleware)
   const remainingRequests = req.rateLimitInfo?.userRemaining ?? 0;
   
   res.status(200).json({
@@ -417,7 +394,7 @@ export const clearHistory = async (req, res, next) => {
  * GET /api/ai/metrics
  * 
  * Get AI chatbot usage metrics (Admin only).
- * Returns aggregated statistics about chatbot usage.
+ * Thống kê chatbot cho qtv
  * 
  */
 export const getMetrics = async (req, res, next) => {
@@ -583,7 +560,7 @@ export const checkPrescriptionSafety = async (req, res, next) => {
       };
     }
 
-    // Fetch existing medications from DB (last 30 days, non-cancelled)
+    // truy vấn ds đơn thuốc trong vòng 30 ngày
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -620,7 +597,7 @@ export const checkPrescriptionSafety = async (req, res, next) => {
       }
     });
 
-    // Call safety service with both new and existing medications
+    // gọi hàm trong service kiểm tra an toàn đơn thuốc
     const safetyReport = await patientSafetyService.checkPrescriptionSafety(patientData, medicines, existingMedicines);
 
     res.status(200).json({

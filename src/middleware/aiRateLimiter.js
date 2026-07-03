@@ -1,10 +1,6 @@
 /**
+ * Giới hạn số lượt truy cập AI
  * AI Rate Limiter Middleware
- * 
- * Implements in-memory rate limiting for AI chatbot endpoints:
- * - User-based: 20 requests per 10 minutes
- * - IP-based: 50 requests per 10 minutes
- * 
  */
 
 import { AppError } from '../utils/errors.js';
@@ -24,6 +20,8 @@ const ipLimits = new Map();
  * Clean up expired entries from the rate limit store
  * @param {Map} store - The rate limit store to clean
  */
+
+//xóa các dữ liệu hết hạn khỏi bộ nhớ
 function cleanupExpiredEntries(store) {
   const now = Date.now();
   for (const [key, value] of store.entries()) {
@@ -39,6 +37,8 @@ function cleanupExpiredEntries(store) {
  * @param {string} key - The identifier (user ID or IP)
  * @returns {{ count: number, resetTime: number }}
  */
+
+//lấy thông tin rate limit của một người dùng và tự động tạo mới
 function getRateLimitEntry(store, key) {
   const now = Date.now();
   const entry = store.get(key);
@@ -79,6 +79,7 @@ function getSecondsUntilReset(resetTime) {
  * 
  * Returns 429 Too Many Requests when limits exceeded
  */
+//KIểm tra số lượng request
 export const aiRateLimiter = (req, res, next) => {
   try {
     // Clean up expired entries periodically (every 100 requests)
@@ -109,7 +110,7 @@ export const aiRateLimiter = (req, res, next) => {
       res.setHeader('X-RateLimit-Remaining-User', 0);
       res.setHeader('X-RateLimit-Remaining-IP', Math.max(0, IP_LIMIT - ipEntry.count));
       
-      // Structured security logging (Requirement 24.3)
+      // Structured security logging 
       logSecurityEvent({
         event_type: 'rate_limit_violation',
         user_id: userId,

@@ -191,7 +191,7 @@ export const aiSanitizer = (req, res, next) => {
         timestamp: new Date().toISOString()
       });
       
-      // Structured security logging (Requirement 24.3)
+      // Structured security logging 
       logSecurityEvent({
         event_type: 'prompt_injection_attempt',
         user_id: req.user?.id,

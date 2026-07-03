@@ -14,23 +14,23 @@ export const WORKING_MODELS = [
   'gemma-4-26b-a4b-it',
   'gemma-4-31b-it',
   
-  // Các model Gemini có thể hoạt động (tùy vào quota)
+  // Các model Gemini có thể hoạt động 
   'gemini-flash-latest',
   'gemini-pro-latest',
   'gemini-flash-lite-latest',
   
-  // Các model Gemini 2.5 (có thể bị quá tải)
+  // Các model Gemini 2.5 
   'gemini-2.5-flash',
   'gemini-2.5-pro',
   'gemini-2.5-flash-lite',
   
-  // Các model Gemini 2.0 (có thể hết quota)
+  // Các model Gemini 2.0 
   'gemini-2.0-flash',
   'gemini-2.0-flash-001',
   'gemini-2.0-flash-lite',
   'gemini-2.0-flash-lite-001',
   
-  // Các model preview (có thể không ổn định)
+  // Các model preview 
   'gemini-3-flash-preview',
   'gemini-3-pro-preview',
   'gemini-3.1-pro-preview',

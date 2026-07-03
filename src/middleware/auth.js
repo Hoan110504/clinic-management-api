@@ -12,7 +12,6 @@ import { asyncHandler } from '../utils/helpers.js';
 
 /**
  * Xác thực bắt buộc - Giải mã JWT và gắn user vào request
- * Luồng: Lấy token từ header → Giải mã → Tìm user → Kiểm tra trạng thái → Gắn vào req
  */
 const authenticate = asyncHandler(async (req, res, next) => {
   // Lấy token từ header Authorization (định dạng: "Bearer <token>")

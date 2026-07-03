@@ -1,4 +1,5 @@
 /**
+ * Làm sạch sữ liệu, loại bỏ các thẻ nguy hiểm
  * AI Summary Rate Limiter Middleware
  * Implements per-patient and global rate limiting for AI medical summary requests
  */

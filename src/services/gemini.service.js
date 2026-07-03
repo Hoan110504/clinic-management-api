@@ -251,7 +251,7 @@ class GeminiService {
 
         // Retry logic for 429 errors (only if we haven't exhausted attempts)
         if (is429Error && attempt < RETRY_CONFIG.MAX_ATTEMPTS) {
-          // Log rate limit error (Requirement 24.6)
+          // Log rate limit error 
           logGeminiApiUsage({
             operation,
             model: this.currentModel,
@@ -261,7 +261,7 @@ class GeminiService {
             retry_count: attempt - 1,
           });
           
-          // Record metrics (Requirement 24.6)
+          // Record metrics (
           metricsService.recordGeminiApiUsage({
             is_rate_limit_error: true,
           });

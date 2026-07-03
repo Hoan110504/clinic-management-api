@@ -89,7 +89,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     pendingPayments = 0;
   }
 
-  // Thuốc sắp hết: đếm số thuốc có tổng tồn kho <= 50 viên
+  // Thuốc sắp hết: đếm số thuốc có tổng tồn kho < 30 viên
   let lowStockCount = 0;
   try {
     // Count medicines with low total stock across all batches
@@ -102,7 +102,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
         WHERE m.IsActive = 1
           AND mb.Status = 1
         GROUP BY m.Id
-        HAVING SUM(mb.QuantityInStock) <= 50
+        HAVING SUM(mb.QuantityInStock) < 30
       ) AS low_stock_medicines
     `, {
       type: sequelize.QueryTypes.SELECT,
@@ -738,7 +738,7 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
       WHERE m.IsActive = 1
         AND mb.Status = 1
       GROUP BY m.Id, m.Name, m.Unit
-      HAVING SUM(mb.QuantityInStock) <= 50
+      HAVING SUM(mb.QuantityInStock) < 30
       ORDER BY SUM(mb.QuantityInStock) ASC, m.Name ASC
     `, {
       type: sequelize.QueryTypes.SELECT,
@@ -748,10 +748,10 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
     lowStockMedicines = [];
   }
 
-  // Expiring medicines (30 days) - query batches expiring soon
+  // Expiring medicines (< 30 days) - query batches expiring soon
   let expiringMedicines = [];
   try {
-    // Medicine batches expiring in next 30 days
+    // Medicine batches expiring in less than 30 days
     expiringMedicines = await sequelize.query(`
       SELECT TOP 10
         m.Id as id,
@@ -767,7 +767,7 @@ const getPharmacistDashboard = asyncHandler(async (req, res) => {
         AND mb.Status = 1
         AND mb.ExpiryDate IS NOT NULL
         AND mb.ExpiryDate >= CAST(GETDATE() AS DATE)
-        AND mb.ExpiryDate <= DATEADD(DAY, 30, GETDATE())
+        AND mb.ExpiryDate < DATEADD(DAY, 30, GETDATE())
       ORDER BY mb.ExpiryDate ASC, m.Name ASC
     `, {
       type: sequelize.QueryTypes.SELECT,
